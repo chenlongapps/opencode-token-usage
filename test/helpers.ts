@@ -14,6 +14,7 @@ export class FakeSource implements UsageSource {
   history = new Map<string, UsageMessage[]>([["root", [message("a")]]]);
   prices: Price[] = [{ input: 2, output: 4, cache: { read: 1, write: 3 } }];
   label = "test/model";
+  context: number | undefined = 128000;
   fail = false;
   reads = 0;
   size = 2;
@@ -28,7 +29,7 @@ export class FakeSource implements UsageSource {
     return this.slice([...this.sessions.values()].filter(s => s.parentID === id), cursor);
   }
   async messages(id: string, cursor?: string) { return this.slice(this.history.get(id) ?? [], cursor); }
-  async pricing() { return { label: this.label, prices: this.prices }; }
+  async model() { return { label: this.label, prices: this.prices, context: this.context }; }
   private slice<T>(data: T[], cursor?: string): Page<T> {
     const offset = Number(cursor ?? 0);
     return page(data.slice(offset, offset + this.size), offset + this.size < data.length ? String(offset + this.size) : undefined);

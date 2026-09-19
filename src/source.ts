@@ -3,11 +3,17 @@ import type { Price, UsageMessage } from "./usage.js";
 
 export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location">;
 export interface Page<T> { data: T[]; cursor: { next?: string | null; previous?: string | null } }
+/** Active model of the viewed session: price tiers, display label and context window. */
+export interface ActiveModel {
+  label: string;
+  prices: readonly Price[];
+  context?: number | undefined;
+}
 export interface UsageSource {
   session(id: string, signal: AbortSignal): Promise<Session>;
   children(id: string, cursor: string | undefined, signal: AbortSignal): Promise<Page<Session>>;
   messages(id: string, cursor: string | undefined, signal: AbortSignal): Promise<Page<UsageMessage>>;
-  pricing(session: Session, signal: AbortSignal): Promise<{ label: string; prices: readonly Price[] }>;
+  model(session: Session, signal: AbortSignal): Promise<ActiveModel>;
 }
 
 export function createSource(client: OpenCodeClient): UsageSource {
@@ -16,13 +22,17 @@ export function createSource(client: OpenCodeClient): UsageSource {
     children: (parentID, cursor, signal) => client.session.list(cursor ? { cursor } : { parentID, order: "asc", limit: 100 }, { signal }),
     // Unlike session.context(), message.list() includes pre-compaction history.
     messages: (sessionID, cursor, signal) => client.message.list(cursor ? { sessionID, cursor } : { sessionID, order: "asc", limit: 100 }, { signal }),
-    async pricing(session, signal) {
+    async model(session, signal) {
       const input = { location: session.location };
       const selected = session.model;
       const model = selected
         ? (await client.model.list(input, { signal })).data.find(m => m.providerID === selected.providerID && m.id === selected.id)
         : (await client.model.default(input, { signal })).data;
-      return { label: model ? `${model.providerID}/${model.id}` : selected ? `${selected.providerID}/${selected.id}` : "Default model", prices: model?.cost ?? [] };
+      return {
+        label: model ? `${model.providerID}/${model.id}` : selected ? `${selected.providerID}/${selected.id}` : "Default model",
+        prices: model?.cost ?? [],
+        context: model?.limit?.context,
+      };
     },
   };
 }
@@ -45,9 +55,10 @@ export async function pages<T>(read: (cursor?: string) => Promise<Page<T>>, sign
 
 export interface Snapshot {
   rootID: string;
+  viewedID: string;
   sessions: Map<string, Session>;
   messages: Map<string, Map<string, UsageMessage>>;
-  pricing: { label: string; prices: readonly Price[] };
+  model: ActiveModel;
 }
 
 export async function loadSnapshot(source: UsageSource, sessionID: string, signal: AbortSignal): Promise<Snapshot> {
@@ -80,9 +91,14 @@ export async function loadSnapshot(source: UsageSource, sessionID: string, signa
     }
   }
   if (!sessions.has(viewed.id)) throw new Error("Session tree changed during refresh");
-  const pricing = await source.pricing(viewed, signal);
+  const model = await source.model(viewed, signal);
   signal.throwIfAborted();
-  return { rootID: root.id, sessions, messages, pricing };
+  return { rootID: root.id, viewedID: viewed.id, sessions, messages, model };
+}
+
+/** History of the viewed session only, in API order (`order: "asc"`). */
+export function viewedMessages(snapshot: Snapshot): readonly UsageMessage[] {
+  return [...(snapshot.messages.get(snapshot.viewedID)?.values() ?? [])];
 }
 
 export function* uniqueMessages(snapshot: Snapshot): Iterable<UsageMessage> {

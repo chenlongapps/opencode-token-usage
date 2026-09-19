@@ -36,8 +36,8 @@ assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("nod
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
 const plugin = path.join(installation, "node_modules/opencode-token-usage");
-const { createSource, loadSnapshot, uniqueMessages } = await import(path.join(plugin, "dist/source.js"));
-const { summarize } = await import(path.join(plugin, "dist/usage.js"));
+const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
+const { contextUsage, summarize } = await import(path.join(plugin, "dist/usage.js"));
 
 let childAgent = "general";
 const requests = [];
@@ -111,6 +111,7 @@ const wait = async (check, label, timeout = 30_000) => {
   throw new Error(`Timed out: ${label}`);
 };
 const terminals = [];
+const lineNumber = (screen, pattern) => screen.split("\n").findIndex(line => pattern.test(line));
 const openTui = sessionID => {
   const terminal = new xterm.Terminal({ cols: 160, rows: 54, allowProposedApi: true });
   const process = spawn("python3", [path.join(repo, "scripts/terminal.py"), "opencode", "--server", `http://127.0.0.1:${port}`, "--session", sessionID], { cwd: project, env });
@@ -152,15 +153,22 @@ try {
   await wait(() => /Token Usage/.test(tui.screen()) && /Cache Rate\s+0\.0%/.test(tui.screen()), "empty sidebar");
   assert.doesNotMatch(tui.screen(), /Cache Write/);
   assert.doesNotMatch(tui.screen(), /\bCost\b/);
+  assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
   await tui.save("01-empty");
-  console.log("PASS: packed plugin loads; empty sidebar hides zero-value rows");
+  console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows");
   await client.session.prompt({ sessionID: root.id, text: "Return SMOKE_OK." });
   await wait(async () => (await client.message.list({ sessionID: root.id })).data.some(m => m.type === "assistant" && m.tokens), "first usage");
   let snapshot = await loadSnapshot(source, root.id, new AbortController().signal);
-  assert.equal(summarize(uniqueMessages(snapshot), snapshot.pricing.prices).total, 1270);
+  assert.equal(summarize(uniqueMessages(snapshot), snapshot.model.prices).total, 1270);
+  const context = contextUsage(viewedMessages(snapshot), snapshot.model.context);
+  assert.equal(context?.used, 1270);
+  assert.equal(snapshot.model.context, 128000);
+  assert.equal(context?.percent.toFixed(1), "1.0");
   await wait(() => /Cache Read\s+1,000/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
+  await wait(() => /Context\s+1,270 \/ 128,000 \(1\.0%\)/.test(tui.screen()), "context row after completion");
+  assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "context row leads the panel");
   await tui.save("02-message");
-  console.log("PASS: real message completion updates five token categories");
+  console.log("PASS: real message completion updates five token categories and context usage");
   await client.session.wait({ sessionID: root.id });
   await client.session.prompt({ sessionID: root.id, text: "SPAWN_SMOKE_CHILD" });
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
@@ -170,16 +178,20 @@ try {
   await tui.save("03-subagent");
   const childTui = openTui(child.id);
   await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "same tree in child sidebar");
+  assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
   await childTui.save("04-child-view");
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
-  assert.equal(summarize(uniqueMessages(snapshot), snapshot.pricing.prices).total, 5080);
-  console.log("PASS: real subagent usage is counted from parent and child views");
+  assert.equal(snapshot.viewedID, child.id);
+  assert.equal(summarize(uniqueMessages(snapshot), snapshot.model.prices).total, 5080);
+  assert.equal(contextUsage(viewedMessages(snapshot), snapshot.model.context)?.used, 1270);
+  console.log("PASS: real subagent usage is counted from parent and child views; context stays session-local");
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
-  await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).pricing.label === "usage-test/large", "active model switch");
+  await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).model.label === "usage-test/large", "active model switch");
+  await wait(() => /Context\s+1,270 \/ 32,000 \(4\.0%\)/.test(tui.screen()), "context window follows model switch");
   await tui.save("05-model-switch");
-  console.log("PASS: active model switch refreshes price selection");
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, total: 5080, package: packed[0].filename, files }, null, 2));
+  console.log("PASS: active model switch refreshes price selection and context window");
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, total: 5080, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const [index, terminal] of terminals.entries()) {
     await terminal.save(`final-${index}`);

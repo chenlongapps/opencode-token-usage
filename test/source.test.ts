@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { OpenCodeClient } from "@opencode/client";
-import { createSource, loadSnapshot, pages, uniqueMessages } from "../src/source.js";
+import { createSource, loadSnapshot, pages, uniqueMessages, viewedMessages } from "../src/source.js";
 import { summarize } from "../src/usage.js";
 import { FakeSource, message, page, session } from "./helpers.js";
 
@@ -15,9 +15,20 @@ test("paginated history and all descendants, same tree when viewing a grandchild
   const root = await loadSnapshot(source, "root", new AbortController().signal);
   const child = await loadSnapshot(source, "grandchild", new AbortController().signal);
   assert.equal(child.rootID, "root");
+  assert.equal(child.viewedID, "grandchild");
   assert.equal(child.sessions.size, 5);
   assert.equal(summarize(uniqueMessages(root)).total, 190);
   assert.equal(summarize(uniqueMessages(child)).total, 190);
+});
+
+test("viewed messages keep API order and never include the rest of the tree", async () => {
+  const source = new FakeSource();
+  source.sessions.set("child", session("child", "root"));
+  source.history.set("root", [message("a", 1), message("b", 2)]);
+  source.history.set("child", [message("c", 3), message("d", 4)]);
+  const snapshot = await loadSnapshot(source, "child", new AbortController().signal);
+  assert.deepEqual(viewedMessages(snapshot).map(value => value.id), ["c", "d"]);
+  assert.deepEqual(viewedMessages(await loadSnapshot(source, "root", new AbortController().signal)).map(value => value.id), ["a", "b"]);
 });
 
 test("latest snapshots replace repeated message IDs; inherited history is counted at origin", async () => {
@@ -53,18 +64,28 @@ test("pagination loops, cycles, cancellation and partial page failures reject th
 
 test("adapter uses the viewed session model/location and falls back to location default only when unselected", async () => {
   const requests: unknown[] = [];
-  const model = { id: "m", providerID: "p", cost: [{ input: 9 }] };
+  const model = { id: "m", providerID: "p", cost: [{ input: 9 }], limit: { context: 128_000, output: 4096 } };
   const client = { model: {
     list: async (input: unknown) => { requests.push(["list", input]); return { data: [model] }; },
     default: async (input: unknown) => { requests.push(["default", input]); return { data: model }; },
   } } as unknown as OpenCodeClient;
   const source = createSource(client);
+  const signal = new AbortController().signal;
   const selected = { ...session("child"), model: { id: "m", providerID: "p" } };
-  assert.equal((await source.pricing(selected, new AbortController().signal)).prices[0]?.input, 9);
-  await source.pricing(session("root"), new AbortController().signal);
-  const missing = await source.pricing({ ...selected, model: { id: "missing", providerID: "p" } }, new AbortController().signal);
+  const active = await source.model(selected, signal);
+  assert.equal(active.prices[0]?.input, 9);
+  assert.equal(active.context, 128_000);
+  assert.equal(active.label, "p/m");
+  assert.equal((await source.model(session("root"), signal)).context, 128_000);
+  const missing = await source.model({ ...selected, model: { id: "missing", providerID: "p" } }, signal);
   assert.deepEqual(missing.prices, []);
+  assert.equal(missing.context, undefined);
+  assert.equal(missing.label, "p/missing");
   assert.deepEqual(requests, [["list", { location: selected.location }], ["default", { location: selected.location }], ["list", { location: selected.location }]]);
+  // Models without a runtime context limit must not break the panel.
+  const unlimited = { id: "n", providerID: "p", cost: [] };
+  const fallback = { model: { list: async () => ({ data: [unlimited] }) } } as unknown as OpenCodeClient;
+  assert.equal((await createSource(fallback).model(selected, signal)).context, undefined);
 });
 
 test("v2 cursors carry pagination options; subsequent requests must not repeat order or filters", async () => {

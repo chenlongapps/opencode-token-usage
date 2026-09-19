@@ -1,11 +1,12 @@
-import { loadSnapshot, uniqueMessages } from "./source.js";
+import { loadSnapshot, uniqueMessages, viewedMessages } from "./source.js";
 import type { Snapshot, UsageSource } from "./source.js";
-import { summarize } from "./usage.js";
-import type { Summary } from "./usage.js";
+import { contextUsage, summarize } from "./usage.js";
+import type { ContextUsage, Summary } from "./usage.js";
 
 export interface UsageState {
   status: "loading" | "ready" | "stale" | "unavailable";
   summary?: Summary;
+  context?: ContextUsage | undefined;
   model?: string;
 }
 
@@ -99,7 +100,12 @@ export class UsageController {
       const snapshot = await loadSnapshot(this.source, this.sessionID, signal);
       if (this.disposed || generation !== this.generation) return;
       this.snapshot = snapshot;
-      this.update({ status: "ready", summary: summarize(uniqueMessages(snapshot), snapshot.pricing.prices), model: snapshot.pricing.label });
+      this.update({
+        status: "ready",
+        summary: summarize(uniqueMessages(snapshot), snapshot.model.prices),
+        context: contextUsage(viewedMessages(snapshot), snapshot.model.context),
+        model: snapshot.model.label,
+      });
     } catch {
       if (this.disposed || generation !== this.generation) return;
       this.update({ ...this.state, status: this.state.summary ? "stale" : "unavailable" });

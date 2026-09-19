@@ -8,7 +8,7 @@ export default Plugin.define({
     const models = ["small", "large"].map((name, index) => ({
       ...Model.Info.default(providerID, Model.ID.make(name)),
       name: `Usage Test ${name}`,
-      limit: { context: 128000, output: 4096 },
+      limit: { context: index === 0 ? 128000 : 32000, output: 4096 },
       cost: [{ input: 2 * (index + 1), output: 8 * (index + 1), cache: { read: 0.2, write: 3 } }],
     }));
     await context.provider.transform(editor => editor.add({

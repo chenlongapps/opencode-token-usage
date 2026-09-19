@@ -5,7 +5,7 @@ import type { UsageState } from "../src/controller.js";
 import { Events, FakeSource, deferred, message, page, session, until } from "./helpers.js";
 import type { UsageMessage } from "../src/usage.js";
 
-test("repeated events coalesce and updated messages replace old totals; model switches reprice", async t => {
+test("repeated events coalesce and updated messages replace old totals; model switches reprice and resize the window", async t => {
   const source = new FakeSource(), events = new Events();
   let state: UsageState = { status: "loading" };
   const controller = new UsageController(source, events.subscribe, value => { state = value; }, 5);
@@ -13,6 +13,7 @@ test("repeated events coalesce and updated messages replace old totals; model sw
   controller.select("root");
   await until(() => state.status === "ready");
   assert.equal(state.summary?.total, 10);
+  assert.deepEqual(state.context, { used: 10, limit: 128000, percent: 10 / 128000 * 100 });
   const reads = source.reads;
   source.history.set("root", [message("a", 20)]);
   for (let i = 0; i < 20; i++) events.emit();
@@ -20,9 +21,15 @@ test("repeated events coalesce and updated messages replace old totals; model sw
   assert.equal(source.reads, reads + 1);
   source.prices = [{ input: 10, output: 0, cache: { read: 0, write: 0 } }];
   source.label = "test/expensive";
+  source.context = 64_000;
   events.emit("session.model.selected");
   await until(() => state.model === "test/expensive");
   assert.equal(state.summary?.cost, 0.0002);
+  assert.deepEqual(state.context, { used: 20, limit: 64_000, percent: 20 / 64_000 * 100 });
+  source.context = undefined;
+  events.emit("session.model.selected");
+  await until(() => state.context === undefined);
+  assert.equal(state.summary?.total, 20);
 });
 
 test("new unopened children trigger discovery; token text deltas and unrelated sessions do not", async t => {
@@ -57,6 +64,7 @@ test("failed refresh retains last complete data and automatically recovers; firs
   source.fail = true; events.emit();
   await until(() => state.status === "stale");
   assert.equal(state.summary?.total, 10);
+  assert.equal(state.context?.used, 10);
   source.fail = false; source.history.set("root", [message("a", 99)]);
   await until(() => state.status === "ready" && state.summary?.total === 99);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { estimate, formatCost, formatTokens, normalize, summarize, usageRows } from "../src/usage.js";
-import type { Price } from "../src/usage.js";
+import { contextUsage, estimate, formatCost, formatTokens, normalize, summarize, usageRows } from "../src/usage.js";
+import type { Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
 
@@ -88,4 +88,56 @@ test("comma grouping, rounding boundaries and dollar display", () => {
   assert.equal(formatCost(0.00001), "<$0.01");
   assert.equal(formatCost(0.01), "$0.01");
   assert.equal(formatCost(1.234), "$1.23");
+});
+
+test("context row leads the panel and carries the percentage inline", () => {
+  const messages: UsageMessage[] = [
+    { id: "a", type: "assistant", tokens: { input: 60_000, output: 10_000, reasoning: 2_400 } },
+  ];
+  const usage = contextUsage(messages, 128_000);
+  assert.equal(usage?.used, 72_400);
+  assert.equal(usage?.limit, 128_000);
+  assert.equal(usage?.percent.toFixed(1), "56.6");
+  assert.deepEqual(usageRows(summarize(messages, [price]), usage), [
+    ["Context", "72,400 / 128,000 (56.6%)"],
+    ["Input", "60,000"],
+    ["Output", "10,000"],
+    ["Reasoning", "2,400"],
+    ["Cache Read", "0"],
+    ["Cache Rate", "0.0%"],
+    ["Total", "72,400"],
+    ["Cost", "$0.22"],
+  ]);
+});
+
+test("context uses the last assistant with tokens after the last completed compaction", () => {
+  const limit = 1_000;
+  const assistant = (id: string, input: number): UsageMessage => ({ id, type: "assistant", tokens: { input } });
+  const compact = (status: string, input = 700): UsageMessage => ({ id: `c-${status}`, type: "compaction", status, tokens: { input } });
+  assert.equal(contextUsage([], limit), undefined);
+  assert.equal(contextUsage([{ id: "u", type: "user", tokens: { input: 900 } }], limit), undefined);
+  assert.equal(contextUsage([assistant("a", 100)], limit)?.used, 100);
+  assert.equal(contextUsage([assistant("a", 100), assistant("b", 300)], limit)?.used, 300);
+  // A trailing assistant without usage is skipped, but a zero-usage one is not replaced.
+  assert.equal(contextUsage([assistant("a", 100), { id: "b", type: "assistant" }], limit)?.used, 100);
+  assert.equal(contextUsage([assistant("a", 100), assistant("b", 0)], limit), undefined);
+  // Only a completed compaction resets the window, and its own tokens are never the answer.
+  const boundary = [assistant("a", 100), compact("completed"), { id: "u", type: "user" }];
+  assert.equal(contextUsage(boundary, limit), undefined);
+  assert.equal(contextUsage([...boundary, assistant("b", 250)], limit)?.used, 250);
+  for (const status of ["running", "failed"]) assert.equal(contextUsage([assistant("a", 100), compact(status)], limit)?.used, 100);
+});
+
+test("unusable context limits and missing usage hide the context rows", () => {
+  const messages: UsageMessage[] = [{ id: "a", type: "assistant", tokens: { input: 100 } }];
+  for (const limit of [undefined, 0, -1, NaN, Infinity]) assert.equal(contextUsage(messages, limit), undefined);
+  const rows = usageRows(summarize(messages, []), contextUsage(messages, undefined));
+  assert.equal(rows.length, 6);
+  assert.ok(!rows.some(([label]) => label === "Context"));
+});
+
+test("percentage may exceed the window and stays inline", () => {
+  const usage = contextUsage([{ id: "a", type: "assistant", tokens: { input: 200 } }], 100);
+  assert.equal(usage?.percent, 200);
+  assert.deepEqual(usageRows(summarize([], []), usage)[0], ["Context", "200 / 100 (200.0%)"]);
 });

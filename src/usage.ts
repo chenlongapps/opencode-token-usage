@@ -22,6 +22,7 @@ export interface Price {
 export interface UsageMessage {
   id: string;
   type: string;
+  status?: string;
   tokens?: TokenInput;
 }
 
@@ -71,22 +72,54 @@ export function summarize(messages: Iterable<UsageMessage>, prices: readonly Pri
 
 export type Summary = ReturnType<typeof summarize>;
 
+export interface ContextUsage {
+  used: number;
+  limit: number;
+  percent: number;
+}
+
+const usableLimit = (value: number | undefined): value is number => value !== undefined && Number.isFinite(value) && value > 0;
+
+// Matches the OpenCode 2.0.10 sidebar: the last assistant message with tokens that follows
+// the last completed compaction carries the current context size. Running or failed
+// compactions do not reset it, and a last message without usage hides the row entirely
+// instead of falling back to pre-compaction history.
+export function contextUsage(messages: readonly UsageMessage[], limit?: number): ContextUsage | undefined {
+  if (!usableLimit(limit)) return undefined;
+  let boundary = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (message.type === "compaction" && message.status === "completed") { boundary = index; break; }
+  }
+  for (let index = messages.length - 1; index > boundary; index--) {
+    const message = messages[index]!;
+    if (message.type !== "assistant" || !message.tokens) continue;
+    const used = total(normalize(message.tokens));
+    return used > 0 ? { used, limit, percent: used / limit * 100 } : undefined;
+  }
+  return undefined;
+}
+
 export function formatTokens(value: number): string {
   return Math.round(safe(value)).toLocaleString("en-US");
 }
 
 export const formatCost = (value: number) => value > 0 && value < 0.01 ? "<$0.01" : `$${safe(value).toFixed(2)}`;
 
-export function usageRows(summary?: Summary): readonly (readonly [string, string])[] {
+export function usageRows(summary?: Summary, context?: ContextUsage): readonly (readonly [string, string])[] {
   const t = summary?.tokens;
   const number = (value?: number) => value === undefined ? "—" : formatTokens(value);
-  const rows: Array<readonly [string, string]> = [
+  const rows: Array<readonly [string, string]> = [];
+  if (context) rows.push(["Context", `${formatTokens(context.used)} / ${formatTokens(context.limit)} (${context.percent.toFixed(1)}%)`]);
+  rows.push(
     ["Input", number(t?.input)], ["Output", number(t?.output)], ["Reasoning", number(t?.reasoning)],
     ["Cache Read", number(t?.cache.read)],
+  );
+  if (t && t.cache.write > 0) rows.push(["Cache Write", number(t.cache.write)]);
+  rows.push(
     ["Cache Rate", summary ? `${(summary.cacheRate * 100).toFixed(1)}%` : "—"],
     ["Total", number(summary?.total)],
-  ];
-  if (t && t.cache.write > 0) rows.splice(4, 0, ["Cache Write", number(t.cache.write)]);
+  );
   if (summary && summary.cost > 0) rows.push(["Cost", formatCost(summary.cost)]);
   return rows;
 }
