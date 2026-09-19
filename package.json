@@ -1,0 +1,58 @@
+{
+  "name": "opencode-token-usage",
+  "version": "0.1.0",
+  "description": "Session-tree token usage and estimated cost for OpenCode 2",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "index.js",
+    "tui.js",
+    "dist",
+    "README.md",
+    "ROADMAP.md",
+    "docs/verification.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "test:smoke": "node scripts/smoke.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.9"
+  },
+  "peerDependencies": {
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
+    "solid-js": ">=1.9.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@opencode/client": "2.0.9",
+    "@opencode/schema": "2.0.9",
+    "@opencode/theme": "2.0.9",
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
+    "@types/node": "^22.0.0",
+    "@xterm/headless": "6.0.0",
+    "babel-preset-solid": "1.9.12",
+    "solid-js": "1.9.12",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
