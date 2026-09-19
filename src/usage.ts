@@ -72,11 +72,7 @@ export function summarize(messages: Iterable<UsageMessage>, prices: readonly Pri
 export type Summary = ReturnType<typeof summarize>;
 
 export function formatTokens(value: number): string {
-  const n = safe(value);
-  // Promote rounded boundary values, so 999,999 never becomes "1000K".
-  if (n >= 999_950) return `${Number((n / 1_000_000).toFixed(1))}M`;
-  if (n >= 1_000) return `${Number((n / 1_000).toFixed(1))}K`;
-  return String(Math.round(n));
+  return Math.round(safe(value)).toLocaleString("en-US");
 }
 
 export const formatCost = (value: number) => value > 0 && value < 0.01 ? "<$0.01" : `$${safe(value).toFixed(2)}`;
@@ -84,10 +80,13 @@ export const formatCost = (value: number) => value > 0 && value < 0.01 ? "<$0.01
 export function usageRows(summary?: Summary): readonly (readonly [string, string])[] {
   const t = summary?.tokens;
   const number = (value?: number) => value === undefined ? "—" : formatTokens(value);
-  return [
+  const rows: Array<readonly [string, string]> = [
     ["Input", number(t?.input)], ["Output", number(t?.output)], ["Reasoning", number(t?.reasoning)],
-    ["Cache Read", number(t?.cache.read)], ["Cache Write", number(t?.cache.write)],
+    ["Cache Read", number(t?.cache.read)],
     ["Cache Rate", summary ? `${(summary.cacheRate * 100).toFixed(1)}%` : "—"],
-    ["Total", number(summary?.total)], ["Cost", summary ? formatCost(summary.cost) : "—"],
+    ["Total", number(summary?.total)],
   ];
+  if (t && t.cache.write > 0) rows.splice(4, 0, ["Cache Write", number(t.cache.write)]);
+  if (summary && summary.cost > 0) rows.push(["Cost", formatCost(summary.cost)]);
+  return rows;
 }

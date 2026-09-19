@@ -16,24 +16,20 @@ function UsagePanel(props: { context: Plugin.Context; sessionID: string; registe
   createEffect(() => controller.select(props.sessionID));
   onCleanup(() => { controller.dispose(); unregister(); });
   const rows = createMemo(() => usageRows(state().summary));
-  const status = () => ({ loading: "Loading…", ready: "Session tree · estimated cost", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[state().status];
+  const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[state().status];
 
   return (
     <box flexDirection="column" marginTop={1} flexShrink={0}>
       <text fg={props.context.theme.text.base}><b>Token Usage</b></text>
-      <text fg={props.context.theme.text.muted}>{status()}</text>
+      <Show when={state().status !== "ready"}>
+        <text fg={props.context.theme.text.muted}>{status()}</text>
+      </Show>
       <For each={rows()}>{row => (
         <box flexDirection="row" justifyContent="space-between">
           <text fg={props.context.theme.text.muted}>{row[0]}</text>
-          <text fg={props.context.theme.text.base}>{row[1]}</text>
+          <text fg={props.context.theme.text.muted}>{row[1]}</text>
         </box>
       )}</For>
-      <Show when={state().summary?.defaultPrice}>
-        <text fg={props.context.theme.text.muted}>Default price: missing = $0</text>
-      </Show>
-      <Show when={state().model}>
-        <text fg={props.context.theme.text.muted} wrapMode="char">{state().model}</text>
-      </Show>
     </box>
   );
 }

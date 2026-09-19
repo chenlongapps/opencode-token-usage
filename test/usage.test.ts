@@ -19,7 +19,7 @@ test("five disjoint categories, total, cache rate, and message types", () => {
   assert.ok(Math.abs(value.cost - 0.0018) < 1e-12);
 });
 
-test("zero input, missing and invalid fields, all rows stay visible", () => {
+test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.deepEqual(normalize({ input: NaN, output: -10, reasoning: Infinity, cache: { read: 5 } }), {
     input: 0, output: 0, reasoning: 0, cache: { read: 5, write: 0 },
   });
@@ -27,9 +27,26 @@ test("zero input, missing and invalid fields, all rows stay visible", () => {
   assert.equal(empty.cacheRate, 0);
   assert.equal(empty.total, 0);
   assert.equal(empty.cost, 0);
-  assert.equal(usageRows(empty).length, 8);
-  assert.equal(usageRows(empty)[5]?.[1], "0.0%");
+  assert.equal(usageRows(empty).length, 6);
+  assert.equal(usageRows(empty).find(([label]) => label === "Cache Rate")?.[1], "0.0%");
+  assert.ok(!usageRows(empty).some(([label]) => label === "Cache Write"));
+  assert.ok(!usageRows(empty).some(([label]) => label === "Cost"));
+  assert.equal(usageRows().length, 6);
   assert.ok(usageRows().every(([, value]) => value === "—"));
+});
+
+test("cache write and cost rows are hidden independently when zero", () => {
+  const paidWithoutCache = summarize([
+    { id: "paid", type: "assistant", tokens: { input: 100 } },
+  ], [price]);
+  assert.ok(!usageRows(paidWithoutCache).some(([label]) => label === "Cache Write"));
+  assert.equal(usageRows(paidWithoutCache).find(([label]) => label === "Cost")?.[1], "<$0.01");
+
+  const freeWithCache = summarize([
+    { id: "free", type: "assistant", tokens: { cache: { write: 100 } } },
+  ], [{ input: 0, output: 0, cache: { read: 0, write: 0 } }]);
+  assert.equal(usageRows(freeWithCache).find(([label]) => label === "Cache Write")?.[1], "100");
+  assert.ok(!usageRows(freeWithCache).some(([label]) => label === "Cost"));
 });
 
 test("ordinary, cache, and reasoning prices are per million tokens", () => {
@@ -60,10 +77,12 @@ test("free prices are distinct from missing prices and absent applicable tiers",
   assert.deepEqual(estimate(tokens, [{ input: 2, output: NaN }]), { cost: 0.00002, defaultPrice: true });
 });
 
-test("roadmap examples, K/M rounding boundaries and dollar display", () => {
+test("comma grouping, rounding boundaries and dollar display", () => {
   for (const [number, expected] of [
-    [0, "0"], [999, "999"], [1000, "1K"], [1200, "1.2K"], [125000, "125K"],
-    [999949, "999.9K"], [999950, "1M"], [1_000_000, "1M"], [1_500_000, "1.5M"],
+    [0, "0"], [999, "999"], [1000, "1,000"], [1200, "1,200"], [125000, "125,000"],
+    [999949, "999,949"], [999950, "999,950"], [999999, "999,999"],
+    [1_000_000, "1,000,000"], [1_500_000, "1,500,000"],
+    [1200.4, "1,200"], [1200.5, "1,201"],
   ] as const) assert.equal(formatTokens(number), expected);
   assert.equal(formatCost(0), "$0.00");
   assert.equal(formatCost(0.00001), "<$0.01");

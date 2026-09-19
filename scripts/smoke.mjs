@@ -23,15 +23,18 @@ const env = {
 };
 delete env.OPENCODE_CONFIG;
 delete env.OPENCODE_CONFIG_CONTENT;
+const npmEnv = { ...process.env };
+if (!npmEnv.npm_config_cache && !npmEnv.NPM_CONFIG_CACHE) npmEnv.npm_config_cache = path.join(work, "npm-cache");
 console.log(`Smoke artifacts: ${work}`);
-assert.match(execFileSync("opencode", ["--version"], { env, encoding: "utf8" }), /v2\.0\.9\b/);
+const opencodeVersion = execFileSync("opencode", ["--version"], { env, encoding: "utf8" }).trim();
+assert.match(opencodeVersion, /^opencode v2\.0\.(?:9|10)\b/, "OpenCode v2.0.9 or v2.0.10 is required");
 
-const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8" }));
+const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8", env: npmEnv }));
 const files = packed[0].files.map(file => file.path);
 assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && files.includes("index.js") && files.includes("tui.js"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
-execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, stdio: "inherit", timeout: 120_000 });
+execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
 const plugin = path.join(installation, "node_modules/opencode-token-usage");
 const { createSource, loadSnapshot, uniqueMessages } = await import(path.join(plugin, "dist/source.js"));
 const { summarize } = await import(path.join(plugin, "dist/usage.js"));
@@ -147,13 +150,15 @@ try {
   const root = await client.session.create({ location: { directory: project }, title: "Token Usage Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const tui = openTui(root.id);
   await wait(() => /Token Usage/.test(tui.screen()) && /Cache Rate\s+0\.0%/.test(tui.screen()), "empty sidebar");
+  assert.doesNotMatch(tui.screen(), /Cache Write/);
+  assert.doesNotMatch(tui.screen(), /\bCost\b/);
   await tui.save("01-empty");
-  console.log("PASS: packed plugin loads; empty sidebar displays all rows");
+  console.log("PASS: packed plugin loads; empty sidebar hides zero-value rows");
   await client.session.prompt({ sessionID: root.id, text: "Return SMOKE_OK." });
   await wait(async () => (await client.message.list({ sessionID: root.id })).data.some(m => m.type === "assistant" && m.tokens), "first usage");
   let snapshot = await loadSnapshot(source, root.id, new AbortController().signal);
   assert.equal(summarize(uniqueMessages(snapshot), snapshot.pricing.prices).total, 1270);
-  await wait(() => /Cache Read\s+1K/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
+  await wait(() => /Cache Read\s+1,000/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
   await tui.save("02-message");
   console.log("PASS: real message completion updates five token categories");
   await client.session.wait({ sessionID: root.id });
@@ -161,20 +166,20 @@ try {
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
   const child = (await client.session.list({ parentID: root.id })).data[0];
   await client.session.wait({ sessionID: root.id });
-  await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4K/.test(tui.screen()), "child usage in root sidebar");
+  await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
   await tui.save("03-subagent");
   const childTui = openTui(child.id);
-  await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4K/.test(childTui.screen()), "same tree in child sidebar");
+  await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "same tree in child sidebar");
   await childTui.save("04-child-view");
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(summarize(uniqueMessages(snapshot), snapshot.pricing.prices).total, 5080);
   console.log("PASS: real subagent usage is counted from parent and child views");
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
-  await wait(() => tui.screen().includes("usage-test/large"), "active model switch");
+  await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).pricing.label === "usage-test/large", "active model switch");
   await tui.save("05-model-switch");
   console.log("PASS: active model switch refreshes price selection");
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: "2.0.9", root: root.id, child: child.id, total: 5080, package: packed[0].filename, files }, null, 2));
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, total: 5080, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const [index, terminal] of terminals.entries()) {
     await terminal.save(`final-${index}`);
