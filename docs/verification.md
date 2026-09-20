@@ -1,5 +1,28 @@
 # 验证记录
 
+## 未发布（SDK 2.0.11）
+
+验证日期：2026-09-20。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 均精确锁定为 2.0.11。
+
+### 自动化检查
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 29 项通过 |
+| `npm run build` | 通过，输出 ESM 与类型声明 |
+| `npm run test:smoke` | 通过，使用实际 `.tgz` 安装产物和真实 OpenCode 2.0.11 |
+
+SDK 从 2.0.9 升级到 2.0.11 后，四个顶层 OpenCode 包及锁文件中的传递依赖均已统一到 2.0.11。`@opencode/plugin` 两版的导出结构一致；包内容差异除依赖版本外，仅为 `ToastOptions` 新增可选的 `sessionID` 类型字段。
+
+### 真实 OpenCode 集成
+
+隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行；活动 TPS 估算会收敛为精确值；TTFT、token、上下文与费用正常刷新；真实子代理用量可从父子视图累计且上下文保持会话局部；切换活动模型会同步更新价格选择与上下文上限。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-JXe1KG`。
+
+### 验证边界
+
+当前 SDK 2.0.11 与宿主 2.0.11 的组合已完整验证。2.0.9 和 2.0.10 宿主的历史验证记录保留在下方，但升级 SDK 后未重新执行这两个旧宿主的打包矩阵：本地仅有 2.0.11，官方 GitHub Releases 也没有可获取的对应旧版本资产。后续升级 SDK 或宿主时，仍需重新核对分叉副本、compaction 排序及 step/delta 事件语义。
+
 ## v0.2.1（TPS 与 TTFT）
 
 验证日期：2026-09-20。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；插件 SDK 依赖为 2.0.9。
