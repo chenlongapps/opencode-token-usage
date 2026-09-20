@@ -48,6 +48,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "test:smoke": "node scripts/smoke.mjs",
+    "release:patch": "npm version patch",
     "prepublishOnly": "npm run typecheck && npm test",
     "prepack": "npm run build"
   },

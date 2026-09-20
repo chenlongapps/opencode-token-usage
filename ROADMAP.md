@@ -74,4 +74,4 @@ TTFT  2.7s
 ## 后续评估
 
 * [ ] 公开价格目录与更新策略
-* [ ] 首次 npm 发布（包元数据、CI、OIDC 发布工作流与本地验证已完成，待账号认证并发布到 registry）
+* [x] 首次 npm 发布：`@chenlongapps/opencode-token-usage@0.2.1`
