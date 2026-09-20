@@ -182,8 +182,9 @@ try {
   assert.doesNotMatch(tui.screen(), /TPS\s+~/, "completed TPS replaces the live estimate");
   assert.match(tui.screen(), /TTFT\s+[\d.]+s/);
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "context row leads the panel");
+  assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /\bCost\s+/) + 2, "one blank line separates usage and performance");
   assert.ok(lineNumber(tui.screen(), /\bTPS\s+/) < lineNumber(tui.screen(), /\bTTFT\s+/));
-  assert.ok(lineNumber(tui.screen(), /\bTTFT\s+/) < lineNumber(tui.screen(), /\bInput\s+100\b/));
+  assert.ok(lineNumber(tui.screen(), /\bCost\s+/) < lineNumber(tui.screen(), /\bTPS\s+/));
   await tui.save("03-message");
   console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });

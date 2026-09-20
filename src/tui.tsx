@@ -16,6 +16,7 @@ function UsagePanel(props: { context: Plugin.Context; sessionID: string; registe
   createEffect(() => controller.select(props.sessionID));
   onCleanup(() => { controller.dispose(); unregister(); });
   const rows = createMemo(() => usageRows(state().summary, state().context, state().performance));
+  const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "TPS" || label === "TTFT"));
   const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[state().status];
 
   return (
@@ -24,8 +25,8 @@ function UsagePanel(props: { context: Plugin.Context; sessionID: string; registe
       <Show when={state().status !== "ready"}>
         <text fg={props.context.theme.text.muted}>{status()}</text>
       </Show>
-      <For each={rows()}>{row => (
-        <box flexDirection="row" justifyContent="space-between">
+      <For each={rows()}>{(row, index) => (
+        <box flexDirection="row" justifyContent="space-between" marginTop={index() === performanceStart() ? 1 : 0}>
           <text fg={props.context.theme.text.muted}>{row[0]}</text>
           <text fg={props.context.theme.text.muted}>{row[1]}</text>
         </box>

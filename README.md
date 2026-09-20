@@ -7,8 +7,6 @@
 ```text
 Token Usage
 Context        9,810 / 128,000 (7.7%)
-TPS                         48.7 tok/s
-TTFT                              2.7s
 Input                          54,200
 Output                          6,800
 Reasoning                       4,100
@@ -17,6 +15,9 @@ Cache Write                     1,300
 Cache Rate                      36.4%
 Total                          98,100
 Cost                            $0.21
+
+TPS                         48.7 tok/s
+TTFT                              2.7s
 ```
 
 示例费用使用每百万 token 的 Input / Output / Cache Read / Cache Write 单价 $2 / $8 / $0.2 / $3。实际价格与上下文上限取自当前查看会话的活动模型。

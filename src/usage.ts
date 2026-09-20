@@ -121,12 +121,6 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
   const number = (value?: number) => value === undefined ? "—" : formatTokens(value);
   const rows: Array<readonly [string, string]> = [];
   if (context) rows.push(["Context", `${formatTokens(context.used)} / ${formatTokens(context.limit)} (${context.percent.toFixed(1)}%)`]);
-  if (performance?.tps !== undefined && Number.isFinite(performance.tps)) {
-    rows.push(["TPS", `${performance.tpsEstimated ? "~" : ""}${Math.max(0, performance.tps).toFixed(1)} tok/s`]);
-  }
-  if (performance?.ttft !== undefined && Number.isFinite(performance.ttft)) {
-    rows.push(["TTFT", `${(Math.max(0, performance.ttft) / 1_000).toFixed(1)}s`]);
-  }
   rows.push(
     ["Input", number(t?.input)], ["Output", number(t?.output)], ["Reasoning", number(t?.reasoning)],
     ["Cache Read", number(t?.cache.read)],
@@ -137,5 +131,11 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
     ["Total", number(summary?.total)],
   );
   if (summary && summary.cost > 0) rows.push(["Cost", formatCost(summary.cost)]);
+  if (performance?.tps !== undefined && Number.isFinite(performance.tps)) {
+    rows.push(["TPS", `${performance.tpsEstimated ? "~" : ""}${Math.max(0, performance.tps).toFixed(1)} tok/s`]);
+  }
+  if (performance?.ttft !== undefined && Number.isFinite(performance.ttft)) {
+    rows.push(["TTFT", `${(Math.max(0, performance.ttft) / 1_000).toFixed(1)}s`]);
+  }
   return rows;
 }
