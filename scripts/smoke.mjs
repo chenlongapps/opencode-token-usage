@@ -28,6 +28,7 @@ if (!npmEnv.npm_config_cache && !npmEnv.NPM_CONFIG_CACHE) npmEnv.npm_config_cach
 console.log(`Smoke artifacts: ${work}`);
 const opencodeVersion = execFileSync("opencode", ["--version"], { env, encoding: "utf8" }).trim();
 assert.match(opencodeVersion, /^opencode v2\.0\.(?:9|10|11)\b/, "OpenCode v2.0.9, v2.0.10 or v2.0.11 is required");
+const packageName = JSON.parse(await readFile(path.join(repo, "package.json"), "utf8")).name;
 
 const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8", env: npmEnv }));
 const files = packed[0].files.map(file => file.path);
@@ -35,7 +36,7 @@ assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && fi
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
-const plugin = path.join(installation, "node_modules/opencode-token-usage");
+const plugin = path.join(installation, "node_modules", ...packageName.split("/"));
 const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
 const { contextUsage, summarize } = await import(path.join(plugin, "dist/usage.js"));
 const { historicalPerformance } = await import(path.join(plugin, "dist/performance.js"));

@@ -22,9 +22,25 @@ TTFT                              2.7s
 
 示例费用使用每百万 token 的 Input / Output / Cache Read / Cache Write 单价 $2 / $8 / $0.2 / $3。实际价格与上下文上限取自当前查看会话的活动模型。
 
-## 本地安装
+## 安装
 
-需要 Node.js 22+、npm 和 OpenCode **2.0.9、2.0.10 或 2.0.11**。本版本没有发布到 npm；更高版本的 OpenCode 尚未验证。npm SDK 依赖仍锁定为 2.0.9。
+需要 Node.js 22+ 和 OpenCode **2.0.9、2.0.10 或 2.0.11**。更高版本的 OpenCode 尚未验证；npm SDK 依赖仍锁定为 2.0.9。
+
+将 npm 包加入项目的 `opencode.json` 或 `opencode.jsonc`，保留已有插件：
+
+```json
+{
+  "plugins": ["@chenlongapps/opencode-token-usage"]
+}
+```
+
+OpenCode 会下载并加载主插件与 TUI 入口。需要固定版本时可写成 `@chenlongapps/opencode-token-usage@0.2.1`。重启 OpenCode 并进入会话后，面板会追加到原生侧边栏；侧边栏的显示与宽度由宿主管理，终端需要足够宽，并且 CLI 设置 `session.sidebar` 为 `auto`。
+
+OpenCode 2.0.9–2.0.11 在子代理视图中强制隐藏侧边栏，因此插件通过 `session.composer.top` 在输入区上方显示同一完整面板。进入子代理仍统计整棵会话树，费用、上下文用量与上限改用该子代理的消息和活动模型。
+
+连接远程服务器时，可把相同 npm 包名加入本机 `~/.config/opencode/cli.json` 的 `plugins`，仅加载终端入口。配置路径遵循 `XDG_CONFIG_HOME`，没有项目级 `cli.json`。
+
+### 从源码运行
 
 在此仓库中执行：
 
@@ -43,20 +59,14 @@ npm run build
 }
 ```
 
-然后在目标项目运行 `opencode`，进入会话。OpenCode 自动加载主入口及 `./tui` 入口；包根目录还提供 `index.js` 和 `tui.js`，适配 2.0.9–2.0.11 的本地目录发现方式。面板追加到 `sidebar.content`，宿主原有侧边栏内容继续保留。侧边栏的显示与宽度由宿主管理；终端需要足够宽，并且 CLI 设置 `session.sidebar` 为 `auto`。
-
-OpenCode 2.0.9–2.0.11 在子代理视图中强制隐藏侧边栏，因此插件通过 `session.composer.top` 在输入区上方显示同一完整面板。进入子代理仍统计整棵会话树，费用、上下文用量与上限改用该子代理的消息和活动模型。
-
-连接远程服务器时，可把相同插件路径加入本机 `~/.config/opencode/cli.json` 的 `plugins`，仅加载终端入口。配置路径遵循 `XDG_CONFIG_HOME`，没有项目级 `cli.json`。
-
-也可安装独立打包产物：
+然后在目标项目运行 `opencode`。根目录的 `index.js` 和 `tui.js` 转发到编译产物，适配 2.0.9–2.0.11 的本地目录发现方式。也可先验证独立打包产物：
 
 ```bash
 npm pack
-npm install --prefix /absolute/path/local-plugins ./opencode-token-usage-0.2.1.tgz
+npm install --prefix /absolute/path/local-plugins ./chenlongapps-opencode-token-usage-0.2.1.tgz
 ```
 
-此时配置的插件路径为 `/absolute/path/local-plugins/node_modules/opencode-token-usage`。包包含编译后的 ESM 和类型声明，无需在使用时编译 JSX。
+此时配置的插件路径为 `/absolute/path/local-plugins/node_modules/@chenlongapps/opencode-token-usage`。包包含编译后的 ESM 和类型声明，无需在使用时编译 JSX。
 
 ## 统计口径
 
@@ -100,6 +110,8 @@ npm run test:smoke
 ```
 
 `test:smoke` 需要本机 OpenCode 2.0.9、2.0.10 或 2.0.11、Python 3、可用的本地端口及 npm 网络访问。它打包并安装真实产物，在临时目录启动隔离的 OpenCode 服务和真实 TUI，通过带延迟的本地模拟提供商检查加载、实时 TPS 与 TTFT、完成后精确 TPS、用量与上下文刷新、真实子代理累计及模型切换。不会修改现有 OpenCode 配置或使用付费模型。终端捕获和测试记录保留在输出的临时路径。
+
+维护者的首次发布、Trusted Publishing 和后续版本流程见 [npm 发布说明](https://github.com/chenlongapps/opencode-token-usage/blob/main/docs/releasing.md)。
 
 2026-09-20 已通过类型检查、29 项自动化测试、构建和上述真实集成验证，详见 [验证记录](docs/verification.md)。
 

@@ -11,7 +11,11 @@
 | `npm run typecheck` | 通过 |
 | `npm test` | 29 项通过 |
 | `npm run build` | 通过，输出 ESM 与类型声明，包括 `dist/performance.js` |
-| `npm run test:smoke` | 通过，使用实际 `opencode-token-usage-0.2.1.tgz` 安装产物 |
+| `npm pack --dry-run` | 通过，`@chenlongapps/opencode-token-usage@0.2.1` 包含 19 个文件，压缩后约 20 KB |
+| `npm publish --dry-run` | 通过，完整执行 `prepublishOnly`、`prepack` 并确认 public access；未写入 registry |
+| `npm run test:smoke` | 通过，使用实际 `chenlongapps-opencode-token-usage-0.2.1.tgz` 安装产物 |
+
+npm 发布前检查确认无作用域名称 `opencode-token-usage` 已由其他作者占用，因此本项目使用尚未注册且与 GitHub 仓库所有者一致的 `@chenlongapps/opencode-token-usage`。包元数据、公开 registry、GitHub Actions CI、Trusted Publishing/OIDC 发布工作流与首次发布说明已配置；首次实际发布仍需 `chenlongapps` npm scope 的账号权限与双因素认证。`npm audit` 报告 2 个 low、11 个 moderate、0 个 high、0 个 critical，均来自固定的 OpenCode 2.0.9 / OpenTUI / OpenTelemetry 依赖链，当前锁定版本下没有可直接应用的完整修复。
 
 新增测试覆盖：已完成 assistant 的 Output + Reasoning / 流式总时长加权 TPS；无效时间、零输出与 compaction 排除；reasoning/tool 历史 TTFT、纯文本历史不伪造样本、运行期样本覆盖历史；文本、推理、工具输入三类流式增量；UTF-8 字节估算、重复事件去重、并发活动流合并；无关会话忽略、新建子代理即时纳入、切换会话树清理；流式更新不读取数据源，完成后从估算 TPS 收敛到精确 TPS；性能行位于用量与费用之后，与前一组间隔一行，并保持格式与缺失隐藏。
 
@@ -24,6 +28,7 @@
 - assistant 完成并刷新快照后，TPS 自动变为无 `~` 的 `62.9 tok/s`。打包产物的 `historicalPerformance` 返回 62.893… tok/s，且同屏 OpenCode 自带消息状态也显示 62.9 tok/s。
 - 行顺序为 Context、五类 token、Cache Rate、Total、Cost、空行、TPS、TTFT；Cost 隐藏时仍在最后一条用量行后空一行。原有上下文、真实子代理全树累计与模型切换测试继续通过。
 - 安装包包含 `dist/performance.js` 及其类型声明；结果文件记录宿主版本 2.0.11、Total 5,080 和性能值。
+- scoped 包安装在 `node_modules/@chenlongapps/opencode-token-usage` 后，根入口、TUI 入口和所有运行时断言均通过。
 
 ### 口径与验证边界
 
