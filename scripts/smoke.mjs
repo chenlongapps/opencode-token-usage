@@ -27,7 +27,7 @@ const npmEnv = { ...process.env };
 if (!npmEnv.npm_config_cache && !npmEnv.NPM_CONFIG_CACHE) npmEnv.npm_config_cache = path.join(work, "npm-cache");
 console.log(`Smoke artifacts: ${work}`);
 const opencodeVersion = execFileSync("opencode", ["--version"], { env, encoding: "utf8" }).trim();
-assert.match(opencodeVersion, /^opencode v2\.0\.(?:9|10)\b/, "OpenCode v2.0.9 or v2.0.10 is required");
+assert.match(opencodeVersion, /^opencode v2\.0\.(?:9|10|11)\b/, "OpenCode v2.0.9, v2.0.10 or v2.0.11 is required");
 
 const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8", env: npmEnv }));
 const files = packed[0].files.map(file => file.path);
@@ -38,6 +38,7 @@ execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit
 const plugin = path.join(installation, "node_modules/opencode-token-usage");
 const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
 const { contextUsage, summarize } = await import(path.join(plugin, "dist/usage.js"));
+const { historicalPerformance } = await import(path.join(plugin, "dist/performance.js"));
 
 let childAgent = "general";
 const requests = [];
@@ -66,7 +67,12 @@ const mock = createServer(async (request, response) => {
         id: "chatcmpl-smoke", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: data.model,
         choices: [{ index: 0, delta, finish_reason }], ...(reportedUsage ? { usage: reportedUsage } : {}),
       })}\n\n`);
-      chunk({ role: "assistant", ...(toolCalls ? { tool_calls: toolCalls } : { content }) });
+      chunk({ role: "assistant" });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      chunk(toolCalls ? { tool_calls: toolCalls } : { content: content.slice(0, 4) });
+      await new Promise(resolve => setTimeout(resolve, 700));
+      if (content) chunk({ content: content.slice(4) });
+      await new Promise(resolve => setTimeout(resolve, 100));
       chunk({}, toolCalls ? "tool_calls" : "stop", usage);
       response.end("data: [DONE]\n\n");
     } else {
@@ -154,9 +160,13 @@ try {
   assert.doesNotMatch(tui.screen(), /Cache Write/);
   assert.doesNotMatch(tui.screen(), /\bCost\b/);
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
+  assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
   console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows");
-  await client.session.prompt({ sessionID: root.id, text: "Return SMOKE_OK." });
+  const firstPrompt = client.session.prompt({ sessionID: root.id, text: "Return SMOKE_OK." });
+  await wait(() => /TPS\s+~[\d.]+ tok\/s/.test(tui.screen()) && /TTFT\s+[\d.]+s/.test(tui.screen()), "live TPS and TTFT");
+  await tui.save("02-streaming");
+  await firstPrompt;
   await wait(async () => (await client.message.list({ sessionID: root.id })).data.some(m => m.type === "assistant" && m.tokens), "first usage");
   let snapshot = await loadSnapshot(source, root.id, new AbortController().signal);
   assert.equal(summarize(uniqueMessages(snapshot), snapshot.model.prices).total, 1270);
@@ -164,22 +174,29 @@ try {
   assert.equal(context?.used, 1270);
   assert.equal(snapshot.model.context, 128000);
   assert.equal(context?.percent.toFixed(1), "1.0");
+  const performance = historicalPerformance(uniqueMessages(snapshot));
+  assert.ok(performance.tps && performance.tps > 0);
   await wait(() => /Cache Read\s+1,000/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
   await wait(() => /Context\s+1,270 \/ 128,000 \(1\.0%\)/.test(tui.screen()), "context row after completion");
+  await wait(() => new RegExp(`TPS\\s+${performance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(tui.screen()), "exact TPS after completion");
+  assert.doesNotMatch(tui.screen(), /TPS\s+~/, "completed TPS replaces the live estimate");
+  assert.match(tui.screen(), /TTFT\s+[\d.]+s/);
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "context row leads the panel");
-  await tui.save("02-message");
-  console.log("PASS: real message completion updates five token categories and context usage");
+  assert.ok(lineNumber(tui.screen(), /\bTPS\s+/) < lineNumber(tui.screen(), /\bTTFT\s+/));
+  assert.ok(lineNumber(tui.screen(), /\bTTFT\s+/) < lineNumber(tui.screen(), /\bInput\s+100\b/));
+  await tui.save("03-message");
+  console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });
   await client.session.prompt({ sessionID: root.id, text: "SPAWN_SMOKE_CHILD" });
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
   const child = (await client.session.list({ parentID: root.id })).data[0];
   await client.session.wait({ sessionID: root.id });
   await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
-  await tui.save("03-subagent");
+  await tui.save("04-subagent");
   const childTui = openTui(child.id);
   await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "same tree in child sidebar");
   assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
-  await childTui.save("04-child-view");
+  await childTui.save("05-child-view");
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(snapshot.viewedID, child.id);
@@ -189,9 +206,9 @@ try {
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
   await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).model.label === "usage-test/large", "active model switch");
   await wait(() => /Context\s+1,270 \/ 32,000 \(4\.0%\)/.test(tui.screen()), "context window follows model switch");
-  await tui.save("05-model-switch");
+  await tui.save("06-model-switch");
   console.log("PASS: active model switch refreshes price selection and context window");
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, total: 5080, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, total: 5080, performance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const [index, terminal] of terminals.entries()) {
     await terminal.save(`final-${index}`);

@@ -15,7 +15,7 @@ function UsagePanel(props: { context: Plugin.Context; sessionID: string; registe
   const unregister = props.register(controller);
   createEffect(() => controller.select(props.sessionID));
   onCleanup(() => { controller.dispose(); unregister(); });
-  const rows = createMemo(() => usageRows(state().summary, state().context));
+  const rows = createMemo(() => usageRows(state().summary, state().context, state().performance));
   const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[state().status];
 
   return (

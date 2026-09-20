@@ -1,12 +1,14 @@
 # opencode-token-usage
 
-面向 **OpenCode 2** 的 token 用量插件，当前版本 **0.2.0**。SDK 依赖固定为 2.0.9，宿主已验证 2.0.9 和 2.0.10。在原生 TUI 侧边栏追加用量面板，统计当前会话所在的整棵会话树，包括未打开的子代理，并显示当前查看会话的上下文占用。
+面向 **OpenCode 2** 的 token 用量插件，当前版本 **0.2.1**。SDK 依赖固定为 2.0.9，宿主已验证 2.0.9、2.0.10 和 2.0.11。在原生 TUI 侧边栏追加用量面板，统计当前会话所在的整棵会话树，包括未打开的子代理，并显示性能指标与当前查看会话的上下文占用。
 
 ## 预览
 
 ```text
 Token Usage
 Context        9,810 / 128,000 (7.7%)
+TPS                         48.7 tok/s
+TTFT                              2.7s
 Input                          54,200
 Output                          6,800
 Reasoning                       4,100
@@ -21,7 +23,7 @@ Cost                            $0.21
 
 ## 本地安装
 
-需要 Node.js 22+、npm 和 OpenCode **2.0.9 或 2.0.10**。本版本没有发布到 npm；更高版本的 OpenCode 尚未验证。npm SDK 依赖仍锁定为 2.0.9。
+需要 Node.js 22+、npm 和 OpenCode **2.0.9、2.0.10 或 2.0.11**。本版本没有发布到 npm；更高版本的 OpenCode 尚未验证。npm SDK 依赖仍锁定为 2.0.9。
 
 在此仓库中执行：
 
@@ -40,9 +42,9 @@ npm run build
 }
 ```
 
-然后在目标项目运行 `opencode`，进入会话。OpenCode 自动加载主入口及 `./tui` 入口；包根目录还提供 `index.js` 和 `tui.js`，适配 2.0.9/2.0.10 的本地目录发现方式。面板追加到 `sidebar.content`，宿主原有侧边栏内容继续保留。侧边栏的显示与宽度由宿主管理；终端需要足够宽，并且 CLI 设置 `session.sidebar` 为 `auto`。
+然后在目标项目运行 `opencode`，进入会话。OpenCode 自动加载主入口及 `./tui` 入口；包根目录还提供 `index.js` 和 `tui.js`，适配 2.0.9–2.0.11 的本地目录发现方式。面板追加到 `sidebar.content`，宿主原有侧边栏内容继续保留。侧边栏的显示与宽度由宿主管理；终端需要足够宽，并且 CLI 设置 `session.sidebar` 为 `auto`。
 
-OpenCode 2.0.9 和 2.0.10 在子代理视图中强制隐藏侧边栏，因此插件通过 `session.composer.top` 在输入区上方显示同一完整面板。进入子代理仍统计整棵会话树，费用、上下文用量与上限改用该子代理的消息和活动模型。
+OpenCode 2.0.9–2.0.11 在子代理视图中强制隐藏侧边栏，因此插件通过 `session.composer.top` 在输入区上方显示同一完整面板。进入子代理仍统计整棵会话树，费用、上下文用量与上限改用该子代理的消息和活动模型。
 
 连接远程服务器时，可把相同插件路径加入本机 `~/.config/opencode/cli.json` 的 `plugins`，仅加载终端入口。配置路径遵循 `XDG_CONFIG_HOME`，没有项目级 `cli.json`。
 
@@ -50,7 +52,7 @@ OpenCode 2.0.9 和 2.0.10 在子代理视图中强制隐藏侧边栏，因此插
 
 ```bash
 npm pack
-npm install --prefix /absolute/path/local-plugins ./opencode-token-usage-0.2.0.tgz
+npm install --prefix /absolute/path/local-plugins ./opencode-token-usage-0.2.1.tgz
 ```
 
 此时配置的插件路径为 `/absolute/path/local-plugins/node_modules/opencode-token-usage`。包包含编译后的 ESM 和类型声明，无需在使用时编译 JSX。
@@ -64,6 +66,12 @@ npm install --prefix /absolute/path/local-plugins ./opencode-token-usage-0.2.0.t
 - `Total = Input + Output + Reasoning + Cache Read + Cache Write`。
 - `Cache Rate = Cache Read ÷ (Input + Cache Read + Cache Write)`；保留一位小数，分母为零时显示 `0.0%`。
 - `Cache Write` 和 `Cost` 仅在值大于零时显示。空会话保留其他统计行并显示零；首次读取显示 `Loading…` 和 `—`，首次失败显示 `Unavailable`。刷新失败保留上次完整结果，标注 `Not updated` 并自动重试。
+
+### 性能指标
+
+`TPS` 统计整棵会话树的模型生成速度，token 口径为 Output + Reasoning。已完成消息使用服务端记录的 `time.created → time.streamed` 总时长和真实 token 加权计算，即 `Σ(Output + Reasoning) ÷ Σ流式时长`。有活动生成时优先显示实时估算：合并所有活动流的 UTF-8 增量，按约 4 字节/token 换算并以 `~` 标记；完成刷新后自动替换为精确值。流式增量不会触发完整历史扫描。
+
+`TTFT` 是整棵会话树中可测 assistant step 从请求发出到首个模型输出的算术平均值。首输出包括文本、推理和工具输入增量。插件运行期间使用实时事件精确记录；加载历史时仅使用带可靠创建时间的首个 reasoning 或 tool 内容。纯文本历史没有首 token 时间戳，因此不以完成时间伪造样本，也不会拉低平均值。没有可用样本时隐藏对应性能行。
 
 ### 上下文用量
 
@@ -90,11 +98,11 @@ npm run build
 npm run test:smoke
 ```
 
-`test:smoke` 需要本机 OpenCode 2.0.9 或 2.0.10、Python 3、可用的本地端口及 npm 网络访问。它打包并安装真实产物，在临时目录启动隔离的 OpenCode 服务和真实 TUI，通过本地模拟提供商检查加载、空会话、消息完成后的刷新、上下文行位置与百分比、真实子代理累计及模型切换后价格和上下文上限的同步。不会修改现有 OpenCode 配置或使用付费模型。终端捕获和测试记录保留在输出的临时路径。
+`test:smoke` 需要本机 OpenCode 2.0.9、2.0.10 或 2.0.11、Python 3、可用的本地端口及 npm 网络访问。它打包并安装真实产物，在临时目录启动隔离的 OpenCode 服务和真实 TUI，通过带延迟的本地模拟提供商检查加载、实时 TPS 与 TTFT、完成后精确 TPS、用量与上下文刷新、真实子代理累计及模型切换。不会修改现有 OpenCode 配置或使用付费模型。终端捕获和测试记录保留在输出的临时路径。
 
-2026-09-20 已通过类型检查、23 项自动化测试、构建和上述真实集成验证，详见 [验证记录](docs/verification.md)。
+2026-09-20 已通过类型检查、29 项自动化测试、构建和上述真实集成验证，详见 [验证记录](docs/verification.md)。
 
-架构：`usage.ts` 处理统计、上下文与格式化，`source.ts` 对接 v2 客户端和分页，`controller.ts` 合并刷新、隔离旧请求与处理失败，`tui.tsx` 渲染侧边栏。刷新只响应相关用量、会话和模型事件，流式文本增量不触发 token 估算。为保证历史完整性，刷新会重新分页扫描会话树；超大历史的增量读取优化留待后续版本。
+架构：`usage.ts` 处理统计、上下文与格式化，`performance.ts` 处理 TPS、TTFT 与流式事件，`source.ts` 对接 v2 客户端和分页，`controller.ts` 合并刷新、隔离旧请求与处理失败，`tui.tsx` 渲染侧边栏。流式增量只更新内存中的性能指标；用量、会话和模型事件仍通过合并刷新重新分页扫描会话树，以保证历史完整性。超大历史的增量读取优化留待后续版本。
 
 紧凑模式、`/usage` 和公开价格目录尚未实现，详见 [ROADMAP.md](ROADMAP.md)。
 

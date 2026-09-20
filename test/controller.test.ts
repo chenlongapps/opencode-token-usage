@@ -104,3 +104,34 @@ test("events arriving during a fetch schedule one subsequent refresh", async t =
   await until(() => state.summary?.total === 22);
   assert.equal(fetches, 2);
 });
+
+test("stream deltas publish estimated TPS and TTFT without source reads, then completion converges to exact TPS", async t => {
+  const source = new FakeSource(), events = new Events();
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 3_000, 2);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready");
+  const reads = source.reads;
+
+  events.emit({ type: "session.step.started", id: "start", created: 1_000, data: {
+    assistantMessageID: "live", sessionID: "root", started: 1_000,
+  } });
+  events.emit({ type: "session.text.delta", id: "delta", created: 1_500, data: {
+    assistantMessageID: "live", sessionID: "root", delta: "abcdefgh",
+  } });
+  await until(() => state.performance?.tpsEstimated === true);
+  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 500 });
+  assert.equal(source.reads, reads);
+
+  source.history.set("root", [message("a"), {
+    id: "live", type: "assistant", time: { created: 1_000, streamed: 2_000 },
+    content: [{ type: "text", text: "abcdefgh" }], tokens: { output: 20, reasoning: 10 },
+  }]);
+  events.emit({ type: "session.step.ended", id: "end", created: 2_100, data: {
+    assistantMessageID: "live", sessionID: "root",
+  } });
+  await until(() => state.summary?.total === 40 && state.performance?.tpsEstimated !== true);
+  assert.equal(state.performance?.tps, 30);
+  assert.equal(state.performance?.ttft, 500);
+});

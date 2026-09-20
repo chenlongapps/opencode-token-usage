@@ -1,5 +1,7 @@
 import { loadSnapshot, uniqueMessages, viewedMessages } from "./source.js";
 import type { Snapshot, UsageSource } from "./source.js";
+import { PerformanceTracker } from "./performance.js";
+import type { PerformanceSummary } from "./performance.js";
 import { contextUsage, summarize } from "./usage.js";
 import type { ContextUsage, Summary } from "./usage.js";
 
@@ -7,11 +9,17 @@ export interface UsageState {
   status: "loading" | "ready" | "stale" | "unavailable";
   summary?: Summary;
   context?: ContextUsage | undefined;
+  performance?: PerformanceSummary;
   model?: string;
 }
 
-export interface UsageEvent { type: string; data: unknown }
+export interface UsageEvent { type: string; data: unknown; id?: string; created?: number }
 export type Subscribe = (listener: (event: UsageEvent) => void) => () => void;
+
+const performanceEvents = new Set([
+  "session.step.started", "session.step.streamed", "session.step.ended", "session.step.failed",
+  "session.text.delta", "session.reasoning.delta", "session.tool.input.delta",
+]);
 
 const sessionEvents = new Set([
   "session.created", "session.deleted", "session.forked", "session.moved",
@@ -25,7 +33,7 @@ const globalEvents = new Set([
   "config.updated", "location.shutdown",
 ]);
 
-/** Owns requests and subscriptions for one mounted sidebar. No incremental addition. */
+/** Owns snapshot refreshes and throttled in-memory performance updates for one mounted panel. */
 export class UsageController {
   private state: UsageState = { status: "loading" };
   private snapshot: Snapshot | undefined;
@@ -34,9 +42,11 @@ export class UsageController {
   private request: AbortController | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private retry: ReturnType<typeof setTimeout> | undefined;
+  private performanceTimer: ReturnType<typeof setTimeout> | undefined;
   private pending = false;
   private disposed = false;
   private unsubscribe: () => void;
+  private readonly performance = new PerformanceTracker();
 
   constructor(
     private readonly source: UsageSource,
@@ -44,11 +54,14 @@ export class UsageController {
     private readonly publish: (state: UsageState) => void,
     private readonly delay = 80,
     private readonly retryDelay = 3_000,
+    private readonly performanceDelay = 100,
   ) {
     this.unsubscribe = subscribe(event => {
+      const data = (event.data && typeof event.data === "object" ? event.data : {}) as { sessionID?: string; parentID?: string };
+      if (event.type === "session.created") this.performance.addSession(data.sessionID, data.parentID);
+      if (performanceEvents.has(event.type) && this.performance.handle(event)) this.refreshPerformance();
       if (globalEvents.has(event.type)) return this.refresh();
       if (!sessionEvents.has(event.type)) return;
-      const data = event.data as { sessionID?: string; parentID?: string };
       if (!this.snapshot || event.type === "session.created" || event.type === "session.forked"
         || data.sessionID === this.sessionID || (data.sessionID && this.snapshot.sessions.has(data.sessionID))) this.refresh();
     });
@@ -61,7 +74,9 @@ export class UsageController {
     this.request = undefined;
     clearTimeout(this.timer);
     clearTimeout(this.retry);
+    clearTimeout(this.performanceTimer);
     this.timer = undefined;
+    this.performanceTimer = undefined;
     this.pending = false;
     this.snapshot = undefined;
     this.sessionID = sessionID;
@@ -85,10 +100,20 @@ export class UsageController {
     this.request?.abort();
     clearTimeout(this.timer);
     clearTimeout(this.retry);
+    clearTimeout(this.performanceTimer);
     this.unsubscribe();
   }
 
   private update(state: UsageState) { this.state = state; this.publish(state); }
+
+  private refreshPerformance() {
+    if (this.disposed || !this.snapshot || this.performanceTimer) return;
+    this.performanceTimer = setTimeout(() => {
+      this.performanceTimer = undefined;
+      if (this.disposed || !this.snapshot || !this.state.summary) return;
+      this.update({ ...this.state, performance: this.performance.summary(uniqueMessages(this.snapshot)) });
+    }, this.performanceDelay);
+  }
 
   private async run() {
     if (this.disposed || !this.sessionID) return;
@@ -100,10 +125,16 @@ export class UsageController {
       const snapshot = await loadSnapshot(this.source, this.sessionID, signal);
       if (this.disposed || generation !== this.generation) return;
       this.snapshot = snapshot;
+      const messages = [...uniqueMessages(snapshot)];
+      this.performance.setTree(snapshot.rootID, snapshot.sessions.keys());
+      this.performance.reconcile(messages);
+      clearTimeout(this.performanceTimer);
+      this.performanceTimer = undefined;
       this.update({
         status: "ready",
-        summary: summarize(uniqueMessages(snapshot), snapshot.model.prices),
+        summary: summarize(messages, snapshot.model.prices),
         context: contextUsage(viewedMessages(snapshot), snapshot.model.context),
+        performance: this.performance.summary(messages),
         model: snapshot.model.label,
       });
     } catch {

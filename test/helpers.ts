@@ -39,7 +39,10 @@ export class FakeSource implements UsageSource {
 export class Events {
   listeners = new Set<(event: UsageEvent) => void>();
   subscribe = (fn: (event: UsageEvent) => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
-  emit(type = "session.step.ended", sessionID = "root") { for (const fn of this.listeners) fn({ type, data: { sessionID } }); }
+  emit(event: UsageEvent | string = "session.step.ended", sessionID = "root") {
+    const value = typeof event === "string" ? { type: event, data: { sessionID } } : event;
+    for (const fn of this.listeners) fn(value);
+  }
 }
 
 export async function until(predicate: () => boolean) {

@@ -46,8 +46,8 @@ Context  72,400 / 128,000 (56.6%)
 
 目标：提供更直观的性能指标。
 
-* [ ] 显示实时 TPS（每秒 token 处理量）
-* [ ] 显示平均 TTFT（首 token 处理时间）
+* [x] 显示实时 TPS（每秒 token 处理量）
+* [x] 显示平均 TTFT（首 token 处理时间）
 
 ```text
 TPS  48.7 tok/s

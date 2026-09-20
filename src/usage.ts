@@ -1,3 +1,5 @@
+import type { PerformanceSummary } from "./performance.js";
+
 export interface Tokens {
   input: number;
   output: number;
@@ -24,7 +26,15 @@ export interface UsageMessage {
   type: string;
   status?: string;
   tokens?: TokenInput;
+  time?: { created: number; streamed?: number; completed?: number };
+  content?: readonly UsageContent[];
 }
+
+export type UsageContent =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string; time?: { created: number; completed?: number } }
+  | { type: "tool"; time: { created: number; ran?: number; completed?: number } }
+  | { type: string; text?: string; time?: { created: number; completed?: number } };
 
 const safe = (n: number | undefined) => n !== undefined && Number.isFinite(n) ? Math.max(0, n) : 0;
 
@@ -106,11 +116,17 @@ export function formatTokens(value: number): string {
 
 export const formatCost = (value: number) => value > 0 && value < 0.01 ? "<$0.01" : `$${safe(value).toFixed(2)}`;
 
-export function usageRows(summary?: Summary, context?: ContextUsage): readonly (readonly [string, string])[] {
+export function usageRows(summary?: Summary, context?: ContextUsage, performance?: PerformanceSummary): readonly (readonly [string, string])[] {
   const t = summary?.tokens;
   const number = (value?: number) => value === undefined ? "—" : formatTokens(value);
   const rows: Array<readonly [string, string]> = [];
   if (context) rows.push(["Context", `${formatTokens(context.used)} / ${formatTokens(context.limit)} (${context.percent.toFixed(1)}%)`]);
+  if (performance?.tps !== undefined && Number.isFinite(performance.tps)) {
+    rows.push(["TPS", `${performance.tpsEstimated ? "~" : ""}${Math.max(0, performance.tps).toFixed(1)} tok/s`]);
+  }
+  if (performance?.ttft !== undefined && Number.isFinite(performance.ttft)) {
+    rows.push(["TTFT", `${(Math.max(0, performance.ttft) / 1_000).toFixed(1)}s`]);
+  }
   rows.push(
     ["Input", number(t?.input)], ["Output", number(t?.output)], ["Reasoning", number(t?.reasoning)],
     ["Cache Read", number(t?.cache.read)],

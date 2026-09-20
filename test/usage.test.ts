@@ -141,3 +141,19 @@ test("percentage may exceed the window and stays inline", () => {
   assert.equal(usage?.percent, 200);
   assert.deepEqual(usageRows(summarize([], []), usage)[0], ["Context", "200 / 100 (200.0%)"]);
 });
+
+test("performance rows follow context, mark live TPS estimates and hide unavailable metrics", () => {
+  const summary = summarize([], []);
+  const context = { used: 50, limit: 100, percent: 50 };
+  const rows = usageRows(summary, context, { tps: 48.74, tpsEstimated: true, ttft: 2_650 });
+  assert.deepEqual(rows.slice(0, 4), [
+    ["Context", "50 / 100 (50.0%)"],
+    ["TPS", "~48.7 tok/s"],
+    ["TTFT", "2.6s"],
+    ["Input", "0"],
+  ]);
+  assert.deepEqual(usageRows(summary, undefined, { tps: 12.04 }).slice(0, 2), [
+    ["TPS", "12.0 tok/s"], ["Input", "0"],
+  ]);
+  assert.ok(!usageRows(summary, undefined, {}).some(([label]) => label === "TPS" || label === "TTFT"));
+});
