@@ -9,17 +9,19 @@
 | 检查 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 通过 |
-| `npm test` | 43 项通过 |
+| `npm test` | 44 项通过 |
 | `npm run build` | 通过，输出 ESM 与类型声明 |
 | `npm run test:smoke` | 通过，使用实际 `.tgz` 安装产物和真实 OpenCode 2.0.11 |
 
 SDK 从 2.0.9 升级到 2.0.11 后，四个顶层 OpenCode 包及锁文件中的传递依赖均已统一到 2.0.11。`@opencode/plugin` 两版的导出结构一致；包内容差异除依赖版本外，仅为 `ToastOptions` 新增可选的 `sessionID` 类型字段。
 
+本次发放在内置官方价格快照中新增 Anthropic `claude-opus-5-5`（2026-09-22 发布，$4 / $20，5 分钟缓存写入 $5，缓存读取按官方 0.05 倍基础输入价计为 $0.20），OpenRouter 圆点写法 `claude-opus-5.5` 注册为精确别名；快照由 71 个模型增至 72 个，新增测试锁定官方费率、0.05 倍缓存读取乘率、OpenRouter 与 Bedrock 包装格式匹配。
+
 新增共享性能监视器测试覆盖：查看会话 A 时捕获独立会话 B 的流，切换到 B 后立即恢复实时 TPS/TTFT；生成中切走、继续接收 delta 再切回；控制器销毁重建后恢复共享流；不同会话树隔离、新子代理即时纳入，以及删除会话清理运行期状态。既有重复事件去重与完成后收敛为精确 TPS 的断言继续通过。
 
 新增 Steps 计数覆盖：`summarize` 对带与不带 `tokens` 的 assistant 消息各计一个 step、compaction 与 user 消息不计、无 summary 时显示 `—`；`uniqueMessages` 链路上分叉继承副本不重复计数（快照 2 个 step、独立分叉树 1 个 step）、compaction 不产生 step、孙会话视图与根视图同为 6 个 step；行序断言锁定 Context → Steps → Input，无 Context 时 Steps 位于面板第一行。基准行数由 6 行调整为 7 行。
 
-v0.3.0 成本测试覆盖：assistant 与 compaction 按消息实际 `model` 和五类 token 分别计算，混合模型树各自采用对应价格，消息自带 `cost` 不参与主 Cost。当前 OpenCode 模型目录中的完整适用价格优先；适用档位或实际使用类别缺价时，整条消息回退到内置官方快照，不拼接两套费率。官方目录测试锁定 71 个 2026-03-22 至 2026-09-22 发布的模型、来源 URL、唯一 ID、OpenAI/xAI/通义千问/MiniMax/Sakana 长上下文与上下文档位边界，以及 OpenRouter、Bedrock、Vertex 等包装格式和明确别名；相似名称不得猜价。目录按 OpenCode 当前模型目录（`temp/models.json`，210 个模型）补齐主流厂商：OpenAI、Anthropic、Google、xAI、Mistral、Cohere 之外新增 Z.ai（GLM）、DeepSeek、Moonshot（Kimi）、阿里云百炼（Qwen）、小米（MiMo）、MiniMax、腾讯（混元）、StepFun、Meta、Inception、Upstage、Arcee AI、ByteDance Seed、Sakana、Aion Labs、美团（LongCat）；DeepSeek V4.1 Flash 与 V4 Pro 按厂商官方峰值最高价估算，旧 Flash、Vision Exp 和日期版本通过精确别名匹配。Step 5 Preview 的缓存写入按官方“cache-miss Input 包含首次缓存写入”规则使用 `$1 / M`。OpenRouter 圆点写法 `claude-opus-4.7`/`4.8`、官方 ChatGPT SKU `chat-latest`（别名 `gpt-chat-latest`）、Mercury 2.5、Solar Pro 4、Seed 2.1 Turbo、Fugu 版本、Aion 的 `aion-labs/` 前缀与 LongCat 网关链路同样通过精确别名匹配。窗口外的 `grok-4.20`、Fast/Priority 档、图片/音频/视频、免费与无官方标准价的模型均不收录；`kwaipilot/kat-coder-pro-v2.5`、`inclusionai/ling-3.0-*` 和 `bytedance-seed/seed-2.0-code` 只有网关或第三方报价，未据此猜价。缺价显示 `Cost —`，已知小计与缺价消息并存时显示 `· partial`，明确零价显示 `$0.00`。
+v0.3.0 成本测试覆盖：assistant 与 compaction 按消息实际 `model` 和五类 token 分别计算，混合模型树各自采用对应价格，消息自带 `cost` 不参与主 Cost。当前 OpenCode 模型目录中的完整适用价格优先；适用档位或实际使用类别缺价时，整条消息回退到内置官方快照，不拼接两套费率。官方目录测试锁定 72 个 2026-03-22 至 2026-09-22 发布的模型、来源 URL、唯一 ID、OpenAI/xAI/通义千问/MiniMax/Sakana 长上下文与上下文档位边界，以及 OpenRouter、Bedrock、Vertex 等包装格式和明确别名；相似名称不得猜价。目录按 OpenCode 当前模型目录（`temp/models.json`，210 个模型）补齐主流厂商：OpenAI、Anthropic、Google、xAI、Mistral、Cohere 之外新增 Z.ai（GLM）、DeepSeek、Moonshot（Kimi）、阿里云百炼（Qwen）、小米（MiMo）、MiniMax、腾讯（混元）、StepFun、Meta、Inception、Upstage、Arcee AI、ByteDance Seed、Sakana、Aion Labs、美团（LongCat）；DeepSeek V4.1 Flash 与 V4 Pro 按厂商官方峰值最高价估算，旧 Flash、Vision Exp 和日期版本通过精确别名匹配。Step 5 Preview 的缓存写入按官方“cache-miss Input 包含首次缓存写入”规则使用 `$1 / M`。OpenRouter 圆点写法 `claude-opus-4.7`/`4.8`/`5.5`、官方 ChatGPT SKU `chat-latest`（别名 `gpt-chat-latest`）、Mercury 2.5、Solar Pro 4、Seed 2.1 Turbo、Fugu 版本、Aion 的 `aion-labs/` 前缀与 LongCat 网关链路同样通过精确别名匹配。窗口外的 `grok-4.20`、Fast/Priority 档、图片/音频/视频、免费与无官方标准价的模型均不收录；`kwaipilot/kat-coder-pro-v2.5`、`inclusionai/ling-3.0-*` 和 `bytedance-seed/seed-2.0-code` 只有网关或第三方报价，未据此猜价。缺价显示 `Cost —`，已知小计与缺价消息并存时显示 `· partial`，明确零价显示 `$0.00`。
 
 ### 真实 OpenCode 集成
 

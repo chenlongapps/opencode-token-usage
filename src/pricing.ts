@@ -96,6 +96,10 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
       source: "https://platform.claude.com/docs/en/about-claude/pricing",
       prices: [{ input: 10, output: 50, cache: { read: 0.25, write: 12.5 } }],
     },
+    {
+      id: "claude-opus-5-5", aliases: ["claude-opus-5.5"], released: "2026-09-22", source: "https://platform.claude.com/docs/en/about-claude/pricing",
+      prices: [{ input: 4, output: 20, cache: { read: 0.2, write: 5 } }],
+    },
 
     // Google paid Standard API rates. Cache storage is billed separately by
     // time and is intentionally not represented as a cache-write token rate.

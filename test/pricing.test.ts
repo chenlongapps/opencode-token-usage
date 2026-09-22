@@ -4,7 +4,7 @@ import { OFFICIAL_PRICE_SNAPSHOT, officialPrice } from "../src/pricing.js";
 
 test("official snapshot contains only verified recent releases and unique identifiers", () => {
   const aliases = new Set<string>();
-  assert.equal(OFFICIAL_PRICE_SNAPSHOT.entries.length, 71);
+  assert.equal(OFFICIAL_PRICE_SNAPSHOT.entries.length, 72);
   for (const entry of OFFICIAL_PRICE_SNAPSHOT.entries) {
     assert.ok(entry.released >= OFFICIAL_PRICE_SNAPSHOT.newModelCutoff);
     assert.ok(entry.released <= OFFICIAL_PRICE_SNAPSHOT.verified);
@@ -26,6 +26,8 @@ test("official price matching supports exact manufacturer IDs and known gateway 
   // official alias resolve to the same entry.
   assert.equal(officialPrice({ providerID: "openrouter", id: "anthropic/claude-opus-4.7" })?.id, "claude-opus-4-7");
   assert.equal(officialPrice({ providerID: "openrouter", id: "anthropic/claude-opus-4.8" })?.id, "claude-opus-4-8");
+  assert.equal(officialPrice({ providerID: "openrouter", id: "anthropic/claude-opus-5.5" })?.id, "claude-opus-5-5");
+  assert.equal(officialPrice({ providerID: "amazon-bedrock", id: "anthropic.claude-opus-5-5" })?.id, "claude-opus-5-5");
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-chat-latest" })?.id, "chat-latest");
   assert.equal(officialPrice({ providerID: "openrouter", id: "qwen/qwen3.8-max-0902" })?.id, "qwen3.8-max");
 });
@@ -106,6 +108,15 @@ test("Step 5 Preview uses official token rates and the documented blended price"
   const price = entry.prices[0]!;
   const blended = (7 * price.cache!.read! + 2 * price.input! + price.output!) / 10;
   assert.ok(Math.abs(blended - 0.505) < Number.EPSILON);
+});
+
+test("Claude Opus 5.5 uses the official standard rates with the 5% cache-read multiplier", () => {
+  const entry = officialPrice({ providerID: "anthropic", id: "claude-opus-5-5" })!;
+  assert.equal(entry.released, "2026-09-22");
+  assert.deepEqual(entry.prices, [{ input: 4, output: 20, cache: { read: 0.2, write: 5 } }]);
+  // The official page prices cache hits at 0.05x the base input price for
+  // Claude Opus 5.5 instead of the standard 0.1x multiplier.
+  assert.ok(Math.abs(entry.prices[0]!.cache!.read! - 0.05 * entry.prices[0]!.input!) < Number.EPSILON);
 });
 
 test("new manufacturer entries use recorded manufacturer rates", () => {
