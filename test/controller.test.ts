@@ -6,7 +6,7 @@ import { PerformanceMonitor } from "../src/performance.js";
 import { Events, FakeSource, deferred, message, page, session, until } from "./helpers.js";
 import type { UsageMessage } from "../src/usage.js";
 
-test("repeated events coalesce and updated messages replace old totals; model switches reprice and resize the window", async t => {
+test("repeated events coalesce and updated messages replace old totals; model switches keep each message model and resize the window", async t => {
   const source = new FakeSource(), events = new Events();
   let state: UsageState = { status: "loading" };
   const controller = new UsageController(source, events.subscribe, value => { state = value; }, 5);
@@ -20,12 +20,12 @@ test("repeated events coalesce and updated messages replace old totals; model sw
   for (let i = 0; i < 20; i++) events.emit();
   await until(() => state.summary?.total === 20);
   assert.equal(source.reads, reads + 1);
-  source.prices = [{ input: 10, output: 0, cache: { read: 0, write: 0 } }];
   source.label = "test/expensive";
   source.context = 64_000;
   events.emit("session.model.selected");
   await until(() => state.model === "test/expensive");
-  assert.equal(state.summary?.cost, 0.0002);
+  assert.equal(state.summary?.cost, 0.00004);
+  assert.equal(state.summary?.costStatus, "complete");
   assert.deepEqual(state.context, { used: 20, limit: 64_000, percent: 20 / 64_000 * 100 });
   source.context = undefined;
   events.emit("session.model.selected");

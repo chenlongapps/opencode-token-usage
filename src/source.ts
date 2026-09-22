@@ -1,12 +1,13 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode/client";
-import type { Price, UsageMessage } from "./usage.js";
+import { modelKey } from "./usage.js";
+import type { PriceCatalog, UsageMessage } from "./usage.js";
 
 export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location">;
 export interface Page<T> { data: T[]; cursor: { next?: string | null; previous?: string | null } }
-/** Active model of the viewed session: price tiers, display label and context window. */
+/** Active model of the viewed session plus the location's current resolved price catalog. */
 export interface ActiveModel {
   label: string;
-  prices: readonly Price[];
+  catalog: PriceCatalog;
   context?: number | undefined;
 }
 export interface UsageSource {
@@ -25,12 +26,15 @@ export function createSource(client: OpenCodeClient): UsageSource {
     async model(session, signal) {
       const input = { location: session.location };
       const selected = session.model;
+      const models = (await client.model.list(input, { signal })).data;
       const model = selected
-        ? (await client.model.list(input, { signal })).data.find(m => m.providerID === selected.providerID && m.id === selected.id)
-        : (await client.model.default(input, { signal })).data;
+        ? models.find(m => m.providerID === selected.providerID && m.id === selected.id)
+        : (await client.model.default(input, { signal })).data ?? undefined;
+      const catalog = new Map(models.map(value => [modelKey(value), value.cost] as const));
+      if (model && !catalog.has(modelKey(model))) catalog.set(modelKey(model), model.cost);
       return {
         label: model ? `${model.providerID}/${model.id}` : selected ? `${selected.providerID}/${selected.id}` : "Default model",
-        prices: model?.cost ?? [],
+        catalog,
         context: model?.limit?.context,
       };
     },

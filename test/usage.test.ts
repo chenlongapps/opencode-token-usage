@@ -1,22 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { contextUsage, estimate, formatCost, formatTokens, normalize, summarize, usageRows } from "../src/usage.js";
+import { contextUsage, estimate, formatCost, formatTokens, modelKey, normalize, summarize, usageRows } from "../src/usage.js";
 import type { Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
+const model = { providerID: "test", id: "model" };
+const catalog = (prices: readonly Price[] = [price]) => new Map([[modelKey(model), prices]]);
+const priced = (message: UsageMessage): UsageMessage => ({ ...message, model });
 
-test("five disjoint categories, total, cache rate, and message types", () => {
+test("five disjoint categories, per-message model cost, cache rate, and message types", () => {
   const value = summarize([
-    { id: "a", type: "assistant", tokens: { input: 200, output: 30, reasoning: 10, cache: { read: 600, write: 200 } } },
-    { id: "c", type: "compaction", tokens: { input: 100, output: 20 } },
+    priced({ id: "a", type: "assistant", tokens: { input: 200, output: 30, reasoning: 10, cache: { read: 600, write: 200 } } }),
+    priced({ id: "c", type: "compaction", tokens: { input: 100, output: 20 } }),
     { id: "u", type: "user", tokens: { input: 99_000 } },
     { id: "in-progress", type: "assistant" },
-  ], [price]);
+  ], catalog());
   assert.deepEqual(value.tokens, { input: 300, output: 50, reasoning: 10, cache: { read: 600, write: 200 } });
   assert.equal(value.total, 1160);
   assert.equal(value.cacheRate, 600 / 1100);
   assert.equal(usageRows(value).find(([label]) => label === "Cache Rate")?.[1], "54.5%");
   assert.ok(Math.abs(value.cost - 0.0018) < 1e-12);
+  assert.equal(value.costStatus, "complete");
 });
 
 test("steps count every assistant message across the tree and lead the panel", () => {
@@ -26,9 +30,9 @@ test("steps count every assistant message across the tree and lead the panel", (
     { id: "c", type: "compaction", status: "completed", tokens: { input: 100 } },
     { id: "u", type: "user", tokens: { input: 99_000 } },
   ];
-  const summary = summarize(messages, [price]);
+  const summary = summarize(messages);
   assert.equal(summary.steps, 2);
-  assert.equal(summarize([], [price]).steps, 0);
+  assert.equal(summarize([]).steps, 0);
   assert.equal(formatTokens(12_500), "12,500");
   assert.equal(usageRows(summary).find(([label]) => label === "Steps")?.[1], "2");
 
@@ -48,10 +52,11 @@ test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.deepEqual(normalize({ input: NaN, output: -10, reasoning: Infinity, cache: { read: 5 } }), {
     input: 0, output: 0, reasoning: 0, cache: { read: 5, write: 0 },
   });
-  const empty = summarize([], [price]);
+  const empty = summarize([]);
   assert.equal(empty.cacheRate, 0);
   assert.equal(empty.total, 0);
   assert.equal(empty.cost, 0);
+  assert.equal(empty.costStatus, "empty");
   assert.equal(usageRows(empty).length, 7);
   assert.equal(usageRows(empty).find(([label]) => label === "Cache Rate")?.[1], "0.0%");
   assert.ok(!usageRows(empty).some(([label]) => label === "Cache Write"));
@@ -60,18 +65,19 @@ test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.ok(usageRows().every(([, value]) => value === "—"));
 });
 
-test("cache write and cost rows are hidden independently when zero", () => {
+test("cache write stays conditional while confirmed free cost displays as zero", () => {
   const paidWithoutCache = summarize([
-    { id: "paid", type: "assistant", tokens: { input: 100 } },
-  ], [price]);
+    priced({ id: "paid", type: "assistant", tokens: { input: 100 } }),
+  ], catalog());
   assert.ok(!usageRows(paidWithoutCache).some(([label]) => label === "Cache Write"));
   assert.equal(usageRows(paidWithoutCache).find(([label]) => label === "Cost")?.[1], "<$0.01");
 
+  const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
   const freeWithCache = summarize([
-    { id: "free", type: "assistant", tokens: { cache: { write: 100 } } },
-  ], [{ input: 0, output: 0, cache: { read: 0, write: 0 } }]);
+    { id: "free", type: "assistant", model, tokens: { cache: { write: 100 } } },
+  ], catalog([freePrice]));
   assert.equal(usageRows(freeWithCache).find(([label]) => label === "Cache Write")?.[1], "100");
-  assert.ok(!usageRows(freeWithCache).some(([label]) => label === "Cost"));
+  assert.equal(usageRows(freeWithCache).find(([label]) => label === "Cost")?.[1], "$0.00");
 });
 
 test("ordinary, cache, and reasoning prices are per million tokens", () => {
@@ -91,7 +97,6 @@ test("tiers use per-message incoming tokens and strict thresholds", () => {
   assert.equal(estimate(normalize({ input: 200 }), tiers).cost, 0.002);
   assert.equal(estimate(normalize({ input: 201 }), tiers).cost, 0.00402);
   assert.equal(estimate(normalize({ input: 1, cache: { read: 100, write: 100 } }), tiers).cost, 0.00034);
-  assert.equal(summarize([1, 2].map(id => ({ id: String(id), type: "assistant", tokens: { input: 100 } })), tiers).cost, 0.0004);
 });
 
 test("free prices are distinct from missing prices and absent applicable tiers", () => {
@@ -100,6 +105,56 @@ test("free prices are distinct from missing prices and absent applicable tiers",
   assert.deepEqual(estimate(tokens), { cost: 0, defaultPrice: true });
   assert.deepEqual(estimate(tokens, [{ ...price, tier: { type: "context", size: 100 } }]), { cost: 0, defaultPrice: true });
   assert.deepEqual(estimate(tokens, [{ input: 2, output: NaN }]), { cost: 0.00002, defaultPrice: true });
+  assert.deepEqual(estimate(normalize({ input: 10 }), [{ input: 2 }]), { cost: 0.00002, defaultPrice: false });
+});
+
+test("OpenCode prices win, official prices fill gaps, and message-recorded cost is ignored", () => {
+  const officialModel = { providerID: "gateway", id: "openai/gpt-5.6-luna" };
+  const usage: UsageMessage = { id: "official", type: "assistant", model: officialModel, cost: 999, tokens: { input: 1_000_000 } };
+  const complete = summarize([usage]);
+  assert.equal(complete.cost, 0.4);
+  assert.equal(complete.costStatus, "complete");
+  assert.equal(usageRows(complete).find(([label]) => label === "Cost")?.[1], "$0.40");
+
+  const runtime = new Map([[modelKey(officialModel), [{ input: 3 }]]]);
+  assert.equal(summarize([usage], runtime).cost, 3);
+
+  const unavailable = summarize([{ id: "missing", type: "assistant", model: { providerID: "test", id: "unknown" }, tokens: { input: 10 } }]);
+  assert.equal(unavailable.costStatus, "unavailable");
+  assert.equal(usageRows(unavailable).find(([label]) => label === "Cost")?.[1], "—");
+
+  const partial = summarize([
+    usage,
+    { id: "missing", type: "assistant", model: { providerID: "test", id: "unknown" }, tokens: { input: 10 } },
+  ]);
+  assert.equal(partial.cost, 0.4);
+  assert.equal(partial.costStatus, "partial");
+  assert.equal(usageRows(partial).find(([label]) => label === "Cost")?.[1], "$0.40 · partial");
+});
+
+test("mixed-model trees price every message with its own model", () => {
+  const fast = { providerID: "test", id: "fast" };
+  const strong = { providerID: "test", id: "strong" };
+  const prices = new Map([
+    [modelKey(fast), [{ input: 1, output: 2 }]],
+    [modelKey(strong), [{ input: 10, output: 20 }]],
+  ]);
+  const summary = summarize([
+    { id: "fast", type: "assistant", model: fast, tokens: { input: 1_000_000, output: 1_000_000 } },
+    { id: "strong", type: "assistant", model: strong, tokens: { input: 1_000_000, output: 1_000_000 } },
+  ], prices);
+  assert.equal(summary.cost, 33);
+  assert.equal(summary.costStatus, "complete");
+});
+
+test("an incomplete OpenCode price falls back as a whole instead of mixing rates", () => {
+  const officialModel = { providerID: "gateway", id: "gpt-5.6-luna" };
+  const usage: UsageMessage = { id: "fallback", type: "compaction", model: officialModel, tokens: { input: 1_000_000, output: 1_000_000 } };
+  const incomplete = new Map([[modelKey(officialModel), [{ input: 9 }]]]);
+  assert.equal(summarize([usage], incomplete).cost, 2.2);
+  const free = new Map([[modelKey(officialModel), [{ input: 0, output: 0 }]]]);
+  assert.equal(summarize([usage], free).cost, 0);
+  assert.equal(summarize([usage], free).costStatus, "complete");
 });
 
 test("comma grouping, rounding boundaries and dollar display", () => {
@@ -123,7 +178,7 @@ test("context row leads the panel and carries the percentage inline", () => {
   assert.equal(usage?.used, 72_400);
   assert.equal(usage?.limit, 128_000);
   assert.equal(usage?.percent.toFixed(1), "56.6");
-  assert.deepEqual(usageRows(summarize(messages, [price]), usage), [
+  assert.deepEqual(usageRows(summarize(messages.map(message => priced(message)), catalog()), usage), [
     ["Context", "72,400 / 128,000 (56.6%)"],
     ["Steps", "1"],
     ["Input", "60,000"],
@@ -157,19 +212,20 @@ test("context uses the last assistant with tokens after the last completed compa
 test("unusable context limits and missing usage hide the context rows", () => {
   const messages: UsageMessage[] = [{ id: "a", type: "assistant", tokens: { input: 100 } }];
   for (const limit of [undefined, 0, -1, NaN, Infinity]) assert.equal(contextUsage(messages, limit), undefined);
-  const rows = usageRows(summarize(messages, []), contextUsage(messages, undefined));
-  assert.equal(rows.length, 7);
+  const rows = usageRows(summarize(messages), contextUsage(messages, undefined));
+  assert.equal(rows.length, 8);
   assert.ok(!rows.some(([label]) => label === "Context"));
+  assert.deepEqual(rows.find(([label]) => label === "Cost"), ["Cost", "—"]);
 });
 
 test("percentage may exceed the window and stays inline", () => {
   const usage = contextUsage([{ id: "a", type: "assistant", tokens: { input: 200 } }], 100);
   assert.equal(usage?.percent, 200);
-  assert.deepEqual(usageRows(summarize([], []), usage)[0], ["Context", "200 / 100 (200.0%)"]);
+  assert.deepEqual(usageRows(summarize([]), usage)[0], ["Context", "200 / 100 (200.0%)"]);
 });
 
 test("performance rows follow usage, mark live TPS estimates and hide unavailable metrics", () => {
-  const summary = summarize([], []);
+  const summary = summarize([]);
   const context = { used: 50, limit: 100, percent: 50 };
   const rows = usageRows(summary, context, { tps: 48.74, tpsEstimated: true, ttft: 2_650 });
   assert.deepEqual(rows.slice(-3), [

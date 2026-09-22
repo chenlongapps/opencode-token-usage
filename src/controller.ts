@@ -141,7 +141,7 @@ export class UsageController {
       this.performanceTimer = undefined;
       this.update({
         status: "ready",
-        summary: summarize(messages, snapshot.model.prices),
+        summary: summarize(messages, snapshot.model.catalog),
         context: contextUsage(viewedMessages(snapshot), snapshot.model.context),
         performance: this.performance.summary(messages, this.sessions),
         model: snapshot.model.label,

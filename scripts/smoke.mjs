@@ -33,6 +33,7 @@ const packageName = JSON.parse(await readFile(path.join(repo, "package.json"), "
 const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8", env: npmEnv }));
 const files = packed[0].files.map(file => file.path);
 assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && files.includes("index.js") && files.includes("tui.js"));
+assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts") && files.includes("docs/pricing.md"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
@@ -155,6 +156,7 @@ try {
   }, "packed server plugin activation");
   const models = await client.model.list({ location: { directory: project } });
   assert.ok(models.data.some(model => model.providerID === "usage-test"));
+  assert.deepEqual(models.data.find(model => model.providerID === "usage-test" && model.id === "gpt-5.6-luna")?.cost, []);
   const agents = await client.agent.list({ location: { directory: project } });
   childAgent = agents.data.find(agent => agent.mode !== "primary")?.id;
   assert.ok(childAgent, "a built-in subagent is available");
@@ -208,7 +210,10 @@ try {
   await firstPrompt;
   await wait(async () => (await client.message.list({ sessionID: root.id })).data.some(m => m.type === "assistant" && m.tokens), "first usage");
   let snapshot = await loadSnapshot(source, root.id, new AbortController().signal);
-  assert.equal(summarize(uniqueMessages(snapshot), snapshot.model.prices).total, 1270);
+  const firstSummary = summarize(uniqueMessages(snapshot), snapshot.model.catalog);
+  assert.equal(firstSummary.total, 1270);
+  assert.equal(firstSummary.cost, 0.00126);
+  assert.equal(firstSummary.costStatus, "complete");
   const context = contextUsage(viewedMessages(snapshot), snapshot.model.context);
   assert.equal(context?.used, 1270);
   assert.equal(snapshot.model.context, 128000);
@@ -217,7 +222,7 @@ try {
   assert.ok(performance.tps && performance.tps > 0);
   await wait(() => /Cache Read\s+1,000/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
   await wait(() => /Context\s+1,270 \/ 128,000 \(1\.0%\)/.test(tui.screen()), "context row after completion");
-  const stepsAfterFirst = summarize(uniqueMessages(snapshot), snapshot.model.prices).steps;
+  const stepsAfterFirst = firstSummary.steps;
   assert.equal(stepsAfterFirst, 1);
   await wait(() => new RegExp(`Steps\\s+${stepsAfterFirst}\\b`).test(tui.screen()), "steps row after completion");
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bSteps\s+1\b/),
@@ -246,19 +251,38 @@ try {
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(snapshot.viewedID, child.id);
-  const tree = summarize(uniqueMessages(snapshot), snapshot.model.prices);
+  const tree = summarize(uniqueMessages(snapshot), snapshot.model.catalog);
   assert.equal(tree.total, 5080);
   assert.equal(tree.steps, 4, "three root assistants plus one subagent assistant");
+  assert.equal(tree.cost, 0.00504);
+  assert.equal(tree.costStatus, "complete");
   assert.equal(contextUsage(viewedMessages(snapshot), snapshot.model.context)?.used, 1270);
   await wait(() => new RegExp(`Steps\\s+${tree.steps}\\b`).test(childTui.screen()), "tree-wide steps in child view");
-  assert.equal(summarize(viewedMessages(snapshot), snapshot.model.prices).steps, 1, "viewed session counts only its own step");
+  assert.equal(summarize(viewedMessages(snapshot), snapshot.model.catalog).steps, 1, "viewed session counts only its own step");
   console.log("PASS: real subagent usage is counted from parent and child views; context stays session-local; steps accumulate tree-wide");
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
   await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).model.label === "usage-test/large", "active model switch");
   await wait(() => /Context\s+1,270 \/ 32,000 \(4\.0%\)/.test(tui.screen()), "context window follows model switch");
+  const switchedSnapshot = await loadSnapshot(source, root.id, new AbortController().signal);
+  const switchedSummary = summarize(uniqueMessages(switchedSnapshot), switchedSnapshot.model.catalog);
+  assert.equal(switchedSummary.cost, tree.cost, "model switching does not reprice recorded history");
   await tui.save("08-model-switch");
-  console.log("PASS: active model switch refreshes price selection and context window");
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, switchTarget: switchTarget.id, total: 5080, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
+  console.log("PASS: active model switch preserves per-message pricing and refreshes the context window");
+
+  const officialTarget = await client.session.create({ location: { directory: project }, title: "Official Price Fallback", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  await client.session.switchModel({ sessionID: officialTarget.id, model: { providerID: "usage-test", id: "gpt-5.6-luna" } });
+  await client.session.prompt({ sessionID: officialTarget.id, text: "Return SMOKE_OK." });
+  await client.session.wait({ sessionID: officialTarget.id });
+  await wait(async () => (await client.message.list({ sessionID: officialTarget.id })).data.some(m => m.type === "assistant" && m.tokens), "official fallback usage");
+  const officialSnapshot = await loadSnapshot(source, officialTarget.id, new AbortController().signal);
+  const officialSummary = summarize(uniqueMessages(officialSnapshot), officialSnapshot.model.catalog);
+  assert.ok(Math.abs(officialSummary.cost - 0.000149) < 1e-12);
+  assert.equal(officialSummary.costStatus, "complete");
+  const officialTui = openTui(officialTarget.id);
+  await wait(() => /Cost\s+<\$0\.01/.test(officialTui.screen()), "official fallback cost in sidebar");
+  await officialTui.save("09-official-price-fallback");
+  console.log("PASS: a model with no OpenCode price uses the packaged manufacturer price");
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const [index, terminal] of terminals.entries()) {
     await terminal.save(`final-${index}`);

@@ -2,14 +2,14 @@
 
 ## 未发布（SDK 2.0.11）
 
-验证日期：2026-09-22。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 均精确锁定为 2.0.11。
+验证日期：2026-09-23。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 均精确锁定为 2.0.11。
 
 ### 自动化检查
 
 | 检查 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 通过 |
-| `npm test` | 32 项通过 |
+| `npm test` | 43 项通过 |
 | `npm run build` | 通过，输出 ESM 与类型声明 |
 | `npm run test:smoke` | 通过，使用实际 `.tgz` 安装产物和真实 OpenCode 2.0.11 |
 
@@ -19,13 +19,15 @@ SDK 从 2.0.9 升级到 2.0.11 后，四个顶层 OpenCode 包及锁文件中的
 
 新增 Steps 计数覆盖：`summarize` 对带与不带 `tokens` 的 assistant 消息各计一个 step、compaction 与 user 消息不计、无 summary 时显示 `—`；`uniqueMessages` 链路上分叉继承副本不重复计数（快照 2 个 step、独立分叉树 1 个 step）、compaction 不产生 step、孙会话视图与根视图同为 6 个 step；行序断言锁定 Context → Steps → Input，无 Context 时 Steps 位于面板第一行。基准行数由 6 行调整为 7 行。
 
+v0.3.0 成本测试覆盖：assistant 与 compaction 按消息实际 `model` 和五类 token 分别计算，混合模型树各自采用对应价格，消息自带 `cost` 不参与主 Cost。当前 OpenCode 模型目录中的完整适用价格优先；适用档位或实际使用类别缺价时，整条消息回退到内置官方快照，不拼接两套费率。官方目录测试锁定 71 个 2026-03-22 至 2026-09-22 发布的模型、来源 URL、唯一 ID、OpenAI/xAI/通义千问/MiniMax/Sakana 长上下文与上下文档位边界，以及 OpenRouter、Bedrock、Vertex 等包装格式和明确别名；相似名称不得猜价。目录按 OpenCode 当前模型目录（`temp/models.json`，210 个模型）补齐主流厂商：OpenAI、Anthropic、Google、xAI、Mistral、Cohere 之外新增 Z.ai（GLM）、DeepSeek、Moonshot（Kimi）、阿里云百炼（Qwen）、小米（MiMo）、MiniMax、腾讯（混元）、StepFun、Meta、Inception、Upstage、Arcee AI、ByteDance Seed、Sakana、Aion Labs、美团（LongCat）；DeepSeek V4.1 Flash 与 V4 Pro 按厂商官方峰值最高价估算，旧 Flash、Vision Exp 和日期版本通过精确别名匹配。Step 5 Preview 的缓存写入按官方“cache-miss Input 包含首次缓存写入”规则使用 `$1 / M`。OpenRouter 圆点写法 `claude-opus-4.7`/`4.8`、官方 ChatGPT SKU `chat-latest`（别名 `gpt-chat-latest`）、Mercury 2.5、Solar Pro 4、Seed 2.1 Turbo、Fugu 版本、Aion 的 `aion-labs/` 前缀与 LongCat 网关链路同样通过精确别名匹配。窗口外的 `grok-4.20`、Fast/Priority 档、图片/音频/视频、免费与无官方标准价的模型均不收录；`kwaipilot/kat-coder-pro-v2.5`、`inclusionai/ling-3.0-*` 和 `bytedance-seed/seed-2.0-code` 只有网关或第三方报价，未据此猜价。缺价显示 `Cost —`，已知小计与缺价消息并存时显示 `· partial`，明确零价显示 `$0.00`。
+
 ### 真实 OpenCode 集成
 
-隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行并显示 `Steps 0`；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文与费用刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。Steps 在真实集成中断言为：首条 assistant 完成后 `Steps 1` 且行序位于 Context 与 Input 之间；真实子代理场景下根视图与子代理视图均为 `Steps 4`（父 3 条 + 子 1 条），而被查看会话自身仍为 1，确认 Steps 随整棵树累计、上下文保持会话局部。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-423PQP`。
+隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行并显示 `Steps 0`；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。Steps 在真实集成中断言为：首条 assistant 完成后 `Steps 1` 且行序位于 Context 与 Input 之间；真实子代理场景下根视图与子代理视图均为 `Steps 4`（父 3 条 + 子 1 条），而被查看会话自身仍为 1。按 OpenCode 夹具价格计算，首条调用为 `$0.00126`，四条父/子代理调用累计 `$0.00504`；根会话切换到另一价格模型后，历史消息仍按自身模型保持 `$0.00504`，Context 则从 128,000 上限同步切换到 32,000。另一个模型在 OpenCode 目录中明确为 `cost: []`，其 `gpt-5.6-luna` 调用由打包产物内置官方价格计算为 `$0.000149`，TUI 显示 `Cost <$0.01`；安装包同时断言包含 `dist/pricing.js`、类型声明与 `docs/pricing.md`。本次 smoke 使用官方 `@opencode/cli-darwin-arm64@2.0.11` 的隔离二进制（安装于 `/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/isolated-cli-2011`，机器默认宿主仍为 2.0.14，未放宽版本断言），测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-Zq62zn`。
 
 ### 验证边界
 
-当前 SDK 2.0.11 与宿主 2.0.11 的组合已完整验证。验证时机器默认宿主已是 2.0.12，因此 smoke 使用校验完整性的官方 `@opencode/cli-darwin-arm64@2.0.11` 隔离二进制，没有放宽宿主版本断言。2.0.9 和 2.0.10 宿主的历史验证记录保留在下方，但升级 SDK 后未重新执行这两个旧宿主的打包矩阵。后续升级 SDK 或宿主时，仍需重新核对分叉副本、compaction 排序及 step/delta 事件语义。
+当前 SDK 2.0.11 与宿主 2.0.11 的组合已完整验证。验证时机器默认宿主已是 2.0.14，因此 smoke 使用校验完整性的官方 `@opencode/cli-darwin-arm64@2.0.11` 隔离二进制，没有放宽宿主版本断言。2.0.9 和 2.0.10 宿主的历史验证记录保留在下方，但升级 SDK 后未重新执行这两个旧宿主的打包矩阵。后续升级 SDK 或宿主时，仍需重新核对消息模型字段、模型价格结构、分叉副本、compaction 排序及 step/delta 事件语义。官方价格是 2026-09-23 的版本内快照，采用标准同步 API 公开价；DeepSeek 峰谷计费采用峰值最高价作为保守上界。网关溢价、区域价、免费额度、折扣、工具费及无法由五类 token 表示的计费不在估算内，详细范围见 `docs/pricing.md`。
 
 ## v0.2.1（TPS 与 TTFT）
 

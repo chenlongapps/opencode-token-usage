@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import type { Session, UsageSource, Page } from "../src/source.js";
+import { modelKey } from "../src/usage.js";
 import type { UsageMessage, Price } from "../src/usage.js";
 import type { UsageEvent } from "../src/controller.js";
 
 export const session = (id: string, parentID?: string): Session => ({
   id, ...(parentID ? { parentID } : {}), location: { directory: "/tmp/usage" },
 });
-export const message = (id: string, input = 10, type = "assistant"): UsageMessage => ({ id, type, tokens: { input } });
+export const message = (id: string, input = 10, type = "assistant"): UsageMessage => ({
+  id,
+  type,
+  tokens: { input },
+  ...((type === "assistant" || type === "compaction")
+    ? { model: { providerID: "test", id: "model" } }
+    : {}),
+});
 export const page = <T>(data: T[], next?: string): Page<T> => ({ data, cursor: next ? { next } : {} });
 
 export class FakeSource implements UsageSource {
@@ -29,7 +37,10 @@ export class FakeSource implements UsageSource {
     return this.slice([...this.sessions.values()].filter(s => s.parentID === id), cursor);
   }
   async messages(id: string, cursor?: string) { return this.slice(this.history.get(id) ?? [], cursor); }
-  async model() { return { label: this.label, prices: this.prices, context: this.context }; }
+  async model() { return { label: this.label, catalog: new Map([
+    [modelKey({ providerID: "test", id: "model" }), this.prices],
+    [modelKey({ providerID: "test", id: "expensive" }), [{ input: 10, output: 0, cache: { read: 0, write: 0 } }]],
+  ]), context: this.context }; }
   private slice<T>(data: T[], cursor?: string): Page<T> {
     const offset = Number(cursor ?? 0);
     return page(data.slice(offset, offset + this.size), offset + this.size < data.length ? String(offset + this.size) : undefined);

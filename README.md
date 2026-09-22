@@ -50,7 +50,7 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 | `Total` | Sum of all five token categories |
 | `Context` | Latest context usage after the most recent completed compaction in the viewed session; not aggregated across the subtree |
 | `Steps` | Assistant message count across the session tree, including subagents; follows OpenCode's own stats definition, so compaction and user messages are not steps |
-| `Cost` | Estimated cost for the entire tree, recalculated using the viewed session's active model; not a provider bill |
+| `Cost` | Estimated cost across the tree, pricing each assistant and compaction call with its actual model |
 | `TPS` | Generation throughput for `Output + Reasoning` across the tree; live estimates are marked with `~` |
 | `TTFT` | Average time to first token across measurable assistant steps in the tree |
 
@@ -60,7 +60,9 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 - A fork is a separate session tree. Inherited message copies are attributed only to their original source to prevent double counting.
 - `Context` only searches messages after the most recent compaction with `status === "completed"` and is hidden when reliable usage or a model context limit is unavailable.
 - `Steps` counts every assistant message in the tree, whether or not it reported usage, and reuses the fork-copy de-duplication so inherited history is never counted twice.
-- `Cost` applies the viewed session's active model to the whole tree. Missing applicable prices fall back to 0, matching OpenCode's behavior.
+- `Cost` prices every message with its recorded model. A complete applicable price resolved by OpenCode takes precedence; when OpenCode has no usable price, the plugin falls back to a packaged snapshot of manufacturer prices.
+- Gateway models can use manufacturer fallback prices through exact model IDs and documented aliases. The fallback does not include gateway markups, regional premiums, discounts, tool fees, or taxes, so Cost is an estimate rather than a provider bill.
+- Confirmed free usage displays `$0.00`; unavailable prices display `—`; known subtotals with unpriced messages are marked `partial`. See the [built-in price snapshot](docs/pricing.md) for coverage, sources, and limitations.
 - Initial read failures display `Unavailable`. Later failures retain the last complete snapshot, display `Not updated`, and retry automatically.
 
 ### Development
@@ -73,7 +75,7 @@ npm run build
 npm run test:smoke
 ```
 
-`test:smoke` packages the real artifact and validates loading, refreshes, subagent aggregation, model switching, TPS, and TTFT against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
+`test:smoke` packages the real artifact and validates loading, refreshes, subagent aggregation, per-message pricing, official-price fallback, model switching, TPS, and TTFT against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
 
 To load the plugin from source, build the project and add the repository's absolute path to `plugins` in the target project.
 

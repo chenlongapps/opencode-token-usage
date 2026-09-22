@@ -5,11 +5,17 @@ export default Plugin.define({
   id: "token-usage.smoke-provider",
   async setup(context) {
     const providerID = Provider.ID.make("usage-test");
-    const models = ["small", "large"].map((name, index) => ({
+    const models = [
+      { name: "small", context: 128000, cost: [{ input: 2, output: 8, cache: { read: 0.2, write: 3 } }] },
+      { name: "large", context: 32000, cost: [{ input: 4, output: 16, cache: { read: 0.4, write: 3 } }] },
+      // Intentionally absent from OpenCode's price data. The usage plugin must
+      // match this manufacturer ID against its packaged official snapshot.
+      { name: "gpt-5.6-luna", context: 1050000, cost: [] },
+    ].map(({ name, context, cost }) => ({
       ...Model.Info.default(providerID, Model.ID.make(name)),
       name: `Usage Test ${name}`,
-      limit: { context: index === 0 ? 128000 : 32000, output: 4096 },
-      cost: [{ input: 2 * (index + 1), output: 8 * (index + 1), cache: { read: 0.2, write: 3 } }],
+      limit: { context, output: 4096 },
+      cost,
     }));
     await context.provider.transform(editor => editor.add({
       info: {

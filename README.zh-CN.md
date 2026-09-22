@@ -50,7 +50,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | `Total` | 五类 token 之和 |
 | `Context` | 当前会话最后一次已完成压缩后的最新上下文用量，不随子树累计 |
 | `Steps` | 全树（含子代理）的 assistant 消息数，口径与 OpenCode 自带统计一致，compaction 与用户消息不计为 step |
-| `Cost` | 按当前会话活动模型重新估算的全树费用，不代表提供商账单 |
+| `Cost` | 按每条 assistant 与 compaction 消息实际模型估算的全树费用 |
 | `TPS` | 全树 `Output + Reasoning` 的生成速度；生成中的估算值带 `~` 标记 |
 | `TTFT` | 全树中可测 assistant step 的平均首 token 时间 |
 
@@ -60,7 +60,9 @@ opencode plugin add @chenlongapps/opencode-token-usage
 - 分叉会话是独立会话树。继承消息副本只归原始来源，避免重复计费。
 - `Context` 仅搜索最后一次 `status === "completed"` 的 compaction 之后；没有可靠用量或模型上限时隐藏。
 - `Steps` 统计树中全部 assistant 消息，无论是否已上报用量；复用分叉副本去重，继承历史不会重复计数。
-- `Cost` 使用当前查看会话的活动模型重算整棵树；缺失适用价格时按 OpenCode 行为回退为 0。
+- `Cost` 按每条消息记录的实际模型分别计算。OpenCode 当前解析出的完整适用价格优先；OpenCode 没有可用价格时，回退到插件内置的厂商官方价格快照。
+- 网关模型可通过精确模型 ID 和已记录别名使用厂商价格，但不包含网关加价、区域溢价、折扣、工具费和税费，因此 Cost 是估算而非提供商账单。
+- 确认免费时显示 `$0.00`；价格不可用时显示 `—`；只有部分消息可计算时在已知小计后标注 `partial`。覆盖范围、来源和限制见[内置官方价格快照](docs/pricing.md)。
 - 首次读取失败显示 `Unavailable`；后续失败保留上次完整快照、标注 `Not updated` 并自动重试。
 
 ### 开发
@@ -73,7 +75,7 @@ npm run build
 npm run test:smoke
 ```
 
-`test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、子代理累计、模型切换、TPS 和 TTFT。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
+`test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、子代理累计、逐消息计价、官方价格补全、模型切换、TPS 和 TTFT。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
 
 从源码加载时，先构建项目，再将仓库绝对路径加入目标项目的 `plugins`。
 

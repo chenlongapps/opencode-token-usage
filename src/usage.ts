@@ -1,4 +1,5 @@
 import type { PerformanceSummary } from "./performance.js";
+import { officialPrice } from "./pricing.js";
 
 export interface Tokens {
   input: number;
@@ -21,10 +22,22 @@ export interface Price {
   cache?: { read?: number; write?: number };
 }
 
+export interface ModelRef {
+  providerID: string;
+  id: string;
+  variant?: string;
+}
+
+export type PriceCatalog = ReadonlyMap<string, readonly Price[]>;
+
+export const modelKey = (model: Pick<ModelRef, "providerID" | "id">) => `${model.providerID}/${model.id}`;
+
 export interface UsageMessage {
   id: string;
   type: string;
   status?: string;
+  model?: ModelRef;
+  cost?: number;
   tokens?: TokenInput;
   time?: { created: number; streamed?: number; completed?: number };
   content?: readonly UsageContent[];
@@ -48,42 +61,57 @@ export function normalize(tokens?: TokenInput): Tokens {
 export const incoming = (t: Tokens) => t.input + t.cache.read + t.cache.write;
 export const total = (t: Tokens) => incoming(t) + t.output + t.reasoning;
 
-// Matches OpenCode 2.0.9 SessionUsage.calculateCost: thresholds are exclusive.
+// Matches OpenCode 2.0.11 SessionUsage.calculateCost: thresholds are exclusive.
 export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
   const tier = prices.filter(p => p.tier && incoming(tokens) > p.tier.size)
     .sort((a, b) => b.tier!.size - a.tier!.size)[0];
   const price = tier ?? prices.find(p => !p.tier);
   const rates = [price?.input, price?.output, price?.cache?.read, price?.cache?.write];
+  const quantities = [tokens.input, tokens.output + tokens.reasoning, tokens.cache.read, tokens.cache.write];
   return {
-    cost: (tokens.input * safe(rates[0]) + (tokens.output + tokens.reasoning) * safe(rates[1])
-      + tokens.cache.read * safe(rates[2]) + tokens.cache.write * safe(rates[3])) / 1_000_000,
-    defaultPrice: rates.some(rate => rate === undefined || !Number.isFinite(rate) || rate < 0),
+    cost: quantities.reduce((sum, quantity, index) => sum + quantity * safe(rates[index]), 0) / 1_000_000,
+    defaultPrice: total(tokens) > 0 && (!price || rates.some((rate, index) => quantities[index]! > 0
+      && (rate === undefined || !Number.isFinite(rate) || rate < 0))),
   };
 }
 
-export function summarize(messages: Iterable<UsageMessage>, prices: readonly Price[] = []) {
+export type CostStatus = "empty" | "complete" | "partial" | "unavailable";
+
+/** Prices every call with its recorded model. OpenCode's resolved price wins;
+ * the built-in manufacturer snapshot is used only when that price is incomplete. */
+export function summarize(messages: Iterable<UsageMessage>, catalog: PriceCatalog = new Map()) {
   const tokens = normalize();
   let cost = 0;
   let steps = 0;
-  let defaultPrice = prices.length === 0;
+  let knownCosts = 0;
+  let missingCosts = 0;
   for (const message of messages) {
     // Matches OpenCode SessionStats: every assistant message is one step,
     // with or without reported usage; compaction and user messages are not.
     if (message.type === "assistant") steps++;
-    if ((message.type !== "assistant" && message.type !== "compaction") || !message.tokens) continue;
+    if (message.type !== "assistant" && message.type !== "compaction") continue;
     const t = normalize(message.tokens);
     tokens.input += t.input;
     tokens.output += t.output;
     tokens.reasoning += t.reasoning;
     tokens.cache.read += t.cache.read;
     tokens.cache.write += t.cache.write;
-    const value = estimate(t, prices);
-    cost += value.cost;
-    defaultPrice ||= value.defaultPrice;
+    if (total(t) === 0) continue;
+    if (!message.model) {
+      missingCosts++;
+      continue;
+    }
+    let value = estimate(t, catalog.get(modelKey(message.model)));
+    if (value.defaultPrice) value = estimate(t, officialPrice(message.model)?.prices);
+    if (value.defaultPrice) missingCosts++;
+    else { cost += value.cost; knownCosts++; }
   }
+  const costStatus: CostStatus = missingCosts > 0
+    ? knownCosts > 0 ? "partial" : "unavailable"
+    : knownCosts > 0 ? "complete" : "empty";
   return {
     tokens, total: total(tokens), cacheRate: incoming(tokens) ? tokens.cache.read / incoming(tokens) : 0,
-    steps, cost, defaultPrice,
+    steps, cost, costStatus,
   };
 }
 
@@ -138,7 +166,9 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
     ["Cache Rate", summary ? `${(summary.cacheRate * 100).toFixed(1)}%` : "—"],
     ["Total", number(summary?.total)],
   );
-  if (summary && summary.cost > 0) rows.push(["Cost", formatCost(summary.cost)]);
+  if (summary?.costStatus === "complete") rows.push(["Cost", formatCost(summary.cost)]);
+  if (summary?.costStatus === "partial") rows.push(["Cost", `${formatCost(summary.cost)} · partial`]);
+  if (summary?.costStatus === "unavailable") rows.push(["Cost", "—"]);
   if (performance?.tps !== undefined && Number.isFinite(performance.tps)) {
     rows.push(["TPS", `${performance.tpsEstimated ? "~" : ""}${Math.max(0, performance.tps).toFixed(1)} tok/s`]);
   }

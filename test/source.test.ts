@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { OpenCodeClient } from "@opencode/client";
 import { createSource, loadSnapshot, pages, uniqueMessages, viewedMessages } from "../src/source.js";
-import { summarize } from "../src/usage.js";
+import { modelKey, summarize } from "../src/usage.js";
 import { FakeSource, message, page, session } from "./helpers.js";
 
 test("paginated history and all descendants, same tree when viewing a grandchild", async () => {
@@ -17,11 +17,11 @@ test("paginated history and all descendants, same tree when viewing a grandchild
   assert.equal(child.rootID, "root");
   assert.equal(child.viewedID, "grandchild");
   assert.equal(child.sessions.size, 5);
-  assert.equal(summarize(uniqueMessages(root)).total, 190);
-  assert.equal(summarize(uniqueMessages(child)).total, 190);
+  assert.equal(summarize(uniqueMessages(root), root.model.catalog).total, 190);
+  assert.equal(summarize(uniqueMessages(child), child.model.catalog).total, 190);
   // Two root assistants plus one assistant per descendant session; compaction is not a step.
-  assert.equal(summarize(uniqueMessages(root)).steps, 6);
-  assert.equal(summarize(uniqueMessages(child)).steps, 6);
+  assert.equal(summarize(uniqueMessages(root), root.model.catalog).steps, 6);
+  assert.equal(summarize(uniqueMessages(child), child.model.catalog).steps, 6);
 });
 
 test("viewed messages keep API order and never include the rest of the tree", async () => {
@@ -41,9 +41,11 @@ test("latest snapshots replace repeated message IDs; inherited history is counte
   source.history.set("child", [message("a", 50), message("msg_fork_12", 50), message("new-child", 20)]);
   const snapshot = await loadSnapshot(source, "child", new AbortController().signal);
   assert.equal(snapshot.messages.get("root")?.size, 1);
-  assert.equal(summarize(uniqueMessages(snapshot)).total, 70);
+  const summary = summarize(uniqueMessages(snapshot), snapshot.model.catalog);
+  assert.equal(summary.total, 70);
+  assert.ok(Math.abs(summary.cost - 0.00014) < 1e-12);
   // The inherited copy `msg_fork_12` is skipped, so its step stays with its origin.
-  assert.equal(summarize(uniqueMessages(snapshot)).steps, 2);
+  assert.equal(summary.steps, 2);
 });
 
 test("fork is a separate root; copied history is charged only to its original source", async () => {
@@ -52,8 +54,10 @@ test("fork is a separate root; copied history is charged only to its original so
   source.history.set("fork", [message("msg_fork_1", 1000), message("own", 3)]);
   const snapshot = await loadSnapshot(source, "fork", new AbortController().signal);
   assert.equal(snapshot.rootID, "fork");
-  assert.equal(summarize(uniqueMessages(snapshot)).total, 3);
-  assert.equal(summarize(uniqueMessages(snapshot)).steps, 1);
+  const summary = summarize(uniqueMessages(snapshot), snapshot.model.catalog);
+  assert.equal(summary.total, 3);
+  assert.equal(summary.cost, 0.000006);
+  assert.equal(summary.steps, 1);
 });
 
 test("pagination loops, cycles, cancellation and partial page failures reject the snapshot", async () => {
@@ -79,15 +83,19 @@ test("adapter uses the viewed session model/location and falls back to location 
   const signal = new AbortController().signal;
   const selected = { ...session("child"), model: { id: "m", providerID: "p" } };
   const active = await source.model(selected, signal);
-  assert.equal(active.prices[0]?.input, 9);
+  assert.equal(active.catalog.get(modelKey({ providerID: "p", id: "m" }))?.[0]?.input, 9);
   assert.equal(active.context, 128_000);
   assert.equal(active.label, "p/m");
   assert.equal((await source.model(session("root"), signal)).context, 128_000);
   const missing = await source.model({ ...selected, model: { id: "missing", providerID: "p" } }, signal);
-  assert.deepEqual(missing.prices, []);
+  assert.equal(missing.catalog.get(modelKey({ providerID: "p", id: "missing" })), undefined);
   assert.equal(missing.context, undefined);
   assert.equal(missing.label, "p/missing");
-  assert.deepEqual(requests, [["list", { location: selected.location }], ["default", { location: selected.location }], ["list", { location: selected.location }]]);
+  assert.deepEqual(requests, [
+    ["list", { location: selected.location }],
+    ["list", { location: selected.location }], ["default", { location: selected.location }],
+    ["list", { location: selected.location }],
+  ]);
   // Models without a runtime context limit must not break the panel.
   const unlimited = { id: "n", providerID: "p", cost: [] };
   const fallback = { model: { list: async () => ({ data: [unlimited] }) } } as unknown as OpenCodeClient;
