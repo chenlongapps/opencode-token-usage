@@ -49,6 +49,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | `Cache Rate` | `Cache Read ÷ (Input + Cache Read + Cache Write)` |
 | `Total` | 五类 token 之和 |
 | `Context` | 当前会话最后一次已完成压缩后的最新上下文用量，不随子树累计 |
+| `Steps` | 全树（含子代理）的 assistant 消息数，口径与 OpenCode 自带统计一致，compaction 与用户消息不计为 step |
 | `Cost` | 按当前会话活动模型重新估算的全树费用，不代表提供商账单 |
 | `TPS` | 全树 `Output + Reasoning` 的生成速度；生成中的估算值带 `~` 标记 |
 | `TTFT` | 全树中可测 assistant step 的平均首 token 时间 |
@@ -58,6 +59,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 - 用量覆盖会话树中服务端上报的 assistant 与 compaction 消息，包括未打开的子代理；不按文本长度估算 token。
 - 分叉会话是独立会话树。继承消息副本只归原始来源，避免重复计费。
 - `Context` 仅搜索最后一次 `status === "completed"` 的 compaction 之后；没有可靠用量或模型上限时隐藏。
+- `Steps` 统计树中全部 assistant 消息，无论是否已上报用量；复用分叉副本去重，继承历史不会重复计数。
 - `Cost` 使用当前查看会话的活动模型重算整棵树；缺失适用价格时按 OpenCode 行为回退为 0。
 - 首次读取失败显示 `Unavailable`；后续失败保留上次完整快照、标注 `Not updated` 并自动重试。
 

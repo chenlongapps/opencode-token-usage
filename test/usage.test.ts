@@ -19,6 +19,31 @@ test("five disjoint categories, total, cache rate, and message types", () => {
   assert.ok(Math.abs(value.cost - 0.0018) < 1e-12);
 });
 
+test("steps count every assistant message across the tree and lead the panel", () => {
+  const messages: UsageMessage[] = [
+    { id: "a", type: "assistant", tokens: { input: 200 } },
+    { id: "b", type: "assistant" }, // A step still running or without reported usage counts.
+    { id: "c", type: "compaction", status: "completed", tokens: { input: 100 } },
+    { id: "u", type: "user", tokens: { input: 99_000 } },
+  ];
+  const summary = summarize(messages, [price]);
+  assert.equal(summary.steps, 2);
+  assert.equal(summarize([], [price]).steps, 0);
+  assert.equal(formatTokens(12_500), "12,500");
+  assert.equal(usageRows(summary).find(([label]) => label === "Steps")?.[1], "2");
+
+  // The compaction boundary above hides the context row; use plain history for ordering.
+  const context = contextUsage(messages.slice(0, 2), 128_000);
+  const rows = usageRows(summary, context);
+  assert.deepEqual(rows[0], ["Context", "200 / 128,000 (0.2%)"]);
+  assert.deepEqual(rows[1], ["Steps", "2"]);
+  assert.equal(rows[2]?.[0], "Input");
+  // Without a context limit the steps row becomes the panel lead.
+  assert.deepEqual(usageRows(summary, undefined)[0], ["Steps", "2"]);
+  // A missing summary keeps the row visible with the em-dash placeholder.
+  assert.deepEqual(usageRows(undefined, undefined)[0], ["Steps", "—"]);
+});
+
 test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.deepEqual(normalize({ input: NaN, output: -10, reasoning: Infinity, cache: { read: 5 } }), {
     input: 0, output: 0, reasoning: 0, cache: { read: 5, write: 0 },
@@ -27,11 +52,11 @@ test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.equal(empty.cacheRate, 0);
   assert.equal(empty.total, 0);
   assert.equal(empty.cost, 0);
-  assert.equal(usageRows(empty).length, 6);
+  assert.equal(usageRows(empty).length, 7);
   assert.equal(usageRows(empty).find(([label]) => label === "Cache Rate")?.[1], "0.0%");
   assert.ok(!usageRows(empty).some(([label]) => label === "Cache Write"));
   assert.ok(!usageRows(empty).some(([label]) => label === "Cost"));
-  assert.equal(usageRows().length, 6);
+  assert.equal(usageRows().length, 7);
   assert.ok(usageRows().every(([, value]) => value === "—"));
 });
 
@@ -100,6 +125,7 @@ test("context row leads the panel and carries the percentage inline", () => {
   assert.equal(usage?.percent.toFixed(1), "56.6");
   assert.deepEqual(usageRows(summarize(messages, [price]), usage), [
     ["Context", "72,400 / 128,000 (56.6%)"],
+    ["Steps", "1"],
     ["Input", "60,000"],
     ["Output", "10,000"],
     ["Reasoning", "2,400"],
@@ -132,7 +158,7 @@ test("unusable context limits and missing usage hide the context rows", () => {
   const messages: UsageMessage[] = [{ id: "a", type: "assistant", tokens: { input: 100 } }];
   for (const limit of [undefined, 0, -1, NaN, Infinity]) assert.equal(contextUsage(messages, limit), undefined);
   const rows = usageRows(summarize(messages, []), contextUsage(messages, undefined));
-  assert.equal(rows.length, 6);
+  assert.equal(rows.length, 7);
   assert.ok(!rows.some(([label]) => label === "Context"));
 });
 

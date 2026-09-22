@@ -9,7 +9,7 @@
 | 检查 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 通过 |
-| `npm test` | 31 项通过 |
+| `npm test` | 32 项通过 |
 | `npm run build` | 通过，输出 ESM 与类型声明 |
 | `npm run test:smoke` | 通过，使用实际 `.tgz` 安装产物和真实 OpenCode 2.0.11 |
 
@@ -17,9 +17,11 @@ SDK 从 2.0.9 升级到 2.0.11 后，四个顶层 OpenCode 包及锁文件中的
 
 新增共享性能监视器测试覆盖：查看会话 A 时捕获独立会话 B 的流，切换到 B 后立即恢复实时 TPS/TTFT；生成中切走、继续接收 delta 再切回；控制器销毁重建后恢复共享流；不同会话树隔离、新子代理即时纳入，以及删除会话清理运行期状态。既有重复事件去重与完成后收敛为精确 TPS 的断言继续通过。
 
+新增 Steps 计数覆盖：`summarize` 对带与不带 `tokens` 的 assistant 消息各计一个 step、compaction 与 user 消息不计、无 summary 时显示 `—`；`uniqueMessages` 链路上分叉继承副本不重复计数（快照 2 个 step、独立分叉树 1 个 step）、compaction 不产生 step、孙会话视图与根视图同为 6 个 step；行序断言锁定 Context → Steps → Input，无 Context 时 Steps 位于面板第一行。基准行数由 6 行调整为 7 行。
+
 ### 真实 OpenCode 集成
 
-隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文与费用刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-cgsCK2`。
+隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行并显示 `Steps 0`；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文与费用刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。Steps 在真实集成中断言为：首条 assistant 完成后 `Steps 1` 且行序位于 Context 与 Input 之间；真实子代理场景下根视图与子代理视图均为 `Steps 4`（父 3 条 + 子 1 条），而被查看会话自身仍为 1，确认 Steps 随整棵树累计、上下文保持会话局部。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-423PQP`。
 
 ### 验证边界
 

@@ -19,6 +19,9 @@ test("paginated history and all descendants, same tree when viewing a grandchild
   assert.equal(child.sessions.size, 5);
   assert.equal(summarize(uniqueMessages(root)).total, 190);
   assert.equal(summarize(uniqueMessages(child)).total, 190);
+  // Two root assistants plus one assistant per descendant session; compaction is not a step.
+  assert.equal(summarize(uniqueMessages(root)).steps, 6);
+  assert.equal(summarize(uniqueMessages(child)).steps, 6);
 });
 
 test("viewed messages keep API order and never include the rest of the tree", async () => {
@@ -39,6 +42,8 @@ test("latest snapshots replace repeated message IDs; inherited history is counte
   const snapshot = await loadSnapshot(source, "child", new AbortController().signal);
   assert.equal(snapshot.messages.get("root")?.size, 1);
   assert.equal(summarize(uniqueMessages(snapshot)).total, 70);
+  // The inherited copy `msg_fork_12` is skipped, so its step stays with its origin.
+  assert.equal(summarize(uniqueMessages(snapshot)).steps, 2);
 });
 
 test("fork is a separate root; copied history is charged only to its original source", async () => {
@@ -48,6 +53,7 @@ test("fork is a separate root; copied history is charged only to its original so
   const snapshot = await loadSnapshot(source, "fork", new AbortController().signal);
   assert.equal(snapshot.rootID, "fork");
   assert.equal(summarize(uniqueMessages(snapshot)).total, 3);
+  assert.equal(summarize(uniqueMessages(snapshot)).steps, 1);
 });
 
 test("pagination loops, cycles, cancellation and partial page failures reject the snapshot", async () => {

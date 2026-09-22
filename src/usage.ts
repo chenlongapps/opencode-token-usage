@@ -64,8 +64,12 @@ export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
 export function summarize(messages: Iterable<UsageMessage>, prices: readonly Price[] = []) {
   const tokens = normalize();
   let cost = 0;
+  let steps = 0;
   let defaultPrice = prices.length === 0;
   for (const message of messages) {
+    // Matches OpenCode SessionStats: every assistant message is one step,
+    // with or without reported usage; compaction and user messages are not.
+    if (message.type === "assistant") steps++;
     if ((message.type !== "assistant" && message.type !== "compaction") || !message.tokens) continue;
     const t = normalize(message.tokens);
     tokens.input += t.input;
@@ -77,7 +81,10 @@ export function summarize(messages: Iterable<UsageMessage>, prices: readonly Pri
     cost += value.cost;
     defaultPrice ||= value.defaultPrice;
   }
-  return { tokens, total: total(tokens), cacheRate: incoming(tokens) ? tokens.cache.read / incoming(tokens) : 0, cost, defaultPrice };
+  return {
+    tokens, total: total(tokens), cacheRate: incoming(tokens) ? tokens.cache.read / incoming(tokens) : 0,
+    steps, cost, defaultPrice,
+  };
 }
 
 export type Summary = ReturnType<typeof summarize>;
@@ -122,6 +129,7 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
   const rows: Array<readonly [string, string]> = [];
   if (context) rows.push(["Context", `${formatTokens(context.used)} / ${formatTokens(context.limit)} (${context.percent.toFixed(1)}%)`]);
   rows.push(
+    ["Steps", number(summary?.steps)],
     ["Input", number(t?.input)], ["Output", number(t?.output)], ["Reasoning", number(t?.reasoning)],
     ["Cache Read", number(t?.cache.read)],
   );

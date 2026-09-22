@@ -49,6 +49,7 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 | `Cache Rate` | `Cache Read ÷ (Input + Cache Read + Cache Write)` |
 | `Total` | Sum of all five token categories |
 | `Context` | Latest context usage after the most recent completed compaction in the viewed session; not aggregated across the subtree |
+| `Steps` | Assistant message count across the session tree, including subagents; follows OpenCode's own stats definition, so compaction and user messages are not steps |
 | `Cost` | Estimated cost for the entire tree, recalculated using the viewed session's active model; not a provider bill |
 | `TPS` | Generation throughput for `Output + Reasoning` across the tree; live estimates are marked with `~` |
 | `TTFT` | Average time to first token across measurable assistant steps in the tree |
@@ -58,6 +59,7 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 - Usage includes server-reported assistant and compaction messages throughout the session tree, including unopened subagents. Token counts are never inferred from text length.
 - A fork is a separate session tree. Inherited message copies are attributed only to their original source to prevent double counting.
 - `Context` only searches messages after the most recent compaction with `status === "completed"` and is hidden when reliable usage or a model context limit is unavailable.
+- `Steps` counts every assistant message in the tree, whether or not it reported usage, and reuses the fork-copy de-duplication so inherited history is never counted twice.
 - `Cost` applies the viewed session's active model to the whole tree. Missing applicable prices fall back to 0, matching OpenCode's behavior.
 - Initial read failures display `Unavailable`. Later failures retain the last complete snapshot, display `Not updated`, and retry automatically.
 

@@ -161,12 +161,13 @@ try {
   const root = await client.session.create({ location: { directory: project }, title: "Token Usage Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const tui = openTui(root.id);
   await wait(() => /Token Usage/.test(tui.screen()) && /Cache Rate\s+0\.0%/.test(tui.screen()), "empty sidebar");
+  assert.match(tui.screen(), /Steps\s+0\b/, "empty session shows zero steps");
   assert.doesNotMatch(tui.screen(), /Cache Write/);
   assert.doesNotMatch(tui.screen(), /\bCost\b/);
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
   assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
-  console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows");
+  console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows and shows Steps 0");
 
   const switchTarget = await client.session.create({ location: { directory: project }, title: "Live Switch Target", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const switchPrompt = client.session.prompt({ sessionID: switchTarget.id, text: "SWITCH_SMOKE" });
@@ -216,6 +217,12 @@ try {
   assert.ok(performance.tps && performance.tps > 0);
   await wait(() => /Cache Read\s+1,000/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
   await wait(() => /Context\s+1,270 \/ 128,000 \(1\.0%\)/.test(tui.screen()), "context row after completion");
+  const stepsAfterFirst = summarize(uniqueMessages(snapshot), snapshot.model.prices).steps;
+  assert.equal(stepsAfterFirst, 1);
+  await wait(() => new RegExp(`Steps\\s+${stepsAfterFirst}\\b`).test(tui.screen()), "steps row after completion");
+  assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bSteps\s+1\b/),
+    "steps row follows the context row");
+  assert.ok(lineNumber(tui.screen(), /\bSteps\s+1\b/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "steps row precedes input");
   await wait(() => new RegExp(`TPS\\s+${performance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(tui.screen()), "exact TPS after completion");
   assert.doesNotMatch(tui.screen(), /TPS\s+~/, "completed TPS replaces the live estimate");
   assert.match(tui.screen(), /TTFT\s+[\d.]+s/);
@@ -239,9 +246,13 @@ try {
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(snapshot.viewedID, child.id);
-  assert.equal(summarize(uniqueMessages(snapshot), snapshot.model.prices).total, 5080);
+  const tree = summarize(uniqueMessages(snapshot), snapshot.model.prices);
+  assert.equal(tree.total, 5080);
+  assert.equal(tree.steps, 4, "three root assistants plus one subagent assistant");
   assert.equal(contextUsage(viewedMessages(snapshot), snapshot.model.context)?.used, 1270);
-  console.log("PASS: real subagent usage is counted from parent and child views; context stays session-local");
+  await wait(() => new RegExp(`Steps\\s+${tree.steps}\\b`).test(childTui.screen()), "tree-wide steps in child view");
+  assert.equal(summarize(viewedMessages(snapshot), snapshot.model.prices).steps, 1, "viewed session counts only its own step");
+  console.log("PASS: real subagent usage is counted from parent and child views; context stays session-local; steps accumulate tree-wide");
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
   await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).model.label === "usage-test/large", "active model switch");
   await wait(() => /Context\s+1,270 \/ 32,000 \(4\.0%\)/.test(tui.screen()), "context window follows model switch");
