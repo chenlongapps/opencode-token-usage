@@ -2,15 +2,25 @@ import { Plugin } from "@opencode/plugin/tui";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { UsageController } from "./controller.js";
 import type { UsageState } from "./controller.js";
+import { PerformanceMonitor } from "./performance.js";
 import { createSource } from "./source.js";
 import { usageRows } from "./usage.js";
 
-function UsagePanel(props: { context: Plugin.Context; sessionID: string; register: (controller: UsageController) => () => void }) {
+function UsagePanel(props: {
+  context: Plugin.Context;
+  sessionID: string;
+  performance: PerformanceMonitor;
+  register: (controller: UsageController) => () => void;
+}) {
   const [state, setState] = createSignal<UsageState>({ status: "loading" });
   const controller = new UsageController(
     createSource(props.context.client),
     listener => props.context.data.listen(({ details }) => listener(details)),
     setState,
+    80,
+    3_000,
+    100,
+    props.performance,
   );
   const unregister = props.register(controller);
   createEffect(() => controller.select(props.sessionID));
@@ -38,6 +48,9 @@ function UsagePanel(props: { context: Plugin.Context; sessionID: string; registe
 export default Plugin.define({
   id: "opencode-token-usage.tui",
   setup(context) {
+    const performance = new PerformanceMonitor(
+      listener => context.data.listen(({ details }) => listener(details)),
+    );
     const controllers = new Set<UsageController>();
     const register = (controller: UsageController) => {
       controllers.add(controller);
@@ -45,7 +58,7 @@ export default Plugin.define({
     };
     const remove = context.ui.slot({
       append: "sidebar.content",
-      render: props => <UsagePanel context={context} sessionID={props.sessionID} register={register} />,
+      render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} register={register} />,
     });
     // 2.0.9 SessionFrame never mounts the sidebar for a child session.
     // Keep the same full panel visible through the supported composer slot.
@@ -55,7 +68,7 @@ export default Plugin.define({
         <Show when={context.data.session.get(props.sessionID)?.parentID}>
           <box flexDirection="row" justifyContent="flex-end" paddingRight={2} flexShrink={0}>
             <box width={36} maxWidth="100%" flexDirection="column">
-              <UsagePanel context={context} sessionID={props.sessionID} register={register} />
+              <UsagePanel context={context} sessionID={props.sessionID} performance={performance} register={register} />
             </box>
           </box>
         </Show>
@@ -66,6 +79,7 @@ export default Plugin.define({
       controllers.clear();
       remove();
       removeChild();
+      performance.dispose();
     };
   },
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { historicalPerformance, PerformanceTracker } from "../src/performance.js";
+import { historicalPerformance, PerformanceMonitor } from "../src/performance.js";
 import type { PerformanceEvent } from "../src/performance.js";
 import type { UsageMessage } from "../src/usage.js";
 
@@ -45,39 +45,41 @@ test("TTFT averages only measurable first output and runtime observations overri
 });
 
 test("streaming tracker estimates UTF-8 deltas, de-duplicates events and aggregates active steps", () => {
-  const tracker = new PerformanceTracker();
-  tracker.setTree("root", ["root", "child"]);
+  const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start-a", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
   assert.equal(tracker.handle(event("session.text.delta", "delta-a", 1_500, { assistantMessageID: "a", sessionID: "root", delta: "abcd" })), true);
-  assert.deepEqual(tracker.summary([]), { tps: 2, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 2, tpsEstimated: true, ttft: 500 });
   assert.equal(tracker.handle(event("session.text.delta", "delta-a", 1_500, { assistantMessageID: "a", sessionID: "root", delta: "abcd" })), false);
   tracker.handle(event("session.reasoning.delta", "delta-a2", 2_000, { assistantMessageID: "a", sessionID: "root", delta: "😀" }));
 
   tracker.handle(event("session.step.started", "start-b", 1_000, { assistantMessageID: "b", sessionID: "child", started: 1_000 }));
   tracker.handle(event("session.tool.input.delta", "delta-b", 2_000, { assistantMessageID: "b", sessionID: "child", delta: "abcdefgh" }));
-  assert.deepEqual(tracker.summary([]), { tps: 2, tpsEstimated: true, ttft: 750 });
+  assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 2, tpsEstimated: true, ttft: 750 });
 
   tracker.handle(event("session.step.streamed", "stream-a", 2_500, { assistantMessageID: "a", sessionID: "root" }));
-  assert.equal(tracker.summary([]).tps, 1.6);
+  assert.equal(tracker.summary([], ["root", "child"]).tps, 1.6);
   tracker.handle(event("session.step.ended", "end-a", 2_600, { assistantMessageID: "a", sessionID: "root" }));
-  tracker.reconcile([{ id: "a", type: "assistant", time: { created: 1_000, streamed: 2_500 }, tokens: { output: 15 } }]);
-  assert.deepEqual(tracker.summary([{ id: "a", type: "assistant", time: { created: 1_000, streamed: 2_500 }, tokens: { output: 15 } }]), {
+  tracker.reconcile([{ id: "a", type: "assistant", time: { created: 1_000, streamed: 2_500 }, tokens: { output: 15 } }], ["root", "child"]);
+  assert.deepEqual(tracker.summary([{ id: "a", type: "assistant", time: { created: 1_000, streamed: 2_500 }, tokens: { output: 15 } }], ["root", "child"]), {
     tps: 2, tpsEstimated: true, ttft: 750,
   });
+  tracker.dispose();
 });
 
-test("tracker ignores other trees and admits a just-created child of the current tree", () => {
-  const tracker = new PerformanceTracker();
-  tracker.setTree("root", ["root"]);
+test("monitor captures every tree while summaries remain scoped to explicit session sets", () => {
+  const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "other-start", 0, { assistantMessageID: "other", sessionID: "other", started: 0 }));
   tracker.handle(event("session.text.delta", "other-delta", 100, { assistantMessageID: "other", sessionID: "other", delta: "xxxx" }));
-  assert.deepEqual(tracker.summary([]), {});
+  assert.deepEqual(tracker.summary([], ["root"]), {});
+  assert.deepEqual(tracker.summary([], ["other"]), { tps: 10, tpsEstimated: true, ttft: 100 });
 
-  tracker.addSession("child", "root");
   tracker.handle(event("session.step.started", "child-start", 0, { assistantMessageID: "child-message", sessionID: "child", started: 0 }));
   tracker.handle(event("session.text.delta", "child-delta", 250, { assistantMessageID: "child-message", sessionID: "child", delta: "xxxx" }));
-  assert.deepEqual(tracker.summary([]), { tps: 4, tpsEstimated: true, ttft: 250 });
+  assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 4, tpsEstimated: true, ttft: 250 });
+  assert.deepEqual(tracker.summary([], ["other"]), { tps: 10, tpsEstimated: true, ttft: 100 });
 
-  tracker.setTree("new-root", ["new-root"]);
-  assert.deepEqual(tracker.summary([]), {});
+  tracker.handle({ type: "session.deleted", data: { sessionID: "other" } });
+  assert.deepEqual(tracker.summary([], ["other"]), {});
+  assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 4, tpsEstimated: true, ttft: 250 });
+  tracker.dispose();
 });

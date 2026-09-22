@@ -2,26 +2,28 @@
 
 ## 未发布（SDK 2.0.11）
 
-验证日期：2026-09-20。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 均精确锁定为 2.0.11。
+验证日期：2026-09-22。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 均精确锁定为 2.0.11。
 
 ### 自动化检查
 
 | 检查 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 通过 |
-| `npm test` | 29 项通过 |
+| `npm test` | 31 项通过 |
 | `npm run build` | 通过，输出 ESM 与类型声明 |
 | `npm run test:smoke` | 通过，使用实际 `.tgz` 安装产物和真实 OpenCode 2.0.11 |
 
 SDK 从 2.0.9 升级到 2.0.11 后，四个顶层 OpenCode 包及锁文件中的传递依赖均已统一到 2.0.11。`@opencode/plugin` 两版的导出结构一致；包内容差异除依赖版本外，仅为 `ToastOptions` 新增可选的 `sessionID` 类型字段。
 
+新增共享性能监视器测试覆盖：查看会话 A 时捕获独立会话 B 的流，切换到 B 后立即恢复实时 TPS/TTFT；生成中切走、继续接收 delta 再切回；控制器销毁重建后恢复共享流；不同会话树隔离、新子代理即时纳入，以及删除会话清理运行期状态。既有重复事件去重与完成后收敛为精确 TPS 的断言继续通过。
+
 ### 真实 OpenCode 集成
 
-隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行；活动 TPS 估算会收敛为精确值；TTFT、token、上下文与费用正常刷新；真实子代理用量可从父子视图累计且上下文保持会话局部；切换活动模型会同步更新价格选择与上下文上限。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-JXe1KG`。
+隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文与费用刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-cgsCK2`。
 
 ### 验证边界
 
-当前 SDK 2.0.11 与宿主 2.0.11 的组合已完整验证。2.0.9 和 2.0.10 宿主的历史验证记录保留在下方，但升级 SDK 后未重新执行这两个旧宿主的打包矩阵：本地仅有 2.0.11，官方 GitHub Releases 也没有可获取的对应旧版本资产。后续升级 SDK 或宿主时，仍需重新核对分叉副本、compaction 排序及 step/delta 事件语义。
+当前 SDK 2.0.11 与宿主 2.0.11 的组合已完整验证。验证时机器默认宿主已是 2.0.12，因此 smoke 使用校验完整性的官方 `@opencode/cli-darwin-arm64@2.0.11` 隔离二进制，没有放宽宿主版本断言。2.0.9 和 2.0.10 宿主的历史验证记录保留在下方，但升级 SDK 后未重新执行这两个旧宿主的打包矩阵。后续升级 SDK 或宿主时，仍需重新核对分叉副本、compaction 排序及 step/delta 事件语义。
 
 ## v0.2.1（TPS 与 TTFT）
 

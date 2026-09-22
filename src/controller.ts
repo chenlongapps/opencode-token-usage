@@ -1,6 +1,6 @@
 import { loadSnapshot, uniqueMessages, viewedMessages } from "./source.js";
 import type { Snapshot, UsageSource } from "./source.js";
-import { PerformanceTracker } from "./performance.js";
+import { PerformanceMonitor } from "./performance.js";
 import type { PerformanceSummary } from "./performance.js";
 import { contextUsage, summarize } from "./usage.js";
 import type { ContextUsage, Summary } from "./usage.js";
@@ -15,11 +15,6 @@ export interface UsageState {
 
 export interface UsageEvent { type: string; data: unknown; id?: string; created?: number }
 export type Subscribe = (listener: (event: UsageEvent) => void) => () => void;
-
-const performanceEvents = new Set([
-  "session.step.started", "session.step.streamed", "session.step.ended", "session.step.failed",
-  "session.text.delta", "session.reasoning.delta", "session.tool.input.delta",
-]);
 
 const sessionEvents = new Set([
   "session.created", "session.deleted", "session.forked", "session.moved",
@@ -43,10 +38,13 @@ export class UsageController {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private performanceTimer: ReturnType<typeof setTimeout> | undefined;
+  private sessions = new Set<string>();
   private pending = false;
   private disposed = false;
   private unsubscribe: () => void;
-  private readonly performance = new PerformanceTracker();
+  private readonly unsubscribePerformance: () => void;
+  private readonly performance: PerformanceMonitor;
+  private readonly ownsPerformance: boolean;
 
   constructor(
     private readonly source: UsageSource,
@@ -55,11 +53,19 @@ export class UsageController {
     private readonly delay = 80,
     private readonly retryDelay = 3_000,
     private readonly performanceDelay = 100,
+    performance?: PerformanceMonitor,
   ) {
+    this.ownsPerformance = performance === undefined;
+    this.performance = performance ?? new PerformanceMonitor(subscribe);
+    this.unsubscribePerformance = this.performance.listen(sessionID => {
+      if (this.sessions.has(sessionID)) this.refreshPerformance();
+    });
     this.unsubscribe = subscribe(event => {
       const data = (event.data && typeof event.data === "object" ? event.data : {}) as { sessionID?: string; parentID?: string };
-      if (event.type === "session.created") this.performance.addSession(data.sessionID, data.parentID);
-      if (performanceEvents.has(event.type) && this.performance.handle(event)) this.refreshPerformance();
+      if (event.type === "session.created" && data.sessionID && data.parentID && this.sessions.has(data.parentID)) {
+        this.sessions.add(data.sessionID);
+      }
+      if (event.type === "session.deleted" && data.sessionID) this.sessions.delete(data.sessionID);
       if (globalEvents.has(event.type)) return this.refresh();
       if (!sessionEvents.has(event.type)) return;
       if (!this.snapshot || event.type === "session.created" || event.type === "session.forked"
@@ -79,6 +85,7 @@ export class UsageController {
     this.performanceTimer = undefined;
     this.pending = false;
     this.snapshot = undefined;
+    this.sessions.clear();
     this.sessionID = sessionID;
     this.update({ status: "loading" });
     void this.run();
@@ -101,7 +108,9 @@ export class UsageController {
     clearTimeout(this.timer);
     clearTimeout(this.retry);
     clearTimeout(this.performanceTimer);
+    this.unsubscribePerformance();
     this.unsubscribe();
+    if (this.ownsPerformance) this.performance.dispose();
   }
 
   private update(state: UsageState) { this.state = state; this.publish(state); }
@@ -111,7 +120,7 @@ export class UsageController {
     this.performanceTimer = setTimeout(() => {
       this.performanceTimer = undefined;
       if (this.disposed || !this.snapshot || !this.state.summary) return;
-      this.update({ ...this.state, performance: this.performance.summary(uniqueMessages(this.snapshot)) });
+      this.update({ ...this.state, performance: this.performance.summary(uniqueMessages(this.snapshot), this.sessions) });
     }, this.performanceDelay);
   }
 
@@ -126,15 +135,15 @@ export class UsageController {
       if (this.disposed || generation !== this.generation) return;
       this.snapshot = snapshot;
       const messages = [...uniqueMessages(snapshot)];
-      this.performance.setTree(snapshot.rootID, snapshot.sessions.keys());
-      this.performance.reconcile(messages);
+      this.sessions = new Set(snapshot.sessions.keys());
+      this.performance.reconcile(messages, this.sessions);
       clearTimeout(this.performanceTimer);
       this.performanceTimer = undefined;
       this.update({
         status: "ready",
         summary: summarize(messages, snapshot.model.prices),
         context: contextUsage(viewedMessages(snapshot), snapshot.model.context),
-        performance: this.performance.summary(messages),
+        performance: this.performance.summary(messages, this.sessions),
         model: snapshot.model.label,
       });
     } catch {

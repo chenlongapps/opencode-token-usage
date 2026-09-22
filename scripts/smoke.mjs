@@ -50,7 +50,9 @@ const mock = createServer(async (request, response) => {
     const data = JSON.parse(body);
     requests.push(data);
     const lastUser = data.messages.findLastIndex(message => message.role === "user");
-    const spawnChild = JSON.stringify(data.messages[lastUser]).includes("SPAWN_SMOKE_CHILD")
+    const userText = JSON.stringify(data.messages[lastUser]);
+    const switchSmoke = userText.includes("SWITCH_SMOKE");
+    const spawnChild = userText.includes("SPAWN_SMOKE_CHILD")
       && !data.messages.slice(lastUser + 1).some(message => message.role === "tool");
     const tool = data.tools?.find(tool => tool.function.name === "subagent");
     const toolCalls = spawnChild && tool ? [{ index: 0, id: "usage-smoke-child", type: "function", function: {
@@ -71,7 +73,7 @@ const mock = createServer(async (request, response) => {
       chunk({ role: "assistant" });
       await new Promise(resolve => setTimeout(resolve, 300));
       chunk(toolCalls ? { tool_calls: toolCalls } : { content: content.slice(0, 4) });
-      await new Promise(resolve => setTimeout(resolve, 700));
+      await new Promise(resolve => setTimeout(resolve, switchSmoke ? 2_500 : 700));
       if (content) chunk({ content: content.slice(4) });
       await new Promise(resolve => setTimeout(resolve, 100));
       chunk({}, toolCalls ? "tool_calls" : "stop", usage);
@@ -131,7 +133,8 @@ const openTui = sessionID => {
     await writeFile(path.join(work, `${name}.txt`), screen());
     await writeFile(path.join(work, `${name}.ansi`), raw);
   };
-  const entry = { process, screen, save, terminal };
+  const send = data => process.stdin.write(data);
+  const entry = { process, screen, save, send, terminal };
   terminals.push(entry);
   return entry;
 };
@@ -164,9 +167,43 @@ try {
   assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
   console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows");
+
+  const switchTarget = await client.session.create({ location: { directory: project }, title: "Live Switch Target", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  const switchPrompt = client.session.prompt({ sessionID: switchTarget.id, text: "SWITCH_SMOKE" });
+  await new Promise(resolve => setTimeout(resolve, 650));
+  tui.send("\x18");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  tui.send("l");
+  await wait(() => /Sessions for project/.test(tui.screen()) && /Live Switch Target/.test(tui.screen()), "session switch dialog");
+  tui.send("Live Switch Target");
+  await new Promise(resolve => setTimeout(resolve, 100));
+  tui.send("\r");
+  await wait(() => !/Sessions for project/.test(tui.screen()) && /TPS\s+~[\d.]+ tok\/s/.test(tui.screen())
+    && /TTFT\s+[\d.]+s/.test(tui.screen()), "live performance restored after session switch");
+  await tui.save("02-switched-streaming");
+  await switchPrompt;
+  await wait(async () => (await client.message.list({ sessionID: switchTarget.id })).data.some(m => m.type === "assistant" && m.tokens), "switched session usage");
+  const switchSnapshot = await loadSnapshot(source, switchTarget.id, new AbortController().signal);
+  const switchPerformance = historicalPerformance(uniqueMessages(switchSnapshot));
+  assert.ok(switchPerformance.tps && switchPerformance.tps > 0);
+  await wait(() => new RegExp(`TPS\\s+${switchPerformance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(tui.screen()), "switched stream exact TPS");
+  assert.doesNotMatch(tui.screen(), /TPS\s+~/, "switched stream converges to exact TPS");
+  await tui.save("03-switched-complete");
+  console.log("PASS: switching to an in-flight session restores live TPS/TTFT and converges to exact TPS");
+
+  tui.send("\x18");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  tui.send("l");
+  await wait(() => /Sessions for project/.test(tui.screen()) && /Token Usage Smoke/.test(tui.screen()), "return session dialog");
+  tui.send("\x1b[B");
+  await new Promise(resolve => setTimeout(resolve, 100));
+  tui.send("\r");
+  await wait(() => !/Sessions for project/.test(tui.screen()) && /Token Usage/.test(tui.screen())
+    && /Cache Rate\s+0\.0%/.test(tui.screen()) && !/\bTPS\b/.test(tui.screen()), "return to empty root session");
+
   const firstPrompt = client.session.prompt({ sessionID: root.id, text: "Return SMOKE_OK." });
   await wait(() => /TPS\s+~[\d.]+ tok\/s/.test(tui.screen()) && /TTFT\s+[\d.]+s/.test(tui.screen()), "live TPS and TTFT");
-  await tui.save("02-streaming");
+  await tui.save("04-streaming");
   await firstPrompt;
   await wait(async () => (await client.message.list({ sessionID: root.id })).data.some(m => m.type === "assistant" && m.tokens), "first usage");
   let snapshot = await loadSnapshot(source, root.id, new AbortController().signal);
@@ -186,7 +223,7 @@ try {
   assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /\bCost\s+/) + 2, "one blank line separates usage and performance");
   assert.ok(lineNumber(tui.screen(), /\bTPS\s+/) < lineNumber(tui.screen(), /\bTTFT\s+/));
   assert.ok(lineNumber(tui.screen(), /\bCost\s+/) < lineNumber(tui.screen(), /\bTPS\s+/));
-  await tui.save("03-message");
+  await tui.save("05-message");
   console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });
   await client.session.prompt({ sessionID: root.id, text: "SPAWN_SMOKE_CHILD" });
@@ -194,11 +231,11 @@ try {
   const child = (await client.session.list({ parentID: root.id })).data[0];
   await client.session.wait({ sessionID: root.id });
   await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
-  await tui.save("04-subagent");
+  await tui.save("06-subagent");
   const childTui = openTui(child.id);
   await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "same tree in child sidebar");
   assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
-  await childTui.save("05-child-view");
+  await childTui.save("07-child-view");
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(snapshot.viewedID, child.id);
@@ -208,9 +245,9 @@ try {
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
   await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).model.label === "usage-test/large", "active model switch");
   await wait(() => /Context\s+1,270 \/ 32,000 \(4\.0%\)/.test(tui.screen()), "context window follows model switch");
-  await tui.save("06-model-switch");
+  await tui.save("08-model-switch");
   console.log("PASS: active model switch refreshes price selection and context window");
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, total: 5080, performance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, switchTarget: switchTarget.id, total: 5080, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const [index, terminal] of terminals.entries()) {
     await terminal.save(`final-${index}`);

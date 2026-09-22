@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { UsageController } from "../src/controller.js";
 import type { UsageState } from "../src/controller.js";
+import { PerformanceMonitor } from "../src/performance.js";
 import { Events, FakeSource, deferred, message, page, session, until } from "./helpers.js";
 import type { UsageMessage } from "../src/usage.js";
 
@@ -134,4 +135,77 @@ test("stream deltas publish estimated TPS and TTFT without source reads, then co
   await until(() => state.summary?.total === 40 && state.performance?.tpsEstimated !== true);
   assert.equal(state.performance?.tps, 30);
   assert.equal(state.performance?.ttft, 500);
+});
+
+test("a shared monitor restores a stream captured before switching to its session tree", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.sessions.set("other", session("other"));
+  source.history.set("other", [message("other-a", 7)]);
+  const performance = new PerformanceMonitor(events.subscribe);
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 3_000, 2, performance);
+  t.after(() => { controller.dispose(); performance.dispose(); });
+
+  controller.select("root");
+  await until(() => state.status === "ready");
+  events.emit({ type: "session.step.started", id: "other-start", created: 1_000, data: {
+    assistantMessageID: "other-live", sessionID: "other", started: 1_000,
+  } });
+  events.emit({ type: "session.text.delta", id: "other-delta-1", created: 1_500, data: {
+    assistantMessageID: "other-live", sessionID: "other", delta: "abcdefgh",
+  } });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.performance?.tpsEstimated, undefined, "another tree does not update the current panel");
+
+  controller.select("other");
+  await until(() => state.status === "ready" && state.summary?.total === 7);
+  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 500 });
+
+  controller.select("root");
+  await until(() => state.status === "ready" && state.summary?.total === 10);
+  events.emit({ type: "session.text.delta", id: "other-delta-2", created: 2_000, data: {
+    assistantMessageID: "other-live", sessionID: "other", delta: "abcdefghijklmnop",
+  } });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.performance?.tpsEstimated, undefined);
+
+  controller.select("other");
+  await until(() => state.status === "ready" && state.summary?.total === 7);
+  assert.deepEqual(state.performance, { tps: 6, tpsEstimated: true, ttft: 500 });
+});
+
+test("a rebuilt controller recovers shared stream state and a new child joins the current tree immediately", async t => {
+  const source = new FakeSource(), events = new Events();
+  const performance = new PerformanceMonitor(events.subscribe);
+  let firstState: UsageState = { status: "loading" };
+  const first = new UsageController(source, events.subscribe, value => { firstState = value; }, 2, 3_000, 2, performance);
+  first.select("root");
+  await until(() => firstState.status === "ready");
+  events.emit({ type: "session.step.started", id: "root-start", created: 1_000, data: {
+    assistantMessageID: "root-live", sessionID: "root", started: 1_000,
+  } });
+  events.emit({ type: "session.text.delta", id: "root-delta", created: 1_250, data: {
+    assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
+  } });
+  await until(() => firstState.performance?.tpsEstimated === true);
+  first.dispose();
+
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 3_000, 2, performance);
+  t.after(() => { controller.dispose(); performance.dispose(); });
+  controller.select("root");
+  await until(() => state.status === "ready");
+  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 250 });
+
+  source.sessions.set("child", session("child", "root"));
+  source.history.set("child", []);
+  events.emit({ type: "session.created", data: { sessionID: "child", parentID: "root" } });
+  events.emit({ type: "session.step.started", id: "child-start", created: 2_000, data: {
+    assistantMessageID: "child-live", sessionID: "child", started: 2_000,
+  } });
+  events.emit({ type: "session.text.delta", id: "child-delta", created: 2_500, data: {
+    assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
+  } });
+  await until(() => state.performance?.ttft === 375);
+  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 375 });
 });
