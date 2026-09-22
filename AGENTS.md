@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，当前包版本为 0.2.5，使用 `@opencode/plugin@2.0.11`。
+- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，当前包版本为 0.3.0，使用 `@opencode/plugin@2.0.11`。
 - `src/usage.ts` 负责统计、上下文、定价与格式化；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏。
 - 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 使用打包产物和隔离的 OpenCode 2.0.11、Python 3 终端、本地模拟提供商进行集成验证。
 - `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。
