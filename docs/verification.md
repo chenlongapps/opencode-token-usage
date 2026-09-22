@@ -1,6 +1,18 @@
 # 验证记录
 
-## 未发布（SDK 2.0.11）
+## v0.3.2（GPT-6 Sol / Luna 价格更新，SDK 2.0.11）
+
+验证日期：2026-09-23。根据 [OpenAI API 更新日志](https://developers.openai.com/api/docs/changelog)，`gpt-6-sol` 和 `gpt-6-luna` 于 2026-09-22 发布；[官方定价页](https://developers.openai.com/api/docs/pricing)列出两者的 Standard 短、长上下文四类 token 费率。内置快照由 72 个模型增至 74 个。根据 [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) 与 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) 模型说明，传入 token 超过 272,000 时才使用长上下文价格；同轮也将已有 OpenAI 条目的边界从 271,999 校正为 272,000。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 45 项通过，新增两款模型的费率、精确匹配和档位边界断言 |
+| `npm run build` | 通过 |
+
+本轮未重跑 `npm run test:smoke`；下方的打包集成记录对应更新前的 72 模型快照。
+
+## v0.3.1（SDK 2.0.11）
 
 验证日期：2026-09-23。环境：macOS、Node.js v22.23.2、npm 10.9.8、OpenCode v2.0.11；`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 均精确锁定为 2.0.11。
 

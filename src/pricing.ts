@@ -17,48 +17,62 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
   verified: "2026-09-23",
   newModelCutoff: "2026-03-22",
   entries: [
-    // OpenAI standard processing. The tier sizes are exclusive thresholds, so
-    // 271,999 implements the official "long context at 272K" boundary.
+    // OpenAI standard processing. Tier sizes are exclusive thresholds, so
+    // 272,000 implements the official ">272K input tokens" boundary.
     {
       id: "gpt-5.5", released: "2026-04-23", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 5, output: 30, cache: { read: 0.5 } },
-        { tier: { type: "context", size: 271_999 }, input: 10, output: 45, cache: { read: 1 } },
+        { tier: { type: "context", size: 272_000 }, input: 10, output: 45, cache: { read: 1 } },
       ],
     },
     {
       id: "gpt-5.5-pro", released: "2026-04-23", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 30, output: 180 },
-        { tier: { type: "context", size: 271_999 }, input: 60, output: 270 },
+        { tier: { type: "context", size: 272_000 }, input: 60, output: 270 },
       ],
     },
     {
       id: "gpt-5.6-sol", released: "2026-07-09", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 4, output: 20, cache: { read: 0.4, write: 5 } },
-        { tier: { type: "context", size: 271_999 }, input: 8, output: 30, cache: { read: 0.8, write: 10 } },
+        { tier: { type: "context", size: 272_000 }, input: 8, output: 30, cache: { read: 0.8, write: 10 } },
       ],
     },
     {
       id: "gpt-5.6-terra", released: "2026-07-09", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 2, output: 12, cache: { read: 0.2, write: 2.5 } },
-        { tier: { type: "context", size: 271_999 }, input: 4, output: 18, cache: { read: 0.4, write: 5 } },
+        { tier: { type: "context", size: 272_000 }, input: 4, output: 18, cache: { read: 0.4, write: 5 } },
       ],
     },
     {
       id: "gpt-5.6-luna", released: "2026-07-09", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 0.2, output: 1.2, cache: { read: 0.02, write: 0.25 } },
-        { tier: { type: "context", size: 271_999 }, input: 0.4, output: 1.8, cache: { read: 0.04, write: 0.5 } },
+        { tier: { type: "context", size: 272_000 }, input: 0.4, output: 1.8, cache: { read: 0.04, write: 0.5 } },
       ],
     },
     {
       id: "gpt-6-astra", released: "2026-09-04", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 10, output: 50, cache: { read: 1, write: 12.5 } },
-        { tier: { type: "context", size: 271_999 }, input: 20, output: 75, cache: { read: 2, write: 25 } },
+        { tier: { type: "context", size: 272_000 }, input: 20, output: 75, cache: { read: 2, write: 25 } },
+      ],
+    },
+    {
+      id: "gpt-6-sol", released: "2026-09-22", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 2, output: 10, cache: { read: 0.2, write: 2.5 } },
+        { tier: { type: "context", size: 272_000 }, input: 4, output: 15, cache: { read: 0.4, write: 5 } },
+      ],
+    },
+    {
+      id: "gpt-6-luna", released: "2026-09-22", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 0.1, output: 0.5, cache: { read: 0.01, write: 0.125 } },
+        { tier: { type: "context", size: 272_000 }, input: 0.2, output: 0.75, cache: { read: 0.02, write: 0.25 } },
       ],
     },
     // The official ChatGPT SKU `chat-latest`. OpenRouter serves it under the
