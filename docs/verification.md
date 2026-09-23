@@ -1,5 +1,17 @@
 # 验证记录
 
+## v0.3.3（GPT 与 Claude Fast 价格）
+
+验证日期：2026-09-23。根据 [OpenAI API Pricing](https://developers.openai.com/api/docs/pricing) 与 [Claude Platform Pricing](https://platform.claude.com/docs/en/about-claude/pricing)，为当前快照中官方支持 Fast mode 的 GPT-5.5、GPT-5.6 Sol/Terra/Luna、GPT-6 Astra/Sol/Luna，以及 Claude Opus 4.8/5/5.5 分别加入独立 Fast 条目。Fast 费率按官方长上下文档位与缓存倍率记录；GPT-5.5 Fast 未公布长上下文费率，超过 272,000 个传入 token 时显示不可估价。条目分别限制到官方支持 Fast mode 的 OpenAI 与 Anthropic provider；快照由 76 个模型增至 86 个。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 51 项通过，覆盖 Fast 费率、缓存倍率、长上下文边界及普通版价格隔离 |
+| `npm run build` | 通过 |
+
+本轮只改动价格目录、对应测试及价格说明，未重跑打包集成 smoke 测试。
+
 ## v0.3.2（GPT-6 Sol / Luna 价格更新，SDK 2.0.11）
 
 验证日期：2026-09-23。根据 [OpenAI API 更新日志](https://developers.openai.com/api/docs/changelog)，`gpt-6-sol` 和 `gpt-6-luna` 于 2026-09-22 发布；[官方定价页](https://developers.openai.com/api/docs/pricing)列出两者的 Standard 短、长上下文四类 token 费率。内置快照由 72 个模型增至 74 个。根据 [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) 与 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) 模型说明，传入 token 超过 272,000 时才使用长上下文价格；同轮也将已有 OpenAI 条目的边界从 271,999 校正为 272,000。

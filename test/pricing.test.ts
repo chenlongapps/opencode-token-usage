@@ -5,7 +5,7 @@ import { estimate, normalize } from "../src/usage.js";
 
 test("official snapshot contains only verified recent releases and unique identifiers", () => {
   const aliases = new Set<string>();
-  assert.equal(OFFICIAL_PRICE_SNAPSHOT.entries.length, 76);
+  assert.equal(OFFICIAL_PRICE_SNAPSHOT.entries.length, 86);
   for (const entry of OFFICIAL_PRICE_SNAPSHOT.entries) {
     assert.ok(entry.released >= OFFICIAL_PRICE_SNAPSHOT.newModelCutoff);
     assert.ok(entry.released <= OFFICIAL_PRICE_SNAPSHOT.verified);
@@ -23,6 +23,7 @@ test("official price matching supports exact manufacturer IDs and known gateway 
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-luna" })?.id, "gpt-6-luna");
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-5.6-luna" })?.id, "gpt-5.6-luna");
   assert.equal(officialPrice({ providerID: "amazon-bedrock", id: "us.anthropic.claude-opus-5" })?.id, "claude-opus-5");
+  assert.equal(officialPrice({ providerID: "anthropic", id: "claude-opus-5-fast" })?.id, "claude-opus-5-fast");
   assert.equal(officialPrice({ providerID: "google-vertex", id: "claude-fable-5@default" })?.id, "claude-fable-5");
   assert.equal(officialPrice({ providerID: "openrouter", id: "mistralai/mistral-medium-3-5" })?.id, "mistral-medium-3-5-26-04");
   // Gateway slugs that differ from the manufacturer ID only by separators or an
@@ -74,9 +75,10 @@ test("official price matching covers every major vendor in the OpenCode catalog"
 test("official price matching never guesses similarly named variants", () => {
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-sol-pro" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-luna-fast" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "anthropic/claude-opus-5-fast" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-5.6-luna-pro" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-sol-pro-free" }), undefined);
-  assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-luna-fast-free" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-luna-fast-preview" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "xiaomi/mimo-v2.6-flash-free-preview" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "meta/muse-spark-1.3-contributor-pro-free" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "meta/muse-spark-1.3:free-preview" }), undefined);
@@ -88,10 +90,10 @@ test("official price matching never guesses similarly named variants", () => {
   assert.equal(officialPrice({ providerID: "opencode", id: "nemotron-3-ultra-free" }), undefined);
   assert.equal(officialPrice({ providerID: "custom", id: "prefix-gpt-5.6-luna" }), undefined);
   assert.equal(officialPrice({ providerID: "custom", id: "unknown" }), undefined);
-  // Documented exclusions: out-of-window, fast-tier, unverified, and
-  // similarly named models without a confirmable official standard price.
+  // Documented exclusions: out-of-window, unsupported fast-tier, unverified,
+  // and similarly named models without a confirmable official price.
   assert.equal(officialPrice({ providerID: "openrouter", id: "x-ai/grok-4.20" }), undefined);
-  assert.equal(officialPrice({ providerID: "openrouter", id: "anthropic/claude-opus-5-fast" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "anthropic/claude-opus-5-fast-preview" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "z-ai/glm-5v-turbo" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "tencent/hy3-preview" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "cohere/north-mini-code" }), undefined);
@@ -135,6 +137,91 @@ test("GPT-6 Sol and Luna use official standard rates above 272K input tokens", (
     assert.equal(estimate(normalize({ input: 272_000 }), entry.prices).cost, 272_000 * short.input / 1_000_000);
     assert.equal(estimate(normalize({ input: 272_001 }), entry.prices).cost, 272_001 * long.input / 1_000_000);
   }
+});
+
+test("OpenAI Fast models use exact Fast rates, context tiers, and direct-provider matching", () => {
+  const cases = [
+    {
+      id: "gpt-5.5-fast", released: "2026-04-23",
+      prices: [
+        { input: 12.5, output: 75, cache: { read: 1.25 } },
+        { tier: { type: "context" as const, size: 272_000 } },
+      ],
+    },
+    {
+      id: "gpt-5.6-sol-fast", released: "2026-07-09",
+      prices: [
+        { input: 8, output: 40, cache: { read: 0.8, write: 10 } },
+        { tier: { type: "context" as const, size: 272_000 }, input: 16, output: 60, cache: { read: 1.6, write: 20 } },
+      ],
+    },
+    {
+      id: "gpt-5.6-terra-fast", released: "2026-07-09",
+      prices: [
+        { input: 4, output: 24, cache: { read: 0.4, write: 5 } },
+        { tier: { type: "context" as const, size: 272_000 }, input: 8, output: 36, cache: { read: 0.8, write: 10 } },
+      ],
+    },
+    {
+      id: "gpt-5.6-luna-fast", released: "2026-07-09",
+      prices: [
+        { input: 0.4, output: 2.4, cache: { read: 0.04, write: 0.5 } },
+        { tier: { type: "context" as const, size: 272_000 }, input: 0.8, output: 3.6, cache: { read: 0.08, write: 1 } },
+      ],
+    },
+    {
+      id: "gpt-6-astra-fast", released: "2026-09-04",
+      prices: [
+        { input: 20, output: 100, cache: { read: 2, write: 25 } },
+        { tier: { type: "context" as const, size: 272_000 }, input: 40, output: 150, cache: { read: 4, write: 50 } },
+      ],
+    },
+    {
+      id: "gpt-6-sol-fast", released: "2026-09-22",
+      prices: [
+        { input: 4, output: 20, cache: { read: 0.4, write: 5 } },
+        { tier: { type: "context" as const, size: 272_000 }, input: 8, output: 30, cache: { read: 0.8, write: 10 } },
+      ],
+    },
+    {
+      id: "gpt-6-luna-fast", released: "2026-09-22",
+      prices: [
+        { input: 0.2, output: 1, cache: { read: 0.02, write: 0.25 } },
+        { tier: { type: "context" as const, size: 272_000 }, input: 0.4, output: 1.5, cache: { read: 0.04, write: 0.5 } },
+      ],
+    },
+  ];
+  for (const { id, released, prices } of cases) {
+    const entry = officialPrice({ providerID: "openai", id })!;
+    assert.equal(entry.released, released, id);
+    assert.deepEqual(entry.prices, prices, id);
+    assert.equal(officialPrice({ providerID: "openrouter", id: `openai/${id}` }), undefined, id);
+    assert.equal(estimate(normalize({ input: 272_000 }), entry.prices).defaultPrice, false, id);
+    assert.equal(estimate(normalize({ input: 272_001 }), entry.prices).defaultPrice, id === "gpt-5.5-fast", id);
+  }
+  assert.equal(officialPrice({ providerID: "openai", id: "gpt-6-luna" })?.prices[0]?.input, 0.1);
+  assert.equal(estimate(normalize({ input: 272_000 }), officialPrice({ providerID: "openai", id: "gpt-6-luna-fast" })!.prices).cost,
+    272_000 * 0.2 / 1_000_000);
+  assert.equal(estimate(normalize({ input: 272_001 }), officialPrice({ providerID: "openai", id: "gpt-6-luna-fast" })!.prices).cost,
+    272_001 * 0.4 / 1_000_000);
+});
+
+test("Claude Fast models use supported first-party rates and cache multipliers", () => {
+  const cases = [
+    { id: "claude-opus-4-8-fast", released: "2026-05-28", prices: [{ input: 10, output: 50, cache: { read: 1, write: 12.5 } }], total: 73.5 },
+    { id: "claude-opus-5-fast", released: "2026-07-24", prices: [{ input: 10, output: 50, cache: { read: 1, write: 12.5 } }], total: 73.5 },
+    { id: "claude-opus-5-5-fast", released: "2026-09-22", prices: [{ input: 8, output: 40, cache: { read: 0.4, write: 10 } }], total: 58.4 },
+  ];
+  for (const { id, released, prices, total } of cases) {
+    const entry = officialPrice({ providerID: "anthropic", id })!;
+    assert.equal(entry.released, released, id);
+    assert.deepEqual(entry.prices, prices, id);
+    assert.equal(officialPrice({ providerID: "openrouter", id: `anthropic/${id}` }), undefined, id);
+    assert.equal(estimate(normalize({ input: 1_000_000, output: 1_000_000,
+      cache: { read: 1_000_000, write: 1_000_000 } }), entry.prices).cost, total, id);
+  }
+  assert.equal(officialPrice({ providerID: "anthropic", id: "claude-opus-5" })?.prices[0]?.input, 5);
+  assert.equal(officialPrice({ providerID: "anthropic", id: "claude-opus-5-5" })?.prices[0]?.input, 4);
 });
 
 test("DeepSeek V4 uses the official peak rates as a conservative upper bound", () => {

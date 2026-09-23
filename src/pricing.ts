@@ -7,7 +7,9 @@ export interface OfficialPriceEntry {
   released: string;
   /** Exact alternate IDs used by supported gateways or manufacturer aliases. */
   aliases?: readonly string[];
-  /** Standard, synchronous API token rates in USD per million tokens. */
+  /** Provider IDs where this rate is available, when it is not a general model rate. */
+  providers?: readonly string[];
+  /** Published API token rates in USD per million tokens. */
   prices: readonly Price[];
   /** Manufacturer pricing page used to verify the rates. */
   source: string;
@@ -17,13 +19,21 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
   verified: "2026-09-23",
   newModelCutoff: "2026-03-22",
   entries: [
-    // OpenAI standard processing. Tier sizes are exclusive thresholds, so
+    // OpenAI API rates. Tier sizes are exclusive thresholds, so
     // 272,000 implements the official ">272K input tokens" boundary.
     {
       id: "gpt-5.5", released: "2026-04-23", source: "https://developers.openai.com/api/docs/pricing",
       prices: [
         { input: 5, output: 30, cache: { read: 0.5 } },
         { tier: { type: "context", size: 272_000 }, input: 10, output: 45, cache: { read: 1 } },
+      ],
+    },
+    {
+      id: "gpt-5.5-fast", providers: ["openai"], released: "2026-04-23", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 12.5, output: 75, cache: { read: 1.25 } },
+        // OpenAI publishes no Fast rate for GPT-5.5 above 272K input tokens.
+        { tier: { type: "context", size: 272_000 } },
       ],
     },
     {
@@ -75,6 +85,50 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
         { tier: { type: "context", size: 272_000 }, input: 0.2, output: 0.75, cache: { read: 0.02, write: 0.25 } },
       ],
     },
+    {
+      // OpenAI Fast processing is a separate exact ID and restricted to the
+      // first-party provider so ordinary or gateway model IDs keep standard rates.
+      id: "gpt-6-luna-fast", providers: ["openai"], released: "2026-09-22", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 0.2, output: 1, cache: { read: 0.02, write: 0.25 } },
+        { tier: { type: "context", size: 272_000 }, input: 0.4, output: 1.5, cache: { read: 0.04, write: 0.5 } },
+      ],
+    },
+    {
+      id: "gpt-5.6-sol-fast", providers: ["openai"], released: "2026-07-09", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 8, output: 40, cache: { read: 0.8, write: 10 } },
+        { tier: { type: "context", size: 272_000 }, input: 16, output: 60, cache: { read: 1.6, write: 20 } },
+      ],
+    },
+    {
+      id: "gpt-5.6-terra-fast", providers: ["openai"], released: "2026-07-09", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 4, output: 24, cache: { read: 0.4, write: 5 } },
+        { tier: { type: "context", size: 272_000 }, input: 8, output: 36, cache: { read: 0.8, write: 10 } },
+      ],
+    },
+    {
+      id: "gpt-5.6-luna-fast", providers: ["openai"], released: "2026-07-09", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 0.4, output: 2.4, cache: { read: 0.04, write: 0.5 } },
+        { tier: { type: "context", size: 272_000 }, input: 0.8, output: 3.6, cache: { read: 0.08, write: 1 } },
+      ],
+    },
+    {
+      id: "gpt-6-astra-fast", providers: ["openai"], released: "2026-09-04", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 20, output: 100, cache: { read: 2, write: 25 } },
+        { tier: { type: "context", size: 272_000 }, input: 40, output: 150, cache: { read: 4, write: 50 } },
+      ],
+    },
+    {
+      id: "gpt-6-sol-fast", providers: ["openai"], released: "2026-09-22", source: "https://developers.openai.com/api/docs/pricing",
+      prices: [
+        { input: 4, output: 20, cache: { read: 0.4, write: 5 } },
+        { tier: { type: "context", size: 272_000 }, input: 8, output: 30, cache: { read: 0.8, write: 10 } },
+      ],
+    },
     // The official ChatGPT SKU `chat-latest`. OpenRouter serves it under the
     // slug `openai/gpt-chat-latest`, which is registered as an exact alias.
     {
@@ -104,6 +158,20 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
     {
       id: "claude-opus-5", released: "2026-07-24", source: "https://platform.claude.com/docs/en/about-claude/pricing",
       prices: [{ input: 5, output: 25, cache: { read: 0.5, write: 6.25 } }],
+    },
+    {
+      // Fast mode is first-party Claude API only. Cache multipliers apply to
+      // the Fast input price; aggregate cache writes use the 5-minute rate.
+      id: "claude-opus-5-fast", providers: ["anthropic"], released: "2026-07-24", source: "https://platform.claude.com/docs/en/about-claude/pricing",
+      prices: [{ input: 10, output: 50, cache: { read: 1, write: 12.5 } }],
+    },
+    {
+      id: "claude-opus-4-8-fast", providers: ["anthropic"], released: "2026-05-28", source: "https://platform.claude.com/docs/en/about-claude/pricing",
+      prices: [{ input: 10, output: 50, cache: { read: 1, write: 12.5 } }],
+    },
+    {
+      id: "claude-opus-5-5-fast", providers: ["anthropic"], released: "2026-09-22", source: "https://platform.claude.com/docs/en/about-claude/pricing",
+      prices: [{ input: 8, output: 40, cache: { read: 0.4, write: 10 } }],
     },
     {
       id: "claude-fable-5-1", aliases: ["claude-fable-5.1"], released: "2026-09-01",
@@ -536,14 +604,20 @@ export function officialPrice(model: ModelRef): OfficialPriceEntry | undefined {
   if (slash >= 0) candidates.push(id.slice(slash + 1));
   const dot = id.lastIndexOf(".");
   if (dot >= 0) candidates.push(id.slice(dot + 1));
-  for (const candidate of candidates) {
+  const available = (candidate: string) => {
     const entry = index.get(candidate);
+    return entry && (!entry.providers || entry.providers.some(provider => provider.toLowerCase() === model.providerID.toLowerCase()))
+      ? entry
+      : undefined;
+  };
+  for (const candidate of candidates) {
+    const entry = available(candidate);
     if (entry) return entry;
   }
   for (const candidate of candidates) {
     for (const suffix of ["-free", ":free"]) {
       if (!candidate.endsWith(suffix)) continue;
-      const entry = index.get(candidate.slice(0, -suffix.length));
+      const entry = available(candidate.slice(0, -suffix.length));
       if (entry) return entry;
     }
   }

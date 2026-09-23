@@ -1,14 +1,14 @@
 # 内置官方价格快照
 
-插件自 v0.3.0 起，在 OpenCode 当前模型目录没有可用于某条消息的完整价格时，使用本页所列的公开 API 价格补全。若 OpenCode 给出完整零价，而快照能完整计价，则使用快照价格。快照核验于 **2026-09-23**，共收录 79 个模型，金额均为美元 / 100 万 token。
+插件自 v0.3.0 起，在 OpenCode 当前模型目录没有可用于某条消息的完整价格时，使用本页所列的公开 API 价格补全。若 OpenCode 给出完整零价，而快照能完整计价，则使用快照价格。快照核验于 **2026-09-23**，共收录 86 个模型，金额均为美元 / 100 万 token。
 
 ## 规则
 
 - 每条 assistant 与 compaction 消息按自身记录的 `providerID`、模型 ID 和 token 用量分别计算。
 - OpenCode 当前解析出的完整适用非零价格优先。若完整适用价格为零，则尝试使用内置价格；只有快照能完整覆盖该消息实际使用的 token 类别时才覆盖零价，否则保留 OpenCode 的零价。OpenCode 价格不完整时，整条消息回退到内置价格，不混用两套费率。
-- 网关模型只通过精确厂商 ID、精确别名及已知包装格式匹配，例如 `openai/gpt-5.6-luna`、`us.anthropic.claude-opus-5` 和 `claude-opus-5@default`。匹配这些现有形式后，也会尝试仅移除模型 ID 的末尾 `-free` 或 `:free` 再精确匹配基础 ID，例如 `mimo-v2.6-flash-free`、`meta/muse-spark-1.3:free` 和 `muse-spark-1.3-contributor-free`；`-pro`、`-fast`、`-free-preview` 等其他后缀不会剥离。不按相似名称猜测。
+- 网关模型只通过精确厂商 ID、精确别名及已知包装格式匹配，例如 `openai/gpt-5.6-luna`、`us.anthropic.claude-opus-5` 和 `claude-opus-5@default`。匹配这些现有形式后，也会尝试仅移除模型 ID 的末尾 `-free` 或 `:free` 再精确匹配基础 ID，例如 `mimo-v2.6-flash-free`、`meta/muse-spark-1.3:free` 和 `muse-spark-1.3-contributor-free`；`-pro`、`-fast`、`-free-preview` 等其他后缀不会剥离。单独列出的 Fast 型号仅按完整 ID 和厂商支持的 provider 精确匹配，不会回退到标准费率。不按相似名称猜测。
 - 目录首版只新增 2026-03-22 至 2026-09-22 发布、具有明确 token 费率的模型。后续版本只限制新增窗口，已经收录的条目不会因超过半年而自动删除。
-- 采用标准同步 API 的公开价；Meta Contributor 条件价按单独标注的来源记录。不含 Batch、Flex、Fast/Priority、区域溢价、网关加价、企业折扣、工具费和税费，因此 Cost 仍是估算，不代表账单。
+- 采用同步 API 的公开价；Meta Contributor 条件价按单独标注的来源记录。仅收录下表明确列出的 Fast 型号，不含 Batch、Flex、其他 Fast/Priority、区域溢价、网关加价、企业折扣、工具费和税费，因此 Cost 仍是估算，不代表账单。
 - 任一有用量消息仍无法定价时，已知小计标记 `partial`；全部无法定价时显示 `—`。明确零价才显示 `$0.00`。
 - 促销价按核验日官网显示的费率收录（如 `gpt-5.6-sol`、MiniMax-M3 的"长期 5 折"标价），不用划线原价。
 
@@ -19,16 +19,23 @@
 | 模型 | 发布日期 | Input | Output | Cache Read | Cache Write | 长上下文档位 |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `gpt-5.5` | 2026-04-23 | 5 | 30 | 0.5 | — | >272K：10 / 45 / 1 / — |
+| `gpt-5.5-fast`（Fast） | 2026-04-23 | 12.5 | 75 | 1.25 | — | >272K：无官方 Fast 费率 |
 | `gpt-5.5-pro` | 2026-04-23 | 30 | 180 | — | — | >272K：60 / 270 / — / — |
 | `gpt-5.6-sol` | 2026-07-09 | 4 | 20 | 0.4 | 5 | >272K：8 / 30 / 0.8 / 10 |
+| `gpt-5.6-sol-fast`（Fast） | 2026-07-09 | 8 | 40 | 0.8 | 10 | >272K：16 / 60 / 1.6 / 20 |
 | `gpt-5.6-terra` | 2026-07-09 | 2 | 12 | 0.2 | 2.5 | >272K：4 / 18 / 0.4 / 5 |
+| `gpt-5.6-terra-fast`（Fast） | 2026-07-09 | 4 | 24 | 0.4 | 5 | >272K：8 / 36 / 0.8 / 10 |
 | `gpt-5.6-luna` | 2026-07-09 | 0.2 | 1.2 | 0.02 | 0.25 | >272K：0.4 / 1.8 / 0.04 / 0.5 |
+| `gpt-5.6-luna-fast`（Fast） | 2026-07-09 | 0.4 | 2.4 | 0.04 | 0.5 | >272K：0.8 / 3.6 / 0.08 / 1 |
 | `gpt-6-astra` | 2026-09-04 | 10 | 50 | 1 | 12.5 | >272K：20 / 75 / 2 / 25 |
+| `gpt-6-astra-fast`（Fast） | 2026-09-04 | 20 | 100 | 2 | 25 | >272K：40 / 150 / 4 / 50 |
 | `gpt-6-sol` | 2026-09-22 | 2 | 10 | 0.2 | 2.5 | >272K：4 / 15 / 0.4 / 5 |
+| `gpt-6-sol-fast`（Fast） | 2026-09-22 | 4 | 20 | 0.4 | 5 | >272K：8 / 30 / 0.8 / 10 |
 | `gpt-6-luna` | 2026-09-22 | 0.1 | 0.5 | 0.01 | 0.125 | >272K：0.2 / 0.75 / 0.02 / 0.25 |
+| `gpt-6-luna-fast`（Fast） | 2026-09-22 | 0.2 | 1 | 0.02 | 0.25 | >272K：0.4 / 1.5 / 0.04 / 0.5 |
 | `chat-latest`（别名 `gpt-chat-latest`） | 2026-05-05 | 5 | 30 | 0.5 | — | — |
 
-`gpt-6-sol` 和 `gpt-6-luna` 的发布日期见 [OpenAI API 更新日志](https://developers.openai.com/api/docs/changelog)。表内 OpenAI 长上下文价格在传入 token 超过 272,000 时对整条请求生效。`gpt-5.6-sol` 的当前标准价是限期促销价；快照采用核验日官网显示的费率。`chat-latest` 是官方 ChatGPT SKU，OpenRouter 上的 `gpt-chat-latest` 作为精确别名指向同一条目。
+`gpt-6-sol` 和 `gpt-6-luna` 的发布日期见 [OpenAI API 更新日志](https://developers.openai.com/api/docs/changelog)。表内 OpenAI 长上下文价格在传入 token 超过 272,000 时对整条请求生效。Fast 条目对应官方 Fast processing 费率；API 通过基础模型配合 `service_tier: "fast"` 选择该档，因此只有以对应 `-fast` ID 记录的 OpenAI 消息使用 Fast 价格，其他 provider 不匹配这些条目。官方未公布 `gpt-5.5` Fast 长上下文费率，故超过 272,000 个传入 token 时标记为不可估价，不沿用短上下文价。`gpt-5.6-sol` 的当前标准价是限期促销价；快照采用核验日官网显示的费率。`chat-latest` 是官方 ChatGPT SKU，OpenRouter 上的 `gpt-chat-latest` 作为精确别名指向同一条目。
 
 ## Anthropic
 
@@ -38,15 +45,20 @@
 | --- | --- | ---: | ---: | ---: | ---: |
 | `claude-opus-4-7` | 2026-04-14 | 5 | 25 | 0.5 | 6.25 |
 | `claude-opus-4-8` | 2026-05-28 | 5 | 25 | 0.5 | 6.25 |
+| `claude-opus-4-8-fast`（Fast） | 2026-05-28 | 10 | 50 | 1 | 12.5 |
 | `claude-fable-5` | 2026-06-07 | 10 | 50 | 1 | 12.5 |
 | `claude-sonnet-5` | 2026-06-29 | 2 | 10 | 0.2 | 2.5 |
 | `claude-opus-5` | 2026-07-24 | 5 | 25 | 0.5 | 6.25 |
+| `claude-opus-5-fast`（Fast） | 2026-07-24 | 10 | 50 | 1 | 12.5 |
 | `claude-fable-5-1` | 2026-09-01 | 10 | 50 | 0.25 | 12.5 |
 | `claude-opus-5-5` | 2026-09-22 | 4 | 20 | 0.2 | 5 |
+| `claude-opus-5-5-fast`（Fast） | 2026-09-22 | 8 | 40 | 0.4 | 10 |
 
 Cache Write 采用官方 5 分钟写入价。OpenCode 的聚合字段不区分 5 分钟与 1 小时 TTL，无法从历史消息可靠应用 1 小时写入价。OpenRouter 的 `claude-opus-4.7`、`claude-opus-4.8`、`claude-opus-5.5` 圆点写法注册为对应条目的精确别名。
 
 `claude-opus-5-5` 的 Cache Read 是官方 0.05 倍基础输入价的特殊乘率（多数 Claude 模型为 0.1 倍），按官方标价 $0.20 / M 收录。
+
+表中 Claude Fast 条目仅适用于 Claude API 一方。Fast mode 的 Cache Read 和 5 分钟 Cache Write 分别按 Fast 输入价乘以官方缓存倍率计算；OpenCode 聚合的 Cache Write 无法区分 TTL，因此按 5 分钟写入价估算。Opus 5.5 的 Cache Read 为 Fast 输入价的 0.05 倍，其余表列 Fast 型号为 0.1 倍。
 
 ## Google
 
@@ -284,7 +296,7 @@ Fugu Ultra 的编排 token 已包含在 API 返回的 input/output 用量中，�
 
 - Realtime、音频、图片、视频、embedding、按页、按分钟和按工具调用收费的模型无法仅由当前五类 token 用量准确计算。
 - `grok-4.20`、`grok-4.20-multi-agent` 发布于 2026-03-09，早于目录收录窗口起点 2026-03-22。
-- Fast/Priority 等加速档（`claude-opus-*-fast`、`gpt-5.6-*-pro`、`gpt-6-astra-pro`、MiniMax priority 档）不是标准同步价。
+- Fast/Priority 等其他未列出的加速档（例如 `claude-opus-4-7-fast`、`gpt-5.5-pro-fast`、`gpt-6-astra-pro` 和 MiniMax priority 档）不收录；上表列出当前快照中官方定价页明确支持的 GPT 与 Claude Fast 型号。
 - 其他免费模型（Gemma 系列、`cohere/north-mini-code` 等开源或网关零价款）不设价格条目。
 - 无法从厂商官方页面确认标准 token 价格的模型不猜价，包括 OpenRouter stealth/alpha 匿名模型、`z-ai/glm-5v-turbo`、`qwen3.6-plus-preview`、腾讯 `hy3-preview` 与 `hy-mt2-*`、`kwaipilot/kat-coder-pro-v2.5` 及其 Air 版本、除上表 OpenCode Zen SKU 外的 `inclusionai/ling-3.0-*`、`bytedance-seed/seed-2.0-code` 等。这些模型目前只能查到 OpenRouter、AtlasCloud、DeepInfra 等网关或第三方报价，不能据此推断厂商标准价。
 - 浮动别名（`-latest` 指针与 OpenRouter `~` 前缀条目）随底层模型漂移，不收录固定价。
