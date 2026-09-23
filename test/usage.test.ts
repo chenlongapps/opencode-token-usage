@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { contextUsage, estimate, formatCost, formatTokens, modelKey, normalize, summarize, usageRows } from "../src/usage.js";
+import { bar, contextDetails, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatTokens, modelKey, normalize, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
 import type { Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
@@ -63,6 +63,39 @@ test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.ok(!usageRows(empty).some(([label]) => label === "Cost"));
   assert.equal(usageRows().length, 7);
   assert.ok(usageRows().every(([, value]) => value === "—"));
+});
+
+test("compact numbers, bars and the detailed session rows feed the redesigned dialog", () => {
+  assert.equal(formatCompact(812), "812");
+  assert.equal(formatCompact(1_270), "1.3K");
+  assert.equal(formatCompact(5_197), "5.2K");
+  assert.equal(formatCompact(139_382), "139.4K");
+  assert.equal(formatCompact(1_000_000), "1.00M");
+  assert.equal(formatCompact(3_700_338), "3.70M");
+  // Rounding never produces an impossible "1000.0K".
+  assert.equal(formatCompact(999_949), "999.9K");
+  assert.equal(formatCompact(999_999), "1.00M");
+  assert.equal(formatCompact(NaN), "0");
+  assert.deepEqual(bar(0, 10), { filled: 0, empty: 10 });
+  assert.deepEqual(bar(37.4, 10), { filled: 4, empty: 6 });
+  assert.deepEqual(bar(176.3, 10), { filled: 10, empty: 0 });
+  assert.deepEqual(bar(50, -3), { filled: 0, empty: 0 });
+
+  const summary = summarize([
+    { id: "a", type: "assistant", tokens: { input: 200, output: 50, cache: { read: 800 } } },
+    { id: "b", type: "assistant", tokens: { input: 0 } },
+    { id: "c", type: "compaction", status: "completed", tokens: { input: 100 } },
+    { id: "u", type: "user", tokens: { input: 90 } },
+  ], catalog());
+  // Steps count every assistant message; calls count only priced ones.
+  assert.equal(summary.steps, 2);
+  assert.equal(summary.calls, 2);
+  assert.deepEqual(summaryRows(summary).map(([label]) => label), [
+    "Steps", "Calls", "Input", "Output", "Reasoning", "Cache Read", "Cache Rate", "Total", "Cost",
+  ]);
+  assert.equal(countLabel(1, "step"), "1 step");
+  assert.equal(countLabel(2, "step"), "2 steps");
+  assert.equal(countLabel(29, "call"), "29 calls");
 });
 
 test("cache write stays conditional while confirmed free cost displays as zero", () => {
@@ -145,6 +178,41 @@ test("mixed-model trees price every message with its own model", () => {
   ], prices);
   assert.equal(summary.cost, 33);
   assert.equal(summary.costStatus, "complete");
+});
+
+test("model cost rows reconcile with tree cost across runtime, official, free and missing prices", () => {
+  const runtime = { providerID: "test", id: "priced" };
+  const fallback = { providerID: "gateway", id: "gpt-5.6-luna" };
+  const free = { providerID: "test", id: "free" };
+  const catalog = new Map([
+    [modelKey(runtime), [{ input: 2 }]],
+    [modelKey(free), [{ input: 0 }]],
+  ]);
+  const messages: UsageMessage[] = [
+    { id: "one", type: "assistant", model: runtime, tokens: { input: 1_000_000 } },
+    { id: "two", type: "compaction", model: runtime, tokens: { input: 500_000 } },
+    { id: "three", type: "assistant", model: fallback, tokens: { input: 1_000_000 } },
+    { id: "four", type: "assistant", model: free, tokens: { input: 100 } },
+    { id: "five", type: "assistant", model: runtime, tokens: { output: 100 } }, // Runtime has no output rate.
+    { id: "six", type: "assistant", tokens: { input: 50 } },
+    { id: "seven", type: "user", tokens: { input: 100_000 } },
+    { id: "eight", type: "assistant", model: runtime },
+  ];
+  const tree = summarize(messages, catalog);
+  const models = summarizeModels(messages, catalog);
+  assert.equal(tree.costStatus, "partial");
+  assert.equal(models.reduce((sum, value) => sum + value.cost, 0), tree.cost);
+  assert.deepEqual(models.map(({ model, costStatus, calls }) => [model, costStatus, calls]), [
+    ["test/priced", "partial", 3], ["gateway/gpt-5.6-luna", "complete", 1],
+    ["test/free", "complete", 1], ["Unknown model", "unavailable", 1],
+  ]);
+  assert.equal(models[0]?.cost, 3);
+  assert.equal(models[0]?.tokens, 1_500_100);
+  assert.equal(models[1]?.cost, 0.4);
+  assert.equal(formatEstimatedCost(models[0]!.cost, models[0]!.costStatus), "$3.00 · partial");
+  assert.equal(formatEstimatedCost(models[2]!.cost, models[2]!.costStatus), "$0.00");
+  assert.equal(formatEstimatedCost(models[3]!.cost, models[3]!.costStatus), "—");
+  assert.deepEqual(summarizeModels([]), []);
 });
 
 test("incomplete OpenCode prices fall back as a whole and complete zero prices use the snapshot", () => {
@@ -256,6 +324,32 @@ test("context uses the last assistant with tokens after the last completed compa
   assert.equal(contextUsage(boundary, limit), undefined);
   assert.equal(contextUsage([...boundary, assistant("b", 250)], limit)?.used, 250);
   for (const status of ["running", "failed"]) assert.equal(contextUsage([assistant("a", 100), compact(status)], limit)?.used, 100);
+});
+
+test("context composition uses the viewed call's five categories, not the tree or pre-compaction history", () => {
+  const history: UsageMessage[] = [
+    { id: "old", type: "assistant", tokens: { input: 900 } },
+    { id: "compact", type: "compaction", status: "completed", tokens: { input: 1_000 } },
+    { id: "current", type: "assistant", tokens: {
+      input: 100, output: 20, reasoning: 10, cache: { read: 60, write: 10 },
+    } },
+    { id: "pending", type: "assistant" },
+  ];
+  const details = contextDetails(history, 100)!;
+  assert.deepEqual(details.usage, { used: 200, limit: 100, percent: 200 });
+  assert.deepEqual(requestRows(details, false), [
+    ["Input", "100 (50.0%)"], ["Output", "20 (10.0%)"], ["Reasoning", "10 (5.0%)"],
+    ["Cache Read", "60 (30.0%)"], ["Cache Write", "10 (5.0%)"], ["Cache Rate", "35.3%"],
+  ]);
+  // Compact mode drops empty categories and percentages; the cache rate stays.
+  assert.deepEqual(requestRows(contextDetails([
+    { id: "a", type: "assistant", tokens: { input: 812, cache: { read: 138_542 } } },
+  ], 200_000)!, true), [
+    ["Input", "812"], ["Cache Read", "138.5K"], ["Cache Rate", "99.4%"],
+  ]);
+  assert.deepEqual(contextUsage(history, 100), details.usage);
+  assert.equal(contextDetails(history, undefined), undefined);
+  assert.equal(contextDetails([...history, { id: "last", type: "assistant", tokens: { input: 0 } }], 100), undefined);
 });
 
 test("unusable context limits and missing usage hide the context rows", () => {

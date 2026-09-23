@@ -90,14 +90,15 @@ Steps  1,234
 
 ## v0.4.0 — 用量命令
 
-目标：按需提供比侧边栏更详细的 token 信息。
+目标：按需提供比侧边栏更详细的 token 信息。以弹窗的形式显示。
 
-* [ ] 添加 `/usage`
-* [ ] 显示当前会话及会话树统计
-* [ ] 显示 context 各项占比
-* [ ] 显示 token 明细与上下文用量
-* [ ] 显示模型和价格信息
-* [ ] 显示估算费用明细
+* [x] 添加 `/usage`
+* [x] 显示当前会话树的 token 信息
+* [x] 显示 context 各项占比
+* [x] 显示 token 明细与上下文用量
+* [x] 显示各个模型费用
+* [x] 拆分为 Context Window / Last Request / Context Breakdown / Session / By Model，口径互不混用
+* [x] 紧凑数字（K/M）、来源条形图、Session 单行汇总、`d` 详细模式切换
 
 ## 后续评估
 

@@ -70,6 +70,83 @@ test("failed refresh retains last complete data and automatically recovers; firs
   await until(() => state.status === "ready" && state.summary?.total === 99);
 });
 
+test("detailed view shares tree totals with the sidebar and retains a complete report on refresh failure", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.sessions.set("child", session("child", "root"));
+  source.history.set("child", [message("child-a", 30)]);
+  let state: UsageState = { status: "loading" };
+  const latest = () => state;
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
+  t.after(() => controller.dispose());
+  controller.select("child");
+  await until(() => state.status === "ready");
+  assert.equal(state.summary?.total, 40);
+  assert.equal(state.details?.models[0]?.tokens, 40);
+  assert.equal(state.details?.models[0]?.cost, state.summary?.cost);
+  assert.equal(state.details?.context?.usage.used, 30);
+  assert.equal(state.context?.used, 30);
+
+  source.fail = true;
+  events.emit("session.step.ended", "child");
+  await until(() => state.status === "stale");
+  assert.equal(state.details?.models[0]?.tokens, 40);
+  source.fail = false;
+  source.history.set("child", [message("child-a", 50)]);
+  await until(() => state.status === "ready" && state.summary?.total === 60);
+  assert.equal(state.details?.models[0]?.tokens, 60);
+  controller.select("root");
+  assert.equal(state.status, "loading");
+  assert.equal(state.details, undefined);
+  await until(() => state.status === "ready");
+  assert.equal(latest().details?.context?.usage.used, 10);
+});
+
+test("missing or failed request-source estimation does not turn measured usage into a read failure", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.composition = async () => ({
+    capturedAt: 1_000, model: "test/model",
+    tokens: { Messages: 20, "System Tools": 10, "System Prompt": 10, Skills: 0, "MCP Tools": 0, Other: 0 },
+  });
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.details?.sources?.capturedAt === 1_000);
+  assert.equal(state.summary?.total, 10);
+  source.composition = async () => { throw new Error("RPC unavailable"); };
+  events.emit();
+  await until(() => state.status === "ready" && state.details?.sources === undefined);
+  assert.equal(state.summary?.total, 10);
+  assert.equal(state.context?.used, 10);
+});
+
+test("slow source RPC does not block measured usage or overwrite a different session", async t => {
+  const source = new FakeSource(), events = new Events();
+  const slow = deferred<NonNullable<UsageState["details"]>["sources"]>();
+  source.sessions.set("other", session("other"));
+  source.history.set("other", [message("other-a", 7)]);
+  source.composition = async selected => selected.id === "root" ? slow.promise : {
+    capturedAt: 2_000, model: "test/other",
+    tokens: { Messages: 7, "System Tools": 0, "System Prompt": 0, Skills: 0, "MCP Tools": 0, Other: 0 },
+  };
+  let state: UsageState = { status: "loading" };
+  const latest = () => state;
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready" && state.summary?.total === 10);
+  assert.equal(state.details?.sources, undefined);
+  controller.select("other");
+  await until(() => state.details?.sources?.capturedAt === 2_000);
+  slow.resolve({
+    capturedAt: 1_000, model: "test/model",
+    tokens: { Messages: 10, "System Tools": 0, "System Prompt": 0, Skills: 0, "MCP Tools": 0, Other: 0 },
+  });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.summary?.total, 7);
+  assert.equal(latest().details?.sources?.capturedAt, 2_000);
+});
+
 test("switching sessions discards old responses even if the source ignores cancellation; dispose unsubscribes", async () => {
   const source = new FakeSource(), events = new Events();
   source.sessions.set("other", session("other"));

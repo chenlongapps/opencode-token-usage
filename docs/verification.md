@@ -1,5 +1,41 @@
 # 验证记录
 
+## v0.4.0（`/usage` 原生弹窗）
+
+验证日期：2026-09-23。Node.js v22.23.2；`@opencode/plugin`、`@opencode/client` 等 SDK 精确锁定 2.0.11。弹窗布局参考本地 OpenCode 2.0.15 源码中的 `dialog-status.tsx`、`dialog-debug.tsx` 和 `dialog-shell-output.tsx`，通过插件公开的斜杠命令、弹窗、`session.hook("context")` 和 RPC 接口实现，并在真实 OpenCode 2.0.11 宿主中验证。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 62 项通过 |
+| `npm run build` | 通过，输出 ESM 与类型声明 |
+| `npm run test:smoke` | 通过，使用 `.tgz` 安装产物、真实 OpenCode 2.0.11 与本地模拟提供商 |
+
+`/usage` 仅在会话页面注册为 CLI 斜杠／命令面板命令，打开原生弹窗而不向模型发送新消息。弹窗按当前查看会话展示最后一次已完成压缩后的上下文用量；五类 token 的占比以该条 assistant 消息的已用 context 为分母，窗口占用率以活动模型上下文上限为分母。会话树明细沿用侧边栏的完整分页、子代理汇总和分叉继承去重口径；按模型汇总的费用与全树 Cost 共用逐消息计价规则，分别处理免费、缺价、`partial` 及内置官方价格回退。
+
+自动化测试新增：五类 context 分类百分比、压缩边界与未知上限；混合模型和 compaction、价格回退、免费与缺价时逐模型费用对全树费用的核对；弹窗详细快照在子会话、刷新失败恢复和切换会话时的生命周期。打包集成测试确认空会话不会伪造上下文占用，真实 `/usage` 可打开与关闭、显示 1,270 token 当前上下文分类和模型费用；100 × 28 终端内滚动可到达模型费用；真实子代理合并后显示全树 5,080 token；切换活动模型后弹窗上限变为 32,000，历史消息费用仍列在原模型下。2.0.11 子代理视图最初处于宿主的子代理覆盖层，不提供斜杠输入；其全树面板验证继续由 `session.composer.top` 覆盖。
+
+新增 **Context Sources · estimated**：服务端只在 `context` 钩子中观察最近一次已组装的模型请求，按可识别的消息文本、系统工具定义／Code Mode 目录、系统提示词、技能文本／目录、MCP 指令／工具以及其他内容分别估算，持久化的仅是六类数值、模型和采样时间；CLI 通过位置限定的 RPC 读取。估算使用 UTF-8 字节数近似，不是提供商真实 token 归因，媒体负载及提供商包装无法准确计量，也不会与含输出／推理的实测 Context 相加一致。未捕获过请求的会话显示不可用；服务端插件或 RPC 不可用时仍显示实测统计。测试覆盖六类独立归因、占比分母、无技能/MCP 时的零值、Code Mode 后续项目指令、工具结果媒体忽略、无效 RPC 数据，以及 RPC 缓慢／失败时不阻塞实测用量或串会话。真实 2.0.11 打包集成验证了请求钩子记录与 CLI 弹窗读取均生效。
+
+## v0.4.0（`/usage` 弹窗信息架构重构）
+
+验证日期：2026-09-23。Node.js v22.23.2；SDK 仍精确锁定 2.0.11。本轮只改弹窗的数据映射与呈现，统计与定价逻辑不变。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 62 项通过 |
+| `npm run build` | 通过 |
+| `npm run test:smoke` | 通过，真实 OpenCode 2.0.11 + 本地模拟提供商 |
+
+信息架构由 `Context / Context Sources / Session Tree / Cost by Model` 改为 **Context Window / Last Request / Context Breakdown / Session / By Model**：Context Window 只呈现上下文占用（分母为活动模型上限）并带条形图；原 Context 内的五类 token 迁入 Last Request 并补充该次请求的缓存率；`Context Sources · estimated` 改名 Context Breakdown；`Session Tree` 改名 Session，因为面板本来就是全树汇总而非树结构；`Cost by Model` 改名 By Model。标题下方新增一行显示会话名与活动模型（多模型时显示模型数量），正文不再重复模型名，弹窗改用宿主 `centered` 选项垂直居中。
+
+默认紧凑模式使用 K/M 缩写（< 1,000 精确、< 1,000,000 一位小数 K、≥ 1,000,000 两位小数 M，四舍五入不会出现 `1000.0K`），隐藏零值行，并把 Context Breakdown 的两类工具合并为 `Tools` 行按占比降序；按 `d` 切换详细模式，恢复精确数字、零值行、`System Tools` / `MCP Tools` 拆分以及 Session 逐类明细（含 Calls）。Session 单行汇总为 `steps · calls · tokens · cached% · cost`，其中 calls 与 By Model 各行同源，可与逐模型行核对。条形图宽度、Last Request 双列与内容宽度随宿主 `large` 档（88 列）收敛，窄终端自动改为单列并收窄条长。
+
+自动化测试新增：`formatCompact` 边界、`bar` 填充与越界、`requestRows` 的紧凑／详细两态、`summarize().calls` 与 `summaryRows`、`countLabel` 单复数、`breakdownRows` 的工具合并、降序与零值策略。打包集成测试确认紧凑与详细两种模式可切换、`Used / Limit` 显示 `1.3K / 128.0K (1.0%)`、Context Breakdown 显示 `Tools` 合并行与条形图、Session 单行汇总、By Model 逐模型费用，以及 100 × 28 终端内滚动仍可到达模型费用。
+
+尚未实现（属于后续评估）：真实的分叉／分支树统计、进度条以外的窗口告警色阶、公开价格目录。
+
 ## v0.3.3（GPT 与 Claude Fast 价格）
 
 验证日期：2026-09-23。根据 [OpenAI API Pricing](https://developers.openai.com/api/docs/pricing) 与 [Claude Platform Pricing](https://platform.claude.com/docs/en/about-claude/pricing)，为当前快照中官方支持 Fast mode 的 GPT-5.5、GPT-5.6 Sol/Terra/Luna、GPT-6 Astra/Sol/Luna，以及 Claude Opus 4.8/5/5.5 分别加入独立 Fast 条目。Fast 费率按官方长上下文档位与缓存倍率记录；GPT-5.5 Fast 未公布长上下文费率，超过 272,000 个传入 token 时显示不可估价。条目分别限制到官方支持 Fast mode 的 OpenAI 与 Anthropic provider；快照由 76 个模型增至 86 个。

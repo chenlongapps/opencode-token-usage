@@ -2,13 +2,15 @@ import { loadSnapshot, uniqueMessages, viewedMessages } from "./source.js";
 import type { Snapshot, UsageSource } from "./source.js";
 import { PerformanceMonitor } from "./performance.js";
 import type { PerformanceSummary } from "./performance.js";
-import { contextUsage, summarize } from "./usage.js";
-import type { ContextUsage, Summary } from "./usage.js";
+import type { ContextSources } from "./context-sources.js";
+import { contextDetails, summarize, summarizeModels } from "./usage.js";
+import type { ContextDetails, ContextUsage, ModelCost, Summary } from "./usage.js";
 
 export interface UsageState {
   status: "loading" | "ready" | "stale" | "unavailable";
   summary?: Summary;
   context?: ContextUsage | undefined;
+  details?: { context?: ContextDetails | undefined; models: readonly ModelCost[]; sources?: ContextSources | undefined; sessionTitle?: string | undefined };
   performance?: PerformanceSummary;
   model?: string;
 }
@@ -28,7 +30,7 @@ const globalEvents = new Set([
   "config.updated", "location.shutdown",
 ]);
 
-/** Owns snapshot refreshes and throttled in-memory performance updates for one mounted panel. */
+/** Owns snapshot refreshes and throttled in-memory performance updates for one mounted view. */
 export class UsageController {
   private state: UsageState = { status: "loading" };
   private snapshot: Snapshot | undefined;
@@ -54,6 +56,7 @@ export class UsageController {
     private readonly retryDelay = 3_000,
     private readonly performanceDelay = 100,
     performance?: PerformanceMonitor,
+    private readonly detailed = false,
   ) {
     this.ownsPerformance = performance === undefined;
     this.performance = performance ?? new PerformanceMonitor(subscribe);
@@ -139,13 +142,24 @@ export class UsageController {
       this.performance.reconcile(messages, this.sessions);
       clearTimeout(this.performanceTimer);
       this.performanceTimer = undefined;
+      const context = contextDetails(viewedMessages(snapshot), snapshot.model.context);
       this.update({
         status: "ready",
         summary: summarize(messages, snapshot.model.catalog),
-        context: contextUsage(viewedMessages(snapshot), snapshot.model.context),
+        context: context?.usage,
+        ...(this.detailed ? { details: { context, models: summarizeModels(messages, snapshot.model.catalog), sessionTitle: snapshot.sessions.get(snapshot.viewedID)?.title } } : {}),
         performance: this.performance.summary(messages, this.sessions),
         model: snapshot.model.label,
       });
+      // The server plugin may be absent. An optional RPC must not delay measured usage.
+      if (this.detailed && this.source.composition) {
+        void this.source.composition(snapshot.sessions.get(snapshot.viewedID)!, AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]))
+          .then(sources => {
+            if (this.disposed || generation !== this.generation || this.snapshot !== snapshot || this.state.status !== "ready" || !this.state.details) return;
+            this.update({ ...this.state, details: { ...this.state.details, sources } });
+          })
+          .catch(() => {});
+      }
     } catch {
       if (this.disposed || generation !== this.generation) return;
       this.update({ ...this.state, status: this.state.summary ? "stale" : "unavailable" });

@@ -1,8 +1,11 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode/client";
+import { ContextSourceRpc } from "./context-rpc.js";
+import { parseContextSources } from "./context-sources.js";
+import type { ContextSources } from "./context-sources.js";
 import { modelKey } from "./usage.js";
 import type { PriceCatalog, UsageMessage } from "./usage.js";
 
-export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location">;
+export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location" | "title">;
 export interface Page<T> { data: T[]; cursor: { next?: string | null; previous?: string | null } }
 /** Active model of the viewed session plus the location's current resolved price catalog. */
 export interface ActiveModel {
@@ -15,6 +18,7 @@ export interface UsageSource {
   children(id: string, cursor: string | undefined, signal: AbortSignal): Promise<Page<Session>>;
   messages(id: string, cursor: string | undefined, signal: AbortSignal): Promise<Page<UsageMessage>>;
   model(session: Session, signal: AbortSignal): Promise<ActiveModel>;
+  composition?(session: Session, signal: AbortSignal): Promise<ContextSources | undefined>;
 }
 
 export function createSource(client: OpenCodeClient): UsageSource {
@@ -37,6 +41,11 @@ export function createSource(client: OpenCodeClient): UsageSource {
         catalog,
         context: model?.limit?.context,
       };
+    },
+    async composition(session, signal) {
+      const response = await client.rpc(ContextSourceRpc).latest({ sessionID: session.id }, { location: session.location, signal });
+      if (!response || typeof response !== "object" || !("estimate" in response)) return undefined;
+      return parseContextSources(response.estimate);
     },
   };
 }

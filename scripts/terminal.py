@@ -12,7 +12,11 @@ pid, fd = pty.fork()
 if pid == 0:
     os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
 
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 54, 160, 0, 0))
+fcntl.ioctl(
+    fd,
+    termios.TIOCSWINSZ,
+    struct.pack("HHHH", int(os.environ.get("USAGE_SMOKE_ROWS", "54")), int(os.environ.get("USAGE_SMOKE_COLS", "160")), 0, 0),
+)
 
 def stop(*_):
     try:

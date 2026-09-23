@@ -3,6 +3,7 @@ import type { Session, UsageSource, Page } from "../src/source.js";
 import { modelKey } from "../src/usage.js";
 import type { UsageMessage, Price } from "../src/usage.js";
 import type { UsageEvent } from "../src/controller.js";
+import type { ContextSources } from "../src/context-sources.js";
 
 export const session = (id: string, parentID?: string): Session => ({
   id, ...(parentID ? { parentID } : {}), location: { directory: "/tmp/usage" },
@@ -26,6 +27,7 @@ export class FakeSource implements UsageSource {
   fail = false;
   reads = 0;
   size = 2;
+  composition?: (session: Session, signal: AbortSignal) => Promise<ContextSources | undefined>;
   async session(id: string): Promise<Session> {
     this.reads++;
     if (this.fail) throw new Error("offline");

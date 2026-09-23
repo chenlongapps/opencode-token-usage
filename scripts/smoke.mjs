@@ -34,12 +34,14 @@ const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destina
 const files = packed[0].files.map(file => file.path);
 assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && files.includes("index.js") && files.includes("tui.js"));
 assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts") && files.includes("docs/pricing.md"));
+assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-sources.js"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
 const plugin = path.join(installation, "node_modules", ...packageName.split("/"));
 const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
 const { contextUsage, summarize } = await import(path.join(plugin, "dist/usage.js"));
+const { ContextSourceRpc } = await import(path.join(plugin, "dist/context-rpc.js"));
 const { historicalPerformance } = await import(path.join(plugin, "dist/performance.js"));
 
 let childAgent = "general";
@@ -122,9 +124,11 @@ const wait = async (check, label, timeout = 30_000) => {
 };
 const terminals = [];
 const lineNumber = (screen, pattern) => screen.split("\n").findIndex(line => pattern.test(line));
-const openTui = sessionID => {
-  const terminal = new xterm.Terminal({ cols: 160, rows: 54, allowProposedApi: true });
-  const process = spawn("python3", [path.join(repo, "scripts/terminal.py"), "opencode", "--server", `http://127.0.0.1:${port}`, "--session", sessionID], { cwd: project, env });
+const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
+  const terminal = new xterm.Terminal({ ...size, allowProposedApi: true });
+  const process = spawn("python3", [path.join(repo, "scripts/terminal.py"), "opencode", "--server", `http://127.0.0.1:${port}`, "--session", sessionID], {
+    cwd: project, env: { ...env, USAGE_SMOKE_COLS: String(size.cols), USAGE_SMOKE_ROWS: String(size.rows) },
+  });
   let raw = "";
   process.stdout.on("data", data => { raw += data; terminal.write(data.toString()); });
   process.stderr.on("data", data => { raw += data; });
@@ -169,6 +173,13 @@ try {
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
   assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
+  tui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  tui.send("\r");
+  await wait(() => /By Model/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty /usage dialog");
+  assert.doesNotMatch(tui.screen(), /Used \/ Limit/, "empty context does not show a fabricated zero");
+  tui.send("\x1b");
+  await wait(() => !/By Model/.test(tui.screen()), "close empty usage dialog");
   console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows and shows Steps 0");
 
   const switchTarget = await client.session.create({ location: { directory: project }, title: "Live Switch Target", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
@@ -218,6 +229,10 @@ try {
   assert.equal(context?.used, 1270);
   assert.equal(snapshot.model.context, 128000);
   assert.equal(context?.percent.toFixed(1), "1.0");
+  const captured = await client.rpc(ContextSourceRpc).latest({ sessionID: root.id }, { location: { directory: project } });
+  assert.ok(captured.estimate?.tokens.Messages > 0, "server hook records estimated message content");
+  assert.ok(captured.estimate?.tokens["System Prompt"] > 0, "server hook records estimated system content");
+  assert.ok(captured.estimate?.tokens["System Tools"] > 0, "server hook records estimated tool definitions");
   const performance = historicalPerformance(uniqueMessages(snapshot));
   assert.ok(performance.tps && performance.tps > 0);
   await wait(() => /Cache Read\s+1,000/.test(tui.screen()) && /Input\s+100/.test(tui.screen()), "sidebar refresh after completion");
@@ -238,6 +253,40 @@ try {
   await tui.save("05-message");
   console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });
+  const messagesBeforeUsage = (await client.message.list({ sessionID: root.id })).data.length;
+  tui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  tui.send("\r");
+  await wait(() => /Context Breakdown/.test(tui.screen()) && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "root /usage dialog");
+  assert.match(tui.screen(), /Tools?\s+█*░*\s?[\d.]+K? \(?\d+\.\d%\)?/, "breakdown ranks sources with bars");
+  assert.match(tui.screen(), /Cache Read\s+1\.0K/, "last request lists the current call");
+  assert.match(tui.screen(), /Session\b/, "dialog shows the session summary");
+  tui.send("d");
+  await wait(() => /Calls/.test(tui.screen()) && /Cache Read\s+1,000 \(78\.7%\)/.test(tui.screen()), "detailed mode keeps exact numbers");
+  tui.send("d");
+  await wait(() => /1 step · 1 call · 1\.3K tokens · 83\.3% cached/.test(tui.screen())
+    && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "compact mode summarises the session");
+  assert.match(tui.screen(), /Tools\s+[█░]+\s+[\d.]+K?\s+\d+\.\d%/, "compact mode merges the tool families into Tools");
+  tui.send("\x1b[F"); // End scrolls to the model breakdown.
+  await wait(() => /By Model/.test(tui.screen()) && /usage-test\/small/.test(tui.screen()), "model cost in dialog");
+  assert.match(tui.screen(), /Token Usage Smoke · usage-test\/small/, "identity line carries session and model");
+  await tui.save("06-usage-dialog-root");
+  tui.send("\x1b");
+  await wait(() => !/By Model/.test(tui.screen()) && /Context\s+1,270 \/ 128,000/.test(tui.screen()), "close usage dialog");
+  assert.equal((await client.message.list({ sessionID: root.id })).data.length, messagesBeforeUsage, "/usage does not prompt the model");
+  console.log("PASS: /usage opens a native scrollable dialog with context window, request, sources, session and model costs without a prompt");
+  const narrowTui = openTui(root.id, { cols: 100, rows: 28 });
+  await wait(() => /SMOKE_OK/.test(narrowTui.screen()), "narrow TUI session");
+  narrowTui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  narrowTui.send("\r");
+  await wait(() => /Used \/ Limit/.test(narrowTui.screen()), "narrow usage dialog");
+  narrowTui.send("\x1b[F");
+  await wait(() => /usage-test\/small\s+<\$0\.01/.test(narrowTui.screen()), "scroll narrow usage to model cost");
+  await narrowTui.save("06-narrow-usage-dialog");
+  narrowTui.send("\x1b");
+  await wait(() => !/By Model/.test(narrowTui.screen()), "close narrow usage dialog");
+  console.log("PASS: narrow terminal scrolls to the model cost and closes the usage dialog");
   await client.session.prompt({ sessionID: root.id, text: "SPAWN_SMOKE_CHILD" });
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
   const child = (await client.session.list({ parentID: root.id })).data[0];
@@ -266,6 +315,15 @@ try {
   const switchedSnapshot = await loadSnapshot(source, root.id, new AbortController().signal);
   const switchedSummary = summarize(uniqueMessages(switchedSnapshot), switchedSnapshot.model.catalog);
   assert.equal(switchedSummary.cost, tree.cost, "model switching does not reprice recorded history");
+  tui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  tui.send("\r");
+  await wait(() => /Used \/ Limit\s+1\.3K \/ 32\.0K \(4\.0%\)/.test(tui.screen()), "usage after model switch");
+  assert.match(tui.screen(), /Token Usage Smoke · usage-test\/large/);
+  tui.send("\x1b[F");
+  await wait(() => /usage-test\/small\s+<\$0\.01/.test(tui.screen()), "historical costs stay on the recorded model");
+  tui.send("\x1b");
+  await wait(() => !/By Model/.test(tui.screen()), "close switched usage dialog");
   await tui.save("08-model-switch");
   console.log("PASS: active model switch preserves per-message pricing and refreshes the context window");
 
