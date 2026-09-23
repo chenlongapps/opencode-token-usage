@@ -169,7 +169,7 @@ try {
   await wait(() => /Token Usage/.test(tui.screen()) && /Cache Rate\s+0\.0%/.test(tui.screen()), "empty sidebar");
   assert.match(tui.screen(), /Steps\s+0\b/, "empty session shows zero steps");
   assert.doesNotMatch(tui.screen(), /Cache Write/);
-  assert.doesNotMatch(tui.screen(), /\bCost\b/);
+  assert.doesNotMatch(tui.screen(), /Est\. Cost\b/);
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
   assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
@@ -247,9 +247,9 @@ try {
   assert.doesNotMatch(tui.screen(), /TPS\s+~/, "completed TPS replaces the live estimate");
   assert.match(tui.screen(), /TTFT\s+[\d.]+s/);
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "context row leads the panel");
-  assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /\bCost\s+/) + 2, "one blank line separates usage and performance");
+  assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /Est\. Cost\s+/) + 2, "one blank line separates usage and performance");
   assert.ok(lineNumber(tui.screen(), /\bTPS\s+/) < lineNumber(tui.screen(), /\bTTFT\s+/));
-  assert.ok(lineNumber(tui.screen(), /\bCost\s+/) < lineNumber(tui.screen(), /\bTPS\s+/));
+  assert.ok(lineNumber(tui.screen(), /Est\. Cost\s+/) < lineNumber(tui.screen(), /\bTPS\s+/));
   await tui.save("05-message");
   console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });
@@ -337,7 +337,7 @@ try {
   assert.ok(Math.abs(officialSummary.cost - 0.000149) < 1e-12);
   assert.equal(officialSummary.costStatus, "complete");
   const officialTui = openTui(officialTarget.id);
-  await wait(() => /Cost\s+<\$0\.01/.test(officialTui.screen()), "official fallback cost in sidebar");
+  await wait(() => /Est\. Cost\s+<\$0\.01/.test(officialTui.screen()), "official fallback cost in sidebar");
   await officialTui.save("09-official-price-fallback");
   console.log("PASS: a model with no OpenCode price uses the packaged manufacturer price");
   await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));

@@ -271,7 +271,7 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
     ["Total", number(summary?.total)],
   );
   const cost = summary && formatEstimatedCost(summary.cost, summary.costStatus);
-  if (cost !== undefined) rows.push(["Cost", cost]);
+  if (cost !== undefined) rows.push(["Est. Cost", cost]);
   if (performance?.tps !== undefined && Number.isFinite(performance.tps)) {
     rows.push(["TPS", `${performance.tpsEstimated ? "~" : ""}${Math.max(0, performance.tps).toFixed(1)} tok/s`]);
   }

@@ -60,7 +60,7 @@ test("zero input, missing and invalid fields hide zero-value rows", () => {
   assert.equal(usageRows(empty).length, 7);
   assert.equal(usageRows(empty).find(([label]) => label === "Cache Rate")?.[1], "0.0%");
   assert.ok(!usageRows(empty).some(([label]) => label === "Cache Write"));
-  assert.ok(!usageRows(empty).some(([label]) => label === "Cost"));
+  assert.ok(!usageRows(empty).some(([label]) => label === "Est. Cost"));
   assert.equal(usageRows().length, 7);
   assert.ok(usageRows().every(([, value]) => value === "—"));
 });
@@ -91,7 +91,7 @@ test("compact numbers, bars and the detailed session rows feed the redesigned di
   assert.equal(summary.steps, 2);
   assert.equal(summary.calls, 2);
   assert.deepEqual(summaryRows(summary).map(([label]) => label), [
-    "Steps", "Calls", "Input", "Output", "Reasoning", "Cache Read", "Cache Rate", "Total", "Cost",
+    "Steps", "Calls", "Input", "Output", "Reasoning", "Cache Read", "Cache Rate", "Total", "Est. Cost",
   ]);
   assert.equal(countLabel(1, "step"), "1 step");
   assert.equal(countLabel(2, "step"), "2 steps");
@@ -103,14 +103,14 @@ test("cache write stays conditional while confirmed free cost displays as zero",
     priced({ id: "paid", type: "assistant", tokens: { input: 100 } }),
   ], catalog());
   assert.ok(!usageRows(paidWithoutCache).some(([label]) => label === "Cache Write"));
-  assert.equal(usageRows(paidWithoutCache).find(([label]) => label === "Cost")?.[1], "<$0.01");
+  assert.equal(usageRows(paidWithoutCache).find(([label]) => label === "Est. Cost")?.[1], "<$0.01");
 
   const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
   const freeWithCache = summarize([
     { id: "free", type: "assistant", model, tokens: { cache: { write: 100 } } },
   ], catalog([freePrice]));
   assert.equal(usageRows(freeWithCache).find(([label]) => label === "Cache Write")?.[1], "100");
-  assert.equal(usageRows(freeWithCache).find(([label]) => label === "Cost")?.[1], "$0.00");
+  assert.equal(usageRows(freeWithCache).find(([label]) => label === "Est. Cost")?.[1], "$0.00");
 });
 
 test("ordinary, cache, and reasoning prices are per million tokens", () => {
@@ -147,14 +147,14 @@ test("OpenCode prices win, official prices fill gaps, and message-recorded cost 
   const complete = summarize([usage]);
   assert.equal(complete.cost, 0.4);
   assert.equal(complete.costStatus, "complete");
-  assert.equal(usageRows(complete).find(([label]) => label === "Cost")?.[1], "$0.40");
+  assert.equal(usageRows(complete).find(([label]) => label === "Est. Cost")?.[1], "$0.40");
 
   const runtime = new Map([[modelKey(officialModel), [{ input: 3 }]]]);
   assert.equal(summarize([usage], runtime).cost, 3);
 
   const unavailable = summarize([{ id: "missing", type: "assistant", model: { providerID: "test", id: "unknown" }, tokens: { input: 10 } }]);
   assert.equal(unavailable.costStatus, "unavailable");
-  assert.equal(usageRows(unavailable).find(([label]) => label === "Cost")?.[1], "—");
+  assert.equal(usageRows(unavailable).find(([label]) => label === "Est. Cost")?.[1], "—");
 
   const partial = summarize([
     usage,
@@ -162,7 +162,7 @@ test("OpenCode prices win, official prices fill gaps, and message-recorded cost 
   ]);
   assert.equal(partial.cost, 0.4);
   assert.equal(partial.costStatus, "partial");
-  assert.equal(usageRows(partial).find(([label]) => label === "Cost")?.[1], "$0.40 · partial");
+  assert.equal(usageRows(partial).find(([label]) => label === "Est. Cost")?.[1], "$0.40 · partial");
 });
 
 test("mixed-model trees price every message with its own model", () => {
@@ -259,7 +259,7 @@ test("runtime zero prices for OpenCode Zen free models display as zero", () => {
   const summary = summarize(messages, prices);
   assert.equal(summary.cost, 0);
   assert.equal(summary.costStatus, "complete");
-  assert.equal(usageRows(summary).find(([label]) => label === "Cost")?.[1], "$0.00");
+  assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], "$0.00");
 });
 
 test("Muse Spark Contributor snapshot prices replace OpenCode's complete free rate", () => {
@@ -271,7 +271,7 @@ test("Muse Spark Contributor snapshot prices replace OpenCode's complete free ra
   }], new Map([[modelKey(model), [freePrice]]]));
   assert.equal(summary.cost, 0.3);
   assert.equal(summary.costStatus, "complete");
-  assert.equal(usageRows(summary).find(([label]) => label === "Cost")?.[1], "$0.30");
+  assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], "$0.30");
 });
 
 test("comma grouping, rounding boundaries and dollar display", () => {
@@ -304,7 +304,7 @@ test("context row leads the panel and carries the percentage inline", () => {
     ["Cache Read", "0"],
     ["Cache Rate", "0.0%"],
     ["Total", "72,400"],
-    ["Cost", "$0.22"],
+    ["Est. Cost", "$0.22"],
   ]);
 });
 
@@ -358,7 +358,7 @@ test("unusable context limits and missing usage hide the context rows", () => {
   const rows = usageRows(summarize(messages), contextUsage(messages, undefined));
   assert.equal(rows.length, 8);
   assert.ok(!rows.some(([label]) => label === "Context"));
-  assert.deepEqual(rows.find(([label]) => label === "Cost"), ["Cost", "—"]);
+  assert.deepEqual(rows.find(([label]) => label === "Est. Cost"), ["Est. Cost", "—"]);
 });
 
 test("percentage may exceed the window and stays inline", () => {

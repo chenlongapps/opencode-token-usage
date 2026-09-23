@@ -71,7 +71,7 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. C
 | `Total` | Sum of all five token categories |
 | `Context` | Latest context usage after the most recent completed compaction in the viewed session; not aggregated across the subtree |
 | `Steps` | Assistant message count across the session tree, including subagents; follows OpenCode's own stats definition, so compaction and user messages are not steps |
-| `Cost` | Estimated cost across the tree, pricing each assistant and compaction call with its actual model |
+| `Est. Cost` | Estimated cost across the tree, pricing each assistant and compaction call with its actual model |
 | `TPS` | Generation throughput for `Output + Reasoning` across the tree; live estimates are marked with `~` |
 | `TTFT` | Average time to first token across measurable assistant steps in the tree |
 
@@ -81,8 +81,8 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. C
 - A fork is a separate session tree. Inherited message copies are attributed only to their original source to prevent double counting.
 - `Context` only searches messages after the most recent compaction with `status === "completed"` and is hidden when reliable usage or a model context limit is unavailable.
 - `Steps` counts every assistant message in the tree, whether or not it reported usage, and reuses the fork-copy de-duplication so inherited history is never counted twice.
-- `Cost` prices every message with its recorded model. A complete non-zero price resolved by OpenCode takes precedence. If OpenCode reports a complete zero price, a complete official snapshot price overrides it; incomplete prices fall back for the whole message without mixing rates.
-- Gateway models can use fallback prices through exact model IDs, documented aliases, and known wrappers. A terminal `-free` or `:free` is removed only for an exact base ID lookup; other suffixes are not stripped. The fallback excludes gateway markups, regional premiums, unlisted discounts, tool fees, and taxes, so Cost is an estimate rather than a provider bill.
+- `Est. Cost` prices every message with its recorded model. A complete non-zero price resolved by OpenCode takes precedence. If OpenCode reports a complete zero price, a complete official snapshot price overrides it; incomplete prices fall back for the whole message without mixing rates.
+- Gateway models can use fallback prices through exact model IDs, documented aliases, and known wrappers. A terminal `-free` or `:free` is removed only for an exact base ID lookup; other suffixes are not stripped. The fallback excludes gateway markups, regional premiums, unlisted discounts, tool fees, and taxes, so Est. Cost is an estimate rather than a provider bill.
 - Confirmed free usage displays `$0.00`; unavailable prices display `—`; known subtotals with unpriced messages are marked `partial`. See the [built-in price snapshot](docs/pricing.md) for coverage, sources, and limitations.
 - Initial read failures display `Unavailable`. Later failures retain the last complete snapshot, display `Not updated`, and retry automatically.
 

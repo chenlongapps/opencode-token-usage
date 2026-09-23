@@ -8,7 +8,7 @@
 - OpenCode 当前解析出的完整适用非零价格优先。若完整适用价格为零，则尝试使用内置价格；只有快照能完整覆盖该消息实际使用的 token 类别时才覆盖零价，否则保留 OpenCode 的零价。OpenCode 价格不完整时，整条消息回退到内置价格，不混用两套费率。
 - 网关模型只通过精确厂商 ID、精确别名及已知包装格式匹配，例如 `openai/gpt-5.6-luna`、`us.anthropic.claude-opus-5` 和 `claude-opus-5@default`。匹配这些现有形式后，也会尝试仅移除模型 ID 的末尾 `-free` 或 `:free` 再精确匹配基础 ID，例如 `mimo-v2.6-flash-free`、`meta/muse-spark-1.3:free` 和 `muse-spark-1.3-contributor-free`；`-pro`、`-fast`、`-free-preview` 等其他后缀不会剥离。单独列出的 Fast 型号仅按完整 ID 和厂商支持的 provider 精确匹配，不会回退到标准费率。不按相似名称猜测。
 - 目录首版只新增 2026-03-22 至 2026-09-22 发布、具有明确 token 费率的模型。后续版本只限制新增窗口，已经收录的条目不会因超过半年而自动删除。
-- 采用同步 API 的公开价；Meta Contributor 条件价按单独标注的来源记录。仅收录下表明确列出的 Fast 型号，不含 Batch、Flex、其他 Fast/Priority、区域溢价、网关加价、企业折扣、工具费和税费，因此 Cost 仍是估算，不代表账单。
+- 采用同步 API 的公开价；Meta Contributor 条件价按单独标注的来源记录。仅收录下表明确列出的 Fast 型号，不含 Batch、Flex、其他 Fast/Priority、区域溢价、网关加价、企业折扣、工具费和税费，因此 Est. Cost 仍是估算，不代表账单。
 - 任一有用量消息仍无法定价时，已知小计标记 `partial`；全部无法定价时显示 `—`。明确零价才显示 `$0.00`。
 - 促销价按核验日官网显示的费率收录（如 `gpt-5.6-sol`、MiniMax-M3 的"长期 5 折"标价），不用划线原价。
 
@@ -218,7 +218,7 @@ Contributor tier 以允许 Meta 使用提示词和回答进行训练为条件，
 | `muse-spark-1.2-contributor` | 2026-08-05 | 0.10 | 0.20 | 0.002 | — |
 | `muse-spark-1.3-contributor` | 2026-09-02 | 0.10 | 0.20 | 0.002 | — |
 
-OpenCode Zen 的 `muse-spark-1.2-contributor-free` 和 `muse-spark-1.3-contributor-free` 会精确匹配各自 Contributor 条目；Cost 因此按 Meta Contributor 费率估算。
+OpenCode Zen 的 `muse-spark-1.2-contributor-free` 和 `muse-spark-1.3-contributor-free` 会精确匹配各自 Contributor 条目；Est. Cost 因此按 Meta Contributor 费率估算。
 
 ## Inception
 
@@ -269,7 +269,7 @@ Solar Pro 4 的 90% off 活动已于 2026-09-10 结束，快照采用模型页�
 | `fugu-ultra-v2.0`（别名 `fugu-ultra-v2`） | 2026-09-11 | 5 | 30 | 0.50 | >272K：10 / 45 / 1 |
 | `fugu-max-v1.0`（别名 `fugu-max`） | 2026-09-11 | 2 | 6 | 0.25 | — |
 
-Fugu Ultra 的编排 token 已包含在 API 返回的 input/output 用量中，按同一 token 价估算；web search/web fetch 等工具调用费不是五类 token，故不计入 Cost。官方没有公布 cache write token 价。
+Fugu Ultra 的编排 token 已包含在 API 返回的 input/output 用量中，按同一 token 价估算；web search/web fetch 等工具调用费不是五类 token，故不计入 Est. Cost。官方没有公布 cache write token 价。
 
 ## Aion Labs
 

@@ -71,7 +71,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | `Total` | 五类 token 之和 |
 | `Context` | 当前会话最后一次已完成压缩后的最新上下文用量，不随子树累计 |
 | `Steps` | 全树（含子代理）的 assistant 消息数，口径与 OpenCode 自带统计一致，compaction 与用户消息不计为 step |
-| `Cost` | 按每条 assistant 与 compaction 消息实际模型估算的全树费用 |
+| `Est. Cost` | 按每条 assistant 与 compaction 消息实际模型估算的全树费用 |
 | `TPS` | 全树 `Output + Reasoning` 的生成速度；生成中的估算值带 `~` 标记 |
 | `TTFT` | 全树中可测 assistant step 的平均首 token 时间 |
 
@@ -81,8 +81,8 @@ opencode plugin add @chenlongapps/opencode-token-usage
 - 分叉会话是独立会话树。继承消息副本只归原始来源，避免重复计费。
 - `Context` 仅搜索最后一次 `status === "completed"` 的 compaction 之后；没有可靠用量或模型上限时隐藏。
 - `Steps` 统计树中全部 assistant 消息，无论是否已上报用量；复用分叉副本去重，继承历史不会重复计数。
-- `Cost` 按每条消息记录的实际模型分别计算。OpenCode 当前解析出的完整非零价格优先；若 OpenCode 给出完整零价，且内置价格快照可以完整计价，则采用快照价格。价格不完整时整条消息回退，不混用两套费率。
-- 网关模型通过精确模型 ID、明确别名和已知包装格式匹配；也会尝试移除终尾 `-free` 或 `:free` 后精确查找基础 ID，其他后缀不会剥离。快照不包含网关加价、区域溢价、未列明的折扣、工具费和税费，因此 Cost 是估算而非提供商账单。
+- `Est. Cost` 按每条消息记录的实际模型分别计算。OpenCode 当前解析出的完整非零价格优先；若 OpenCode 给出完整零价，且内置价格快照可以完整计价，则采用快照价格。价格不完整时整条消息回退，不混用两套费率。
+- 网关模型通过精确模型 ID、明确别名和已知包装格式匹配；也会尝试移除终尾 `-free` 或 `:free` 后精确查找基础 ID，其他后缀不会剥离。快照不包含网关加价、区域溢价、未列明的折扣、工具费和税费，因此 Est. Cost 是估算而非提供商账单。
 - 确认免费时显示 `$0.00`；价格不可用时显示 `—`；只有部分消息可计算时在已知小计后标注 `partial`。覆盖范围、来源和限制见[内置官方价格快照](docs/pricing.md)。
 - 首次读取失败显示 `Unavailable`；后续失败保留上次完整快照、标注 `Not updated` 并自动重试。
 

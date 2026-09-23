@@ -11,7 +11,7 @@
 | `npm run build` | 通过，输出 ESM 与类型声明 |
 | `npm run test:smoke` | 通过，使用 `.tgz` 安装产物、真实 OpenCode 2.0.11 与本地模拟提供商 |
 
-`/usage` 仅在会话页面注册为 CLI 斜杠／命令面板命令，打开原生弹窗而不向模型发送新消息。弹窗按当前查看会话展示最后一次已完成压缩后的上下文用量；五类 token 的占比以该条 assistant 消息的已用 context 为分母，窗口占用率以活动模型上下文上限为分母。会话树明细沿用侧边栏的完整分页、子代理汇总和分叉继承去重口径；按模型汇总的费用与全树 Cost 共用逐消息计价规则，分别处理免费、缺价、`partial` 及内置官方价格回退。
+`/usage` 仅在会话页面注册为 CLI 斜杠／命令面板命令，打开原生弹窗而不向模型发送新消息。弹窗按当前查看会话展示最后一次已完成压缩后的上下文用量；五类 token 的占比以该条 assistant 消息的已用 context 为分母，窗口占用率以活动模型上下文上限为分母。会话树明细沿用侧边栏的完整分页、子代理汇总和分叉继承去重口径；按模型汇总的费用与全树 Est. Cost 共用逐消息计价规则，分别处理免费、缺价、`partial` 及内置官方价格回退。
 
 自动化测试新增：五类 context 分类百分比、压缩边界与未知上限；混合模型和 compaction、价格回退、免费与缺价时逐模型费用对全树费用的核对；弹窗详细快照在子会话、刷新失败恢复和切换会话时的生命周期。打包集成测试确认空会话不会伪造上下文占用，真实 `/usage` 可打开与关闭、显示 1,270 token 当前上下文分类和模型费用；100 × 28 终端内滚动可到达模型费用；真实子代理合并后显示全树 5,080 token；切换活动模型后弹窗上限变为 32,000，历史消息费用仍列在原模型下。2.0.11 子代理视图最初处于宿主的子代理覆盖层，不提供斜杠输入；其全树面板验证继续由 `session.composer.top` 覆盖。
 
@@ -28,7 +28,7 @@
 | `npm run build` | 通过 |
 | `npm run test:smoke` | 通过，真实 OpenCode 2.0.11 + 本地模拟提供商 |
 
-信息架构由 `Context / Context Sources / Session Tree / Cost by Model` 改为 **Context Window / Last Request / Context Breakdown / Session / By Model**：Context Window 只呈现上下文占用（分母为活动模型上限）并带条形图；原 Context 内的五类 token 迁入 Last Request 并补充该次请求的缓存率；`Context Sources · estimated` 改名 Context Breakdown；`Session Tree` 改名 Session，因为面板本来就是全树汇总而非树结构；`Cost by Model` 改名 By Model。标题下方新增一行显示会话名与活动模型（多模型时显示模型数量），正文不再重复模型名，弹窗改用宿主 `centered` 选项垂直居中。
+信息架构由 `Context / Context Sources / Session Tree / Est. Cost by Model` 改为 **Context Window / Last Request / Context Breakdown / Session / By Model**：Context Window 只呈现上下文占用（分母为活动模型上限）并带条形图；原 Context 内的五类 token 迁入 Last Request 并补充该次请求的缓存率；`Context Sources · estimated` 改名 Context Breakdown；`Session Tree` 改名 Session，因为面板本来就是全树汇总而非树结构；`Est. Cost by Model` 改名 By Model。标题下方新增一行显示会话名与活动模型（多模型时显示模型数量），正文不再重复模型名，弹窗改用宿主 `centered` 选项垂直居中。
 
 默认紧凑模式使用 K/M 缩写（< 1,000 精确、< 1,000,000 一位小数 K、≥ 1,000,000 两位小数 M，四舍五入不会出现 `1000.0K`），隐藏零值行，并把 Context Breakdown 的两类工具合并为 `Tools` 行按占比降序；按 `d` 切换详细模式，恢复精确数字、零值行、`System Tools` / `MCP Tools` 拆分以及 Session 逐类明细（含 Calls）。Session 单行汇总为 `steps · calls · tokens · cached% · cost`，其中 calls 与 By Model 各行同源，可与逐模型行核对。条形图宽度、Last Request 双列与内容宽度随宿主 `large` 档（88 列）收敛，窄终端自动改为单列并收窄条长。
 
@@ -81,11 +81,11 @@ SDK 从 2.0.9 升级到 2.0.11 后，四个顶层 OpenCode 包及锁文件中的
 
 新增 Steps 计数覆盖：`summarize` 对带与不带 `tokens` 的 assistant 消息各计一个 step、compaction 与 user 消息不计、无 summary 时显示 `—`；`uniqueMessages` 链路上分叉继承副本不重复计数（快照 2 个 step、独立分叉树 1 个 step）、compaction 不产生 step、孙会话视图与根视图同为 6 个 step；行序断言锁定 Context → Steps → Input，无 Context 时 Steps 位于面板第一行。基准行数由 6 行调整为 7 行。
 
-v0.3.0 成本测试覆盖：assistant 与 compaction 按消息实际 `model` 和五类 token 分别计算，混合模型树各自采用对应价格，消息自带 `cost` 不参与主 Cost。当前 OpenCode 模型目录中的完整适用价格优先；适用档位或实际使用类别缺价时，整条消息回退到内置官方快照，不拼接两套费率。官方目录测试锁定 72 个 2026-03-22 至 2026-09-22 发布的模型、来源 URL、唯一 ID、OpenAI/xAI/通义千问/MiniMax/Sakana 长上下文与上下文档位边界，以及 OpenRouter、Bedrock、Vertex 等包装格式和明确别名；相似名称不得猜价。目录按 OpenCode 当前模型目录（`temp/models.json`，210 个模型）补齐主流厂商：OpenAI、Anthropic、Google、xAI、Mistral、Cohere 之外新增 Z.ai（GLM）、DeepSeek、Moonshot（Kimi）、阿里云百炼（Qwen）、小米（MiMo）、MiniMax、腾讯（混元）、StepFun、Meta、Inception、Upstage、Arcee AI、ByteDance Seed、Sakana、Aion Labs、美团（LongCat）；DeepSeek V4.1 Flash 与 V4 Pro 按厂商官方峰值最高价估算，旧 Flash、Vision Exp 和日期版本通过精确别名匹配。Step 5 Preview 的缓存写入按官方“cache-miss Input 包含首次缓存写入”规则使用 `$1 / M`。OpenRouter 圆点写法 `claude-opus-4.7`/`4.8`/`5.5`、官方 ChatGPT SKU `chat-latest`（别名 `gpt-chat-latest`）、Mercury 2.5、Solar Pro 4、Seed 2.1 Turbo、Fugu 版本、Aion 的 `aion-labs/` 前缀与 LongCat 网关链路同样通过精确别名匹配。窗口外的 `grok-4.20`、Fast/Priority 档、图片/音频/视频、免费与无官方标准价的模型均不收录；`kwaipilot/kat-coder-pro-v2.5`、`inclusionai/ling-3.0-*` 和 `bytedance-seed/seed-2.0-code` 只有网关或第三方报价，未据此猜价。缺价显示 `Cost —`，已知小计与缺价消息并存时显示 `· partial`，明确零价显示 `$0.00`。
+v0.3.0 成本测试覆盖：assistant 与 compaction 按消息实际 `model` 和五类 token 分别计算，混合模型树各自采用对应价格，消息自带 `cost` 不参与主 Est. Cost。当前 OpenCode 模型目录中的完整适用价格优先；适用档位或实际使用类别缺价时，整条消息回退到内置官方快照，不拼接两套费率。官方目录测试锁定 72 个 2026-03-22 至 2026-09-22 发布的模型、来源 URL、唯一 ID、OpenAI/xAI/通义千问/MiniMax/Sakana 长上下文与上下文档位边界，以及 OpenRouter、Bedrock、Vertex 等包装格式和明确别名；相似名称不得猜价。目录按 OpenCode 当前模型目录（`temp/models.json`，210 个模型）补齐主流厂商：OpenAI、Anthropic、Google、xAI、Mistral、Cohere 之外新增 Z.ai（GLM）、DeepSeek、Moonshot（Kimi）、阿里云百炼（Qwen）、小米（MiMo）、MiniMax、腾讯（混元）、StepFun、Meta、Inception、Upstage、Arcee AI、ByteDance Seed、Sakana、Aion Labs、美团（LongCat）；DeepSeek V4.1 Flash 与 V4 Pro 按厂商官方峰值最高价估算，旧 Flash、Vision Exp 和日期版本通过精确别名匹配。Step 5 Preview 的缓存写入按官方“cache-miss Input 包含首次缓存写入”规则使用 `$1 / M`。OpenRouter 圆点写法 `claude-opus-4.7`/`4.8`/`5.5`、官方 ChatGPT SKU `chat-latest`（别名 `gpt-chat-latest`）、Mercury 2.5、Solar Pro 4、Seed 2.1 Turbo、Fugu 版本、Aion 的 `aion-labs/` 前缀与 LongCat 网关链路同样通过精确别名匹配。窗口外的 `grok-4.20`、Fast/Priority 档、图片/音频/视频、免费与无官方标准价的模型均不收录；`kwaipilot/kat-coder-pro-v2.5`、`inclusionai/ling-3.0-*` 和 `bytedance-seed/seed-2.0-code` 只有网关或第三方报价，未据此猜价。缺价显示 `Est. Cost —`，已知小计与缺价消息并存时显示 `· partial`，明确零价显示 `$0.00`。
 
 ### 真实 OpenCode 集成
 
-隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行并显示 `Steps 0`；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。Steps 在真实集成中断言为：首条 assistant 完成后 `Steps 1` 且行序位于 Context 与 Input 之间；真实子代理场景下根视图与子代理视图均为 `Steps 4`（父 3 条 + 子 1 条），而被查看会话自身仍为 1。按 OpenCode 夹具价格计算，首条调用为 `$0.00126`，四条父/子代理调用累计 `$0.00504`；根会话切换到另一价格模型后，历史消息仍按自身模型保持 `$0.00504`，Context 则从 128,000 上限同步切换到 32,000。另一个模型在 OpenCode 目录中明确为 `cost: []`，其 `gpt-5.6-luna` 调用由打包产物内置官方价格计算为 `$0.000149`，TUI 显示 `Cost <$0.01`；安装包同时断言包含 `dist/pricing.js`、类型声明与 `docs/pricing.md`。本次 smoke 使用官方 `@opencode/cli-darwin-arm64@2.0.11` 的隔离二进制（安装于 `/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/isolated-cli-2011`，机器默认宿主仍为 2.0.14，未放宽版本断言），测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-Zq62zn`。
+隔离 smoke 测试确认打包插件可加载；空会话隐藏无数据行并显示 `Steps 0`；在独立会话已经开始慢速流后，同一 TUI 切换过去会立即显示 `TPS ~…` 与 TTFT，完成后变为无 `~` 的精确 TPS；既有 token、上下文刷新、真实子代理全树累计、会话局部上下文及模型切换验证均继续通过。Steps 在真实集成中断言为：首条 assistant 完成后 `Steps 1` 且行序位于 Context 与 Input 之间；真实子代理场景下根视图与子代理视图均为 `Steps 4`（父 3 条 + 子 1 条），而被查看会话自身仍为 1。按 OpenCode 夹具价格计算，首条调用为 `$0.00126`，四条父/子代理调用累计 `$0.00504`；根会话切换到另一价格模型后，历史消息仍按自身模型保持 `$0.00504`，Context 则从 128,000 上限同步切换到 32,000。另一个模型在 OpenCode 目录中明确为 `cost: []`，其 `gpt-5.6-luna` 调用由打包产物内置官方价格计算为 `$0.000149`，TUI 显示 `Est. Cost <$0.01`；安装包同时断言包含 `dist/pricing.js`、类型声明与 `docs/pricing.md`。本次 smoke 使用官方 `@opencode/cli-darwin-arm64@2.0.11` 的隔离二进制（安装于 `/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/isolated-cli-2011`，机器默认宿主仍为 2.0.14，未放宽版本断言），测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-Zq62zn`。
 
 ### 验证边界
 
@@ -114,10 +114,10 @@ npm 发布前检查确认无作用域名称 `opencode-token-usage` 已由其他�
 
 `scripts/smoke.mjs` 使用带固定延迟的本地 OpenAI 兼容流，在真实 OpenCode 服务和 160 × 54 TUI 中验证：
 
-- 空会话隐藏 TPS、TTFT、Context、Cache Write 与 Cost，不显示伪零性能值。
+- 空会话隐藏 TPS、TTFT、Context、Cache Write 与 Est. Cost，不显示伪零性能值。
 - 第一段文本到达时，面板显示 `TPS ~2.4 tok/s` 与 `TTFT 0.4s`；`~` 明确表示按 UTF-8 字节估算的活动流速度。
 - assistant 完成并刷新快照后，TPS 自动变为无 `~` 的 `62.9 tok/s`。打包产物的 `historicalPerformance` 返回 62.893… tok/s，且同屏 OpenCode 自带消息状态也显示 62.9 tok/s。
-- 行顺序为 Context、五类 token、Cache Rate、Total、Cost、空行、TPS、TTFT；Cost 隐藏时仍在最后一条用量行后空一行。原有上下文、真实子代理全树累计与模型切换测试继续通过。
+- 行顺序为 Context、五类 token、Cache Rate、Total、Est. Cost、空行、TPS、TTFT；Est. Cost 隐藏时仍在最后一条用量行后空一行。原有上下文、真实子代理全树累计与模型切换测试继续通过。
 - 安装包包含 `dist/performance.js` 及其类型声明；结果文件记录宿主版本 2.0.11、Total 5,080 和性能值。
 - scoped 包安装在 `node_modules/@chenlongapps/opencode-token-usage` 后，根入口、TUI 入口和所有运行时断言均通过。
 
@@ -147,7 +147,7 @@ npm 发布前检查确认无作用域名称 `opencode-token-usage` 已由其他�
 
 `scripts/smoke.mjs` 沿用 v0.1.0 的隔离方式，并新增上下文断言：
 
-- 空会话：面板保持 Input、Output、Reasoning、Cache Read、Cache Rate、Total 六行零值，不出现 `/ 128,000`、Context 行、Cache Write 与 Cost。
+- 空会话：面板保持 Input、Output、Reasoning、Cache Read、Cache Rate、Total 六行零值，不出现 `/ 128,000`、Context 行、Cache Write 与 Est. Cost。
 - 首条 assistant 完成后：`Context  1,270 / 128,000 (1.0%)`，且该行出现在 `Input` 行之上（终端逐行比对行号）。同一时刻宿主自带侧边栏为 `Context 1,270 tokens 1% used`，用量与插件一致（宿主百分比取整，插件保留一位小数）。
 - 子代理视图：树的累计 `Total 5,080`，而上下文仍为 `1,270 / 128,000 (1.0%)`，确认上下文只反映被查看会话、不随子树累计。
 - 切换到 `usage-test/large`（夹具上限 32,000）后无需新消息即同步：`Context 1,270 / 32,000 (4.0%)`。
@@ -158,7 +158,7 @@ npm 发布前检查确认无作用域名称 `opencode-token-usage` 已由其他�
 - 上下文口径参照 OpenCode 2.0.10 打包产物的侧边栏实现（`Ws`/`S6`）：最后一次 `completed` 压缩之后、最后一条带 `tokens` 的 assistant 消息的五类 token 之和。SDK 依赖仍为 2.0.9，2.0.9 宿主未单独核对这一显示算法。
 - 宿主 `Ws` 还使用 `session.revert` 作为搜索上界；本版本不读取 revert 状态，回退会话的取值可能与宿主不同。
 - 分母使用被查看会话的**活动模型**，而不是产生该用量的消息自身记录的模型；会话中途切换模型后两者可能不同。
-- Cost 与上下文上限使用同一活动模型解析规则，同样不使用消息自身记录的 `model` 字段：混合模型会话的 Cost 按查看时活动模型统一重算，不等于各模型实际账单之和。真实集成只验证了单夹具模型下的价格重算，混合模型的失真未单独断言。
+- Est. Cost 与上下文上限使用同一活动模型解析规则，同样不使用消息自身记录的 `model` 字段：混合模型会话的 Est. Cost 按查看时活动模型统一重算，不等于各模型实际账单之和。真实集成只验证了单夹具模型下的价格重算，混合模型的失真未单独断言。
 - 不显示进度条，上下文百分比与用量同行；行值加标签约 31 字符，窄侧边栏可能换行，响应式布局与进度条留待后续版本。
 - 夹具 `usage-test/large` 的上下文上限改为 32,000 以便观测模型切换，`usage-test/small` 保持 128,000。
 
@@ -188,7 +188,7 @@ Python 3 为真实 TUI 提供 160 × 54 的伪终端，终端输出经 xterm 解
 已验证：
 
 - 主插件激活、TUI 插件加载；安装包包含根目录 `index.js` / `tui.js`、编译产物及类型声明。
-- 空会话隐藏零值的 Cache Write 与 Cost；基础统计行、宿主标题、Context 与费用区继续保留。
+- 空会话隐藏零值的 Cache Write 与 Est. Cost；基础统计行、宿主标题、Context 与费用区继续保留。
 - 首条 assistant 完成后无需重新进入会话即可刷新：Input 100、Output 50、Reasoning 20、Cache Read 1,000、Cache Write 100，Total 1,270。
 - 父会话三条 assistant 消息和一个真实子代理的一条消息共同累计为 Total 5,080，显示为 `5,080`。
 - 父视图与子代理视图都显示 Input 400、Output 200、Reasoning 80、Cache Read 4,000、Cache Write 400、Cache Rate 83.3%。
