@@ -5,7 +5,7 @@ import { estimate, normalize } from "../src/usage.js";
 
 test("official snapshot contains only verified recent releases and unique identifiers", () => {
   const aliases = new Set<string>();
-  assert.equal(OFFICIAL_PRICE_SNAPSHOT.entries.length, 74);
+  assert.equal(OFFICIAL_PRICE_SNAPSHOT.entries.length, 76);
   for (const entry of OFFICIAL_PRICE_SNAPSHOT.entries) {
     assert.ok(entry.released >= OFFICIAL_PRICE_SNAPSHOT.newModelCutoff);
     assert.ok(entry.released <= OFFICIAL_PRICE_SNAPSHOT.verified);
@@ -33,6 +33,13 @@ test("official price matching supports exact manufacturer IDs and known gateway 
   assert.equal(officialPrice({ providerID: "amazon-bedrock", id: "anthropic.claude-opus-5-5" })?.id, "claude-opus-5-5");
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-chat-latest" })?.id, "chat-latest");
   assert.equal(officialPrice({ providerID: "openrouter", id: "qwen/qwen3.8-max-0902" })?.id, "qwen3.8-max");
+  assert.equal(officialPrice({ providerID: "xiaomi", id: "mimo-v2.6-flash" })?.id, "mimo-v2.6-flash");
+  assert.equal(officialPrice({ providerID: "openrouter", id: "xiaomi/mimo-v2.6-flash-free" })?.id, "mimo-v2.6-flash");
+  assert.equal(officialPrice({ providerID: "openrouter", id: "meta/muse-spark-1.2-free" })?.id, "muse-spark-1.2");
+  assert.equal(officialPrice({ providerID: "openrouter", id: "meta/muse-spark-1.3:free" })?.id, "muse-spark-1.3");
+  assert.equal(officialPrice({ providerID: "opencode", id: "muse-spark-1.2-contributor-free" })?.id, "muse-spark-1.2-contributor");
+  assert.equal(officialPrice({ providerID: "opencode", id: "muse-spark-1.3-contributor-free" })?.id, "muse-spark-1.3-contributor");
+  assert.equal(officialPrice({ providerID: "amazon-bedrock", id: "us.anthropic.claude-opus-5-free" })?.id, "claude-opus-5");
 });
 
 test("official price matching covers every major vendor in the OpenCode catalog", () => {
@@ -68,6 +75,17 @@ test("official price matching never guesses similarly named variants", () => {
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-sol-pro" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-luna-fast" }), undefined);
   assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-5.6-luna-pro" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-sol-pro-free" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "openai/gpt-6-luna-fast-free" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "xiaomi/mimo-v2.6-flash-free-preview" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "meta/muse-spark-1.3-contributor-pro-free" }), undefined);
+  assert.equal(officialPrice({ providerID: "openrouter", id: "meta/muse-spark-1.3:free-preview" }), undefined);
+  assert.equal(officialPrice({ providerID: "opencode", id: "ling-3.0-flash-fin" }), undefined);
+  assert.equal(officialPrice({ providerID: "opencode", id: "ling-3.0-flash-fin-free" }), undefined);
+  assert.equal(officialPrice({ providerID: "opencode", id: "nemotron-3.5-lightning" }), undefined);
+  assert.equal(officialPrice({ providerID: "opencode", id: "nemotron-3.5-lightning-free" }), undefined);
+  assert.equal(officialPrice({ providerID: "opencode", id: "nemotron-3-ultra" }), undefined);
+  assert.equal(officialPrice({ providerID: "opencode", id: "nemotron-3-ultra-free" }), undefined);
   assert.equal(officialPrice({ providerID: "custom", id: "prefix-gpt-5.6-luna" }), undefined);
   assert.equal(officialPrice({ providerID: "custom", id: "unknown" }), undefined);
   // Documented exclusions: out-of-window, fast-tier, unverified, and
@@ -171,4 +189,10 @@ test("new manufacturer entries use recorded manufacturer rates", () => {
   assert.deepEqual(officialPrice({ providerID: "meituan", id: "longcat-2.0" })?.prices, [
     { input: 0.3, output: 1.2, cache: { read: 0.006 } },
   ]);
+});
+
+test("Meta Muse Spark Contributor entries use the conditional Contributor tier rates", () => {
+  const expected = [{ input: 0.1, output: 0.2, cache: { read: 0.002 } }];
+  assert.deepEqual(officialPrice({ providerID: "meta", id: "muse-spark-1.2-contributor" })?.prices, expected);
+  assert.deepEqual(officialPrice({ providerID: "opencode", id: "muse-spark-1.3-contributor-free" })?.prices, expected);
 });

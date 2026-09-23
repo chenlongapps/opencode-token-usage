@@ -195,9 +195,7 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
       prices: [{ input: 2.5, output: 10 }],
     },
 
-    // Meta Model API standard-tier rates. The contributor tier is a separate
-    // discounted program that permits training on prompts and completions, so
-    // it is intentionally not part of the standard snapshot.
+    // Meta Model API standard-tier rates.
     {
       id: "muse-spark-1.1", released: "2026-07-09", source: "https://ai.developer.meta.com/docs/pricing-rate-limits",
       prices: [{ input: 1.25, output: 4.25, cache: { read: 0.15 } }],
@@ -209,6 +207,17 @@ export const OFFICIAL_PRICE_SNAPSHOT = {
     {
       id: "muse-spark-1.3", released: "2026-09-02", source: "https://ai.developer.meta.com/docs/pricing-rate-limits",
       prices: [{ input: 1.25, output: 4.25, cache: { read: 0.15 } }],
+    },
+    // Meta Contributor rates are conditional on allowing Meta to use prompts
+    // and completions for training. OpenCode's contributor-free model IDs
+    // resolve here after removing their terminal -free suffix.
+    {
+      id: "muse-spark-1.2-contributor", released: "2026-08-05", source: "https://ai.developer.meta.com/docs/pricing-rate-limits",
+      prices: [{ input: 0.1, output: 0.2, cache: { read: 0.002 } }],
+    },
+    {
+      id: "muse-spark-1.3-contributor", released: "2026-09-02", source: "https://ai.developer.meta.com/docs/pricing-rate-limits",
+      prices: [{ input: 0.1, output: 0.2, cache: { read: 0.002 } }],
     },
 
     // Inception's current Mercury 2.5 API page shows an 80% launch discount;
@@ -530,6 +539,13 @@ export function officialPrice(model: ModelRef): OfficialPriceEntry | undefined {
   for (const candidate of candidates) {
     const entry = index.get(candidate);
     if (entry) return entry;
+  }
+  for (const candidate of candidates) {
+    for (const suffix of ["-free", ":free"]) {
+      if (!candidate.endsWith(suffix)) continue;
+      const entry = index.get(candidate.slice(0, -suffix.length));
+      if (entry) return entry;
+    }
   }
   return undefined;
 }

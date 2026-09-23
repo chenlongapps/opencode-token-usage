@@ -1,14 +1,14 @@
 # 内置官方价格快照
 
-插件自 v0.3.0 起，在 OpenCode 当前模型目录没有可用于某条消息的完整价格时，使用本页所列的厂商官方标准价补全。v0.3.2 快照核验于 **2026-09-23**，共收录 74 个模型，金额均为美元 / 100 万 token。
+插件自 v0.3.0 起，在 OpenCode 当前模型目录没有可用于某条消息的完整价格时，使用本页所列的公开 API 价格补全。若 OpenCode 给出完整零价，而快照能完整计价，则使用快照价格。快照核验于 **2026-09-23**，共收录 79 个模型，金额均为美元 / 100 万 token。
 
 ## 规则
 
 - 每条 assistant 与 compaction 消息按自身记录的 `providerID`、模型 ID 和 token 用量分别计算。
-- OpenCode 当前解析出的完整适用价格优先；仅当适用档位或本次实际使用的 token 类别缺价时，整条消息回退到内置价格，不混用两套费率。
-- 网关模型只通过精确厂商 ID、精确别名及已知包装格式匹配，例如 `openai/gpt-5.6-luna`、`us.anthropic.claude-opus-5` 和 `claude-opus-5@default`。不按相似名称猜测。
-- 目录首版只新增 2026-03-22 至 2026-09-22 发布、具有明确标准 token 价格的模型。后续版本只限制新增窗口，已经收录的模型不会因超过半年而自动删除。
-- 采用标准同步 API 的公开价，不含 Batch、Flex、Fast/Priority、区域溢价、网关加价、免费额度、企业折扣、工具费和税费，因此 Cost 仍是估算，不代表账单。
+- OpenCode 当前解析出的完整适用非零价格优先。若完整适用价格为零，则尝试使用内置价格；只有快照能完整覆盖该消息实际使用的 token 类别时才覆盖零价，否则保留 OpenCode 的零价。OpenCode 价格不完整时，整条消息回退到内置价格，不混用两套费率。
+- 网关模型只通过精确厂商 ID、精确别名及已知包装格式匹配，例如 `openai/gpt-5.6-luna`、`us.anthropic.claude-opus-5` 和 `claude-opus-5@default`。匹配这些现有形式后，也会尝试仅移除模型 ID 的末尾 `-free` 或 `:free` 再精确匹配基础 ID，例如 `mimo-v2.6-flash-free`、`meta/muse-spark-1.3:free` 和 `muse-spark-1.3-contributor-free`；`-pro`、`-fast`、`-free-preview` 等其他后缀不会剥离。不按相似名称猜测。
+- 目录首版只新增 2026-03-22 至 2026-09-22 发布、具有明确 token 费率的模型。后续版本只限制新增窗口，已经收录的条目不会因超过半年而自动删除。
+- 采用标准同步 API 的公开价；Meta Contributor 条件价按单独标注的来源记录。不含 Batch、Flex、Fast/Priority、区域溢价、网关加价、企业折扣、工具费和税费，因此 Cost 仍是估算，不代表账单。
 - 任一有用量消息仍无法定价时，已知小计标记 `partial`；全部无法定价时显示 `—`。明确零价才显示 `$0.00`。
 - 促销价按核验日官网显示的费率收录（如 `gpt-5.6-sol`、MiniMax-M3 的"长期 5 折"标价），不用划线原价。
 
@@ -199,7 +199,14 @@ Step 5 Preview 官方明确说明 cache-miss Input 包含首次缓存写入，�
 | `muse-spark-1.2` | 2026-08-05 | 1.25 | 4.25 | 0.15 |
 | `muse-spark-1.3` | 2026-09-02 | 1.25 | 4.25 | 0.15 |
 
-这里只收录 Standard tier。Contributor tier 虽然也是官方 API，但以允许 Meta 使用提示词和回答训练为条件的折扣方案，不属于标准价；官方没有 cache write token 价。
+Contributor tier 以允许 Meta 使用提示词和回答进行训练为条件，按独立 tier 记录。官方没有公布 cache write token 价。
+
+| Contributor 模型 | 发布日期 | Input | Output | Cache Read | Cache Write |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `muse-spark-1.2-contributor` | 2026-08-05 | 0.10 | 0.20 | 0.002 | — |
+| `muse-spark-1.3-contributor` | 2026-09-02 | 0.10 | 0.20 | 0.002 | — |
+
+OpenCode Zen 的 `muse-spark-1.2-contributor-free` 和 `muse-spark-1.3-contributor-free` 会精确匹配各自 Contributor 条目；Cost 因此按 Meta Contributor 费率估算。
 
 ## Inception
 
@@ -278,7 +285,7 @@ Fugu Ultra 的编排 token 已包含在 API 返回的 input/output 用量中，�
 - Realtime、音频、图片、视频、embedding、按页、按分钟和按工具调用收费的模型无法仅由当前五类 token 用量准确计算。
 - `grok-4.20`、`grok-4.20-multi-agent` 发布于 2026-03-09，早于目录收录窗口起点 2026-03-22。
 - Fast/Priority 等加速档（`claude-opus-*-fast`、`gpt-5.6-*-pro`、`gpt-6-astra-pro`、MiniMax priority 档）不是标准同步价。
-- 免费模型（Gemma 系列、`cohere/north-mini-code` 等开源或网关零价款）不设价格条目。
-- 无法从厂商官方页面确认标准 token 价格的模型不猜价，包括 OpenRouter stealth/alpha 匿名模型、`z-ai/glm-5v-turbo`、`qwen3.6-plus-preview`、腾讯 `hy3-preview` 与 `hy-mt2-*`、`kwaipilot/kat-coder-pro-v2.5` 及其 Air 版本、`inclusionai/ling-3.0-*`、`bytedance-seed/seed-2.0-code` 等。这些模型目前只能查到 OpenRouter、AtlasCloud、DeepInfra 等网关或第三方报价，不能据此推断厂商标准价。
+- 其他免费模型（Gemma 系列、`cohere/north-mini-code` 等开源或网关零价款）不设价格条目。
+- 无法从厂商官方页面确认标准 token 价格的模型不猜价，包括 OpenRouter stealth/alpha 匿名模型、`z-ai/glm-5v-turbo`、`qwen3.6-plus-preview`、腾讯 `hy3-preview` 与 `hy-mt2-*`、`kwaipilot/kat-coder-pro-v2.5` 及其 Air 版本、除上表 OpenCode Zen SKU 外的 `inclusionai/ling-3.0-*`、`bytedance-seed/seed-2.0-code` 等。这些模型目前只能查到 OpenRouter、AtlasCloud、DeepInfra 等网关或第三方报价，不能据此推断厂商标准价。
 - 浮动别名（`-latest` 指针与 OpenRouter `~` 前缀条目）随底层模型漂移，不收录固定价。
 - 只有询价、托管部署价或无法从厂商官方页面确认标准 token 价格的模型不猜价。

@@ -77,8 +77,9 @@ export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
 
 export type CostStatus = "empty" | "complete" | "partial" | "unavailable";
 
-/** Prices every call with its recorded model. OpenCode's resolved price wins;
- * the built-in manufacturer snapshot is used only when that price is incomplete. */
+/** Prices every call with its recorded model. A complete non-zero OpenCode
+ * price wins; a complete snapshot price can replace a complete OpenCode zero.
+ * Incomplete OpenCode prices fall back to the snapshot as a whole. */
 export function summarize(messages: Iterable<UsageMessage>, catalog: PriceCatalog = new Map()) {
   const tokens = normalize();
   let cost = 0;
@@ -102,7 +103,10 @@ export function summarize(messages: Iterable<UsageMessage>, catalog: PriceCatalo
       continue;
     }
     let value = estimate(t, catalog.get(modelKey(message.model)));
-    if (value.defaultPrice) value = estimate(t, officialPrice(message.model)?.prices);
+    if (value.defaultPrice || value.cost === 0) {
+      const snapshot = estimate(t, officialPrice(message.model)?.prices);
+      if (!snapshot.defaultPrice) value = snapshot;
+    }
     if (value.defaultPrice) missingCosts++;
     else { cost += value.cost; knownCosts++; }
   }

@@ -147,14 +147,63 @@ test("mixed-model trees price every message with its own model", () => {
   assert.equal(summary.costStatus, "complete");
 });
 
-test("an incomplete OpenCode price falls back as a whole instead of mixing rates", () => {
+test("incomplete OpenCode prices fall back as a whole and complete zero prices use the snapshot", () => {
   const officialModel = { providerID: "gateway", id: "gpt-5.6-luna" };
   const usage: UsageMessage = { id: "fallback", type: "compaction", model: officialModel, tokens: { input: 1_000_000, output: 1_000_000 } };
   const incomplete = new Map([[modelKey(officialModel), [{ input: 9 }]]]);
   assert.equal(summarize([usage], incomplete).cost, 2.2);
   const free = new Map([[modelKey(officialModel), [{ input: 0, output: 0 }]]]);
-  assert.equal(summarize([usage], free).cost, 0);
+  assert.equal(summarize([usage], free).cost, 2.2);
   assert.equal(summarize([usage], free).costStatus, "complete");
+});
+
+test("a complete OpenCode zero yields to a complete snapshot price only", () => {
+  const model = { providerID: "gateway", id: "gpt-5.6-luna" };
+  const usage: UsageMessage = { id: "zero", type: "assistant", model, tokens: { input: 1_000_000 } };
+  const freeRuntime = new Map([[modelKey(model), [{ input: 0 }]]]);
+  assert.equal(summarize([usage], freeRuntime).cost, 0.4);
+  assert.equal(summarize([usage], freeRuntime).costStatus, "complete");
+
+  const paidRuntime = new Map([[modelKey(model), [{ input: 3 }]]]);
+  assert.equal(summarize([usage], paidRuntime).cost, 3);
+
+  const cacheModel = { providerID: "gateway", id: "mimo-v2.6-flash" };
+  const cacheUsage: UsageMessage = {
+    id: "unpriced-cache-write", type: "assistant", model: cacheModel, tokens: { cache: { write: 1_000_000 } },
+  };
+  const freeCacheWrite = new Map([[modelKey(cacheModel), [{ cache: { write: 0 } }]]]);
+  assert.equal(summarize([cacheUsage], freeCacheWrite).cost, 0);
+  assert.equal(summarize([cacheUsage], freeCacheWrite).costStatus, "complete");
+});
+
+test("runtime zero prices for OpenCode Zen free models display as zero", () => {
+  const ids = [
+    "ling-3.0-flash-fin-free",
+    "nemotron-3.5-lightning-free",
+    "nemotron-3-ultra-free",
+  ];
+  const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
+  const prices = new Map(ids.map(id => [modelKey({ providerID: "opencode", id }), [freePrice]]));
+  const messages = ids.map((id, index): UsageMessage => ({
+    id: `free-${index}`, type: "assistant", model: { providerID: "opencode", id },
+    tokens: { input: 1_000, output: 100 },
+  }));
+  const summary = summarize(messages, prices);
+  assert.equal(summary.cost, 0);
+  assert.equal(summary.costStatus, "complete");
+  assert.equal(usageRows(summary).find(([label]) => label === "Cost")?.[1], "$0.00");
+});
+
+test("Muse Spark Contributor snapshot prices replace OpenCode's complete free rate", () => {
+  const model = { providerID: "opencode", id: "muse-spark-1.3-contributor-free" };
+  const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
+  const summary = summarize([{
+    id: "contributor", type: "assistant", model,
+    tokens: { input: 1_000_000, output: 1_000_000 },
+  }], new Map([[modelKey(model), [freePrice]]]));
+  assert.equal(summary.cost, 0.3);
+  assert.equal(summary.costStatus, "complete");
+  assert.equal(usageRows(summary).find(([label]) => label === "Cost")?.[1], "$0.30");
 });
 
 test("comma grouping, rounding boundaries and dollar display", () => {
