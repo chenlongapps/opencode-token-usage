@@ -117,8 +117,8 @@ function UsageDialog(props: {
     const cells = bar(percent, size);
     return (
       <box flexDirection="row">
-        <text fg={theme().base}>{"█".repeat(cells.filled)}</text>
-        <text fg={theme().muted}>{"░".repeat(cells.empty)}</text>
+        <text fg={theme().base} wrapMode="none">{"█".repeat(cells.filled)}</text>
+        <text fg={theme().muted} wrapMode="none">{"░".repeat(cells.empty)}</text>
       </box>
     );
   };
