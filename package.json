@@ -1,6 +1,6 @@
 {
   "name": "@chenlongapps/opencode-token-usage",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Session-tree token usage, live performance, context window and estimated cost for OpenCode 2",
   "keywords": [
     "opencode",
