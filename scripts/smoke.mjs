@@ -139,7 +139,15 @@ const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
     await writeFile(path.join(work, `${name}.ansi`), raw);
   };
   const send = data => process.stdin.write(data);
-  const entry = { process, screen, save, send, terminal };
+  const click = text => {
+    const lines = Array.from({ length: terminal.rows }, (_, line) => terminal.buffer.active.getLine(line)?.translateToString(true) ?? "");
+    const row = lines.findIndex(line => line.includes(text));
+    if (row < 0) throw new Error(`Could not find text to click: ${text}`);
+    const column = lines[row].indexOf(text) + 2;
+    process.stdin.write(`\x1b[<0;${column};${row + 1}M`);
+    process.stdin.write(`\x1b[<0;${column};${row + 1}m`);
+  };
+  const entry = { process, screen, save, send, click, terminal };
   terminals.push(entry);
   return entry;
 };
@@ -263,9 +271,13 @@ try {
   assert.match(tui.screen(), /Session\b/, "dialog shows the session summary");
   tui.send("d");
   await wait(() => /Calls/.test(tui.screen()) && /Cache Read\s+1,000 \(78\.7%\)/.test(tui.screen()), "detailed mode keeps exact numbers");
-  tui.send("d");
+  tui.click("d details");
   await wait(() => /1 step · 1 call · 1\.3K tokens · 83\.3% cached/.test(tui.screen())
-    && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "compact mode summarises the session");
+    && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "clicking d details switches to compact mode");
+  tui.click("d details");
+  await wait(() => /Calls/.test(tui.screen()) && /Cache Read\s+1,000 \(78\.7%\)/.test(tui.screen()), "clicking d details switches back to detailed mode");
+  tui.send("d");
+  await wait(() => /1 step · 1 call · 1\.3K tokens · 83\.3% cached/.test(tui.screen()), "d switches back to compact mode");
   assert.match(tui.screen(), /Tools\s+[█░]+\s+[\d.]+K?\s+\d+\.\d%/, "compact mode merges the tool families into Tools");
   tui.send("\x1b[F"); // End scrolls to the model breakdown.
   await wait(() => /By Model/.test(tui.screen()) && /usage-test\/small/.test(tui.screen()), "model cost in dialog");
@@ -294,9 +306,26 @@ try {
   await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
   await tui.save("06-subagent");
   const childTui = openTui(child.id);
-  await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "same tree in child sidebar");
-  assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
+  await wait(() => /Token Usage · Context 1,270 \/ 128,000 \(1\.0%\) · Total 5,080 · Cost <\$0\.01 · TPS ~?[\d.]+ tok\/s/.test(childTui.screen()), "subagent usage summary");
+  const childSummary = childTui.screen().split("\n").find(line => line.includes("Token Usage ·")) ?? "";
+  assert.doesNotMatch(childSummary, /ctrl\+x/i, "subagent summary does not advertise a shortcut");
+  assert.doesNotMatch(childTui.screen(), /Input\s+400/, "subagent metrics do not take up composer space while closed");
   await childTui.save("07-child-view");
+  const childMessagesBeforeUsage = (await client.message.list({ sessionID: child.id })).data.length;
+  childTui.click("Token Usage ·");
+  await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "subagent usage dialog");
+  assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
+  assert.match(childTui.screen(), /Steps\s+4\b/);
+  assert.match(childTui.screen(), /Total\s+5,080\b/);
+  const childDialogScreen = childTui.screen();
+  await childTui.save("07-child-usage-dialog");
+  childTui.send("\x1b");
+  await wait(() => /Token Usage · Context/.test(childTui.screen()) && !/Input\s+400/.test(childTui.screen()), "close subagent usage dialog");
+  childTui.click("Token Usage ·");
+  await wait(() => /Input\s+400/.test(childTui.screen()), "reopen subagent usage dialog with a fresh snapshot");
+  childTui.send("\x1b");
+  await wait(() => !/Input\s+400/.test(childTui.screen()), "close reopened subagent usage dialog");
+  assert.equal((await client.message.list({ sessionID: child.id })).data.length, childMessagesBeforeUsage, "subagent usage does not prompt the model");
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(snapshot.viewedID, child.id);
@@ -306,7 +335,7 @@ try {
   assert.equal(tree.cost, 0.00504);
   assert.equal(tree.costStatus, "complete");
   assert.equal(contextUsage(viewedMessages(snapshot), snapshot.model.context)?.used, 1270);
-  await wait(() => new RegExp(`Steps\\s+${tree.steps}\\b`).test(childTui.screen()), "tree-wide steps in child view");
+  assert.match(childDialogScreen, new RegExp(`Steps\\s+${tree.steps}\\b`), "tree-wide steps in child dialog");
   assert.equal(summarize(viewedMessages(snapshot), snapshot.model.catalog).steps, 1, "viewed session counts only its own step");
   console.log("PASS: real subagent usage is counted from parent and child views; context stays session-local; steps accumulate tree-wide");
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });

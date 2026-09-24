@@ -36,13 +36,15 @@ opencode plugin add @chenlongapps/opencode-token-usage
 > [!NOTE]
 > 需要 Node.js 22+。项目历次发布已验证 OpenCode 2.0.9、2.0.10 和 2.0.11；当前 SDK 2.0.11 构建已在 OpenCode 2.0.11 上重新验证。
 
-安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方显示同一面板。
+安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方保留一行实时摘要，显示 Context、Total、Cost 和 TPS。点击摘要可在居中弹窗中查看完整统计；按 Escape 或点击 **esc** 即可关闭，关闭弹窗不会中断子代理。
 
 连接远程服务器时，可将包名加入本机 `~/.config/opencode/cli.json` 的 `plugins`，仅加载终端入口；配置路径遵循 `XDG_CONFIG_HOME`。
 
 ### 详细用量
 
 在会话中输入 `/usage`，可打开原生弹窗查看当前会话树的 token 总量，以及按消息实际模型汇总的估算费用。使用 ↑/↓、Page Up/Down、Home/End 滚动，按 `d` 切换紧凑／详细数字，Escape 关闭。该命令不会向模型发送消息。
+
+子代理视图中的摘要格式为 `Token Usage · Context … · Total … · Cost … · TPS …`。缺失数据仍显示不可用，不会被当作零，摘要也不提示快捷键。点击后打开较小的弹窗，按侧边栏原有行序展示精确数值（包括 Steps、TPS 和 TTFT）；关闭时不会为完整面板预留高度。
 
 弹窗分为五个区域，统计口径互相独立：
 

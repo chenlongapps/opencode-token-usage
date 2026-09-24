@@ -9,6 +9,33 @@ import { breakdownRows } from "./context-sources.js";
 import { createSource } from "./source.js";
 import { bar, countLabel, formatCompact, formatEstimatedCost, formatTokens, requestRows, summaryRows, usageRows } from "./usage.js";
 
+function UsageView(props: {
+  context: Plugin.Context;
+  state: () => UsageState;
+  hideTitle?: boolean;
+}) {
+  const rows = createMemo(() => usageRows(props.state().summary, props.state().context, props.state().performance));
+  const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "TPS" || label === "TTFT"));
+  const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[props.state().status];
+
+  return (
+    <box flexDirection="column" marginTop={props.hideTitle ? 0 : 1} flexShrink={0}>
+      <Show when={!props.hideTitle}>
+        <text fg={props.context.theme.text.base}><b>Token Usage</b></text>
+      </Show>
+      <Show when={props.state().status !== "ready"}>
+        <text fg={props.context.theme.text.muted}>{status()}</text>
+      </Show>
+      <For each={rows()}>{(row, index) => (
+        <box flexDirection="row" justifyContent="space-between" marginTop={index() === performanceStart() ? 1 : 0}>
+          <text fg={props.context.theme.text.muted}>{row[0]}</text>
+          <text fg={props.context.theme.text.muted}>{row[1]}</text>
+        </box>
+      )}</For>
+    </box>
+  );
+}
+
 function UsagePanel(props: {
   context: Plugin.Context;
   sessionID: string;
@@ -28,22 +55,84 @@ function UsagePanel(props: {
   const unregister = props.register(controller);
   createEffect(() => controller.select(props.sessionID));
   onCleanup(() => { controller.dispose(); unregister(); });
-  const rows = createMemo(() => usageRows(state().summary, state().context, state().performance));
-  const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "TPS" || label === "TTFT"));
-  const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[state().status];
+
+  return <UsageView context={props.context} state={state} />;
+}
+
+function ChildUsageDialog(props: {
+  context: Plugin.Context;
+  state: () => UsageState;
+}) {
+  const dimensions = useTerminalDimensions();
+  let scroll: ScrollBoxRenderable | undefined;
+  props.context.keymap.layer(() => ({
+    mode: "modal",
+    commands: [
+      { bind: "up", title: "Scroll usage up", group: "Dialog", run: () => scroll?.scrollBy(-1) },
+      { bind: "down", title: "Scroll usage down", group: "Dialog", run: () => scroll?.scrollBy(1) },
+      { bind: "pageup", title: "Previous usage page", group: "Dialog", run: () => scroll?.scrollBy(-10) },
+      { bind: "pagedown", title: "Next usage page", group: "Dialog", run: () => scroll?.scrollBy(10) },
+    ],
+  }));
 
   return (
-    <box flexDirection="column" marginTop={1} flexShrink={0}>
-      <text fg={props.context.theme.text.base}><b>Token Usage</b></text>
-      <Show when={state().status !== "ready"}>
-        <text fg={props.context.theme.text.muted}>{status()}</text>
-      </Show>
-      <For each={rows()}>{(row, index) => (
-        <box flexDirection="row" justifyContent="space-between" marginTop={index() === performanceStart() ? 1 : 0}>
-          <text fg={props.context.theme.text.muted}>{row[0]}</text>
-          <text fg={props.context.theme.text.muted}>{row[1]}</text>
-        </box>
-      )}</For>
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={props.context.theme.text.base}><b>Token Usage</b></text>
+        <text fg={props.context.theme.text.muted} onMouseUp={() => props.context.ui.dialog.clear()}>esc</text>
+      </box>
+      <scrollbox
+        ref={(value: ScrollBoxRenderable) => { scroll = value; }}
+        maxHeight={Math.max(3, dimensions().height - 8)}
+        contentOptions={{ minHeight: 0 }}
+        scrollbarOptions={{ visible: false }}
+      >
+        <UsageView context={props.context} state={props.state} hideTitle />
+      </scrollbox>
+      <text fg={props.context.theme.text.muted}>↑/↓ scroll · esc close</text>
+    </box>
+  );
+}
+
+function ChildUsageLauncher(props: {
+  context: Plugin.Context;
+  sessionID: string;
+  performance: PerformanceMonitor;
+  register: (controller: UsageController) => () => void;
+  open: (sessionID: string, state: () => UsageState) => void;
+}) {
+  const [state, setState] = createSignal<UsageState>({ status: "loading" });
+  const controller = new UsageController(
+    createSource(props.context.client),
+    listener => props.context.data.listen(({ details }) => listener(details)),
+    setState,
+    80,
+    3_000,
+    100,
+    props.performance,
+  );
+  const unregister = props.register(controller);
+  createEffect(() => controller.select(props.sessionID));
+  onCleanup(() => { controller.dispose(); unregister(); });
+  const summary = createMemo(() => {
+    const current = state();
+    if (!current.summary) return `Token Usage · ${({ loading: "Loading…", ready: "Loading…", stale: "Unavailable", unavailable: "Unavailable · retrying…" })[current.status]}`;
+    const context = current.context
+      ? `${formatTokens(current.context.used)} / ${formatTokens(current.context.limit)} (${current.context.percent.toFixed(1)}%)`
+      : "—";
+    const cost = formatEstimatedCost(current.summary.cost, current.summary.costStatus) ?? "—";
+    const tps = current.performance?.tps !== undefined && Number.isFinite(current.performance.tps)
+      ? `${current.performance.tpsEstimated ? "~" : ""}${Math.max(0, current.performance.tps).toFixed(1)} tok/s`
+      : "—";
+    const stale = current.status === "stale" ? " · Not updated" : "";
+    return `Token Usage · Context ${context} · Total ${formatTokens(current.summary.total)} · Cost ${cost} · TPS ${tps}${stale}`;
+  });
+
+  return (
+    <box flexDirection="row" justifyContent="flex-end" paddingRight={2} flexShrink={0}>
+      <text fg={props.context.theme.text.muted} wrapMode="none" onMouseUp={event => {
+        if (event.button === 0) props.open(props.sessionID, state);
+      }}>{summary()}</text>
     </box>
   );
 }
@@ -67,6 +156,7 @@ function UsageDialog(props: {
   onCleanup(() => { controller.dispose(); unregister(); });
 
   let scroll: ScrollBoxRenderable | undefined;
+  const toggleDetails = () => { setDetailed(value => !value); };
   props.context.keymap.layer(() => ({
     mode: "modal",
     commands: [
@@ -76,7 +166,7 @@ function UsageDialog(props: {
       { bind: "pagedown", title: "Next usage page", group: "Dialog", run: () => scroll?.scrollBy(10) },
       { bind: "home", title: "First usage row", group: "Dialog", run: () => scroll?.scrollTo(0) },
       { bind: "end", title: "Last usage row", group: "Dialog", run: () => scroll?.scrollTo(Infinity) },
-      { bind: "d", title: "Toggle usage details", group: "Dialog", run: () => { setDetailed(value => !value); } },
+      { bind: "d", title: "Toggle usage details", group: "Dialog", run: toggleDetails },
     ],
   }));
 
@@ -219,7 +309,13 @@ function UsageDialog(props: {
           </box>
         </scrollbox>
       </Show>
-      <text fg={theme().muted}>↑/↓ scroll · d details · esc close</text>
+      <box flexDirection="row">
+        <text fg={theme().muted}>↑/↓ scroll · </text>
+        <text fg={theme().muted} onMouseUp={event => {
+          if (event.button === 0) toggleDetails();
+        }}>d details</text>
+        <text fg={theme().muted}> · esc close</text>
+      </box>
     </box>
   );
 }
@@ -239,17 +335,22 @@ export default Plugin.define({
       append: "sidebar.content",
       render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} register={register} />,
     });
-    // 2.0.9 SessionFrame never mounts the sidebar for a child session.
-    // Keep the same full panel visible through the supported composer slot.
+    const openChildUsage = (sessionID: string, state: () => UsageState) => {
+      context.ui.dialog.show(() => <ChildUsageDialog context={context} state={state} />);
+      context.ui.dialog.set({ size: "medium", centered: true });
+    };
+    // Child sessions do not mount the sidebar; keep one live summary above the composer.
     const removeChild = context.ui.slot({
       append: "session.composer.top",
       render: props => (
         <Show when={context.data.session.get(props.sessionID)?.parentID}>
-          <box flexDirection="row" justifyContent="flex-end" paddingRight={2} flexShrink={0}>
-            <box width={36} maxWidth="100%" flexDirection="column">
-              <UsagePanel context={context} sessionID={props.sessionID} performance={performance} register={register} />
-            </box>
-          </box>
+          <ChildUsageLauncher
+            context={context}
+            sessionID={props.sessionID}
+            performance={performance}
+            register={register}
+            open={openChildUsage}
+          />
         </Show>
       ),
     });

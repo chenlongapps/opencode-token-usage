@@ -1,5 +1,20 @@
 # 验证记录
 
+## v0.4.0（子代理用量浮窗）
+
+验证日期：2026-09-24。Node.js v22.23.2；SDK 2.0.11，隔离的真实 OpenCode 2.0.11 宿主。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 62 项通过 |
+| `npm run build` | 通过 |
+| `npm run test:smoke` | 通过，打包产物 + 真实 OpenCode 2.0.11 + 本地模拟提供商 |
+
+子代理视图原本通过 `session.composer.top` 常驻展示完整面板，挤占对话区高度；现在仅保留 `Token Usage · Context … · Total … · Cost … · TPS …` 一行实时摘要，不显示快捷键。点击该行可打开宿主原生居中弹窗；摘要与弹窗共享同一控制器及完整面板的精确数字和实时 TPS/TTFT。Esc 关闭浮窗后摘要继续刷新，不影响子代理运行。根会话侧边栏与 `/usage` 的五区详细弹窗保持原有入口。
+
+真实终端集成在完成父／子代理调用后，确认子代理摘要显示 `Context 1,270 / 128,000 (1.0%)`、`Total 5,080`、`Cost <$0.01` 与实时 TPS，且没有快捷键或额外完整用量行。鼠标点击摘要打开的弹窗显示全树 `Steps 4`、`Input 400`、`Cache Read 4,000`；Esc 关闭后摘要保留，关闭浮窗未向模型发送消息。原有根会话 `/usage`、窄终端详细弹窗、活动模型切换与费用回退集成检查继续通过。
+
 ## v0.4.0（`/usage` 原生弹窗）
 
 验证日期：2026-09-23。Node.js v22.23.2；`@opencode/plugin`、`@opencode/client` 等 SDK 精确锁定 2.0.11。弹窗布局参考本地 OpenCode 2.0.15 源码中的 `dialog-status.tsx`、`dialog-debug.tsx` 和 `dialog-shell-output.tsx`，通过插件公开的斜杠命令、弹窗、`session.hook("context")` 和 RPC 接口实现，并在真实 OpenCode 2.0.11 宿主中验证。

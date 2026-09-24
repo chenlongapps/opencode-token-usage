@@ -8,7 +8,7 @@
 
 * [x] OpenCode 2.0.9 主插件与 `./tui` 入口集成
 * [x] 向原生 `sidebar.content` 追加基础面板，保留宿主内容
-* [x] 子代理视图使用 `session.composer.top` 显示完整面板，适配宿主隐藏侧边栏的行为
+* [x] 子代理视图通过 `session.composer.top` 提供使用量入口，适配宿主隐藏侧边栏的行为（初版显示完整面板，后改为按需弹窗）
 * [x] 检测当前会话，沿 `parentID` 汇总根会话及所有后代
 * [x] 分页读取完整消息，包括压缩前历史和未打开的子代理
 * [x] 快照替换与继承历史去重，防止重复累计
@@ -99,6 +99,7 @@ Steps  1,234
 * [x] 显示各个模型费用
 * [x] 拆分为 Context Window / Last Request / Context Breakdown / Session / By Model，口径互不混用
 * [x] 紧凑数字（K/M）、来源条形图、Session 单行汇总、`d` 详细模式切换
+* [x] 子代理视图保留 Context、Total、Cost、TPS 单行摘要，点击打开可关闭的原生居中统计弹窗
 
 ## 后续评估
 
