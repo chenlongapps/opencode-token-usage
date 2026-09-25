@@ -218,3 +218,9 @@ Python 3 为真实 TUI 提供 160 × 54 的伪终端，终端输出经 xterm 解
 - 多层分页、压缩与分叉去重、故障恢复由自动化逻辑测试覆盖；真实 TUI 验证覆盖加载、正常消息、一级真实子代理和模型切换。
 
 重现时运行 README 中的检查命令。烟雾测试会输出临时产物目录，包含 `result.json`、`plugins.json`、各阶段终端捕获和已隐藏服务器密码的日志。
+
+## 2026-09-25 · 原厂价格半自动更新
+
+`npm run prices:update` 从 models.dev API 提取经审核的原厂 Provider 自家文本型号，生成离线 `src/prices.generated.ts`：本次为 283 条生成价格，叠加已核实例外后为 296 条。脚本重跑时确认生成内容不变（新增、删除、变化均为 0）。例外与原厂过滤在 `src/overrides.ts`，精确别名在 `src/aliases.ts`；网关/地域/订阅报价不作为数据源。
+
+已通过 `npm run typecheck`、55 项 `npm test` 和 `npm run build`。使用临时安装的 OpenCode v2.0.11 运行 `npm run test:smoke`，打包安装后的插件通过侧边栏、`/usage`、真实子代理、模型切换、无 OpenCode 价格时的内置回退等检查；打包产物包含生成快照、别名和例外模块。当前机器默认 OpenCode v2.0.16 未参与本次集成验证。

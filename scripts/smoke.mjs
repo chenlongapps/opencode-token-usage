@@ -34,6 +34,7 @@ const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destina
 const files = packed[0].files.map(file => file.path);
 assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && files.includes("index.js") && files.includes("tui.js"));
 assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts") && files.includes("docs/pricing.md"));
+assert.ok(["aliases", "overrides", "prices.generated"].every(name => files.includes(`dist/${name}.js`)));
 assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-sources.js"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));

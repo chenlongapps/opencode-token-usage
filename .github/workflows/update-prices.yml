@@ -1,0 +1,69 @@
+name: Update model prices
+
+on:
+  schedule:
+    # Every day at 03:17 UTC; avoid the top of the hour when schedules are busy.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-model-prices
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'chenlongapps/opencode-token-usage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Refresh first-party price snapshot
+        run: npm run prices:update
+      - name: Check for changes
+        id: changes
+        shell: bash
+        run: |
+          git diff --check -- src/prices.generated.ts
+          if [[ -n "$(git status --porcelain -- src/prices.generated.ts)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No price changes; skipping checks and pull request."
+          fi
+      - if: steps.changes.outputs.changed == 'true'
+        run: npm run typecheck
+      - if: steps.changes.outputs.changed == 'true'
+        run: npm test
+      - if: steps.changes.outputs.changed == 'true'
+        run: npm run build
+      - if: steps.changes.outputs.changed == 'true'
+        run: npm pack --dry-run
+      - name: Open or update price pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ github.token }}
+          add-paths: src/prices.generated.ts
+          branch: automation/update-model-prices
+          commit-message: 'chore: update first-party model prices'
+          title: 'chore: update first-party model prices'
+          body: |
+            Daily snapshot refresh from https://models.dev/api.json.
+
+            Only `src/prices.generated.ts` is changed. Please review added, removed, and repriced models before merging; manufacturer exceptions and aliases require separate manual review.
+
+            The update workflow ran typecheck, tests, build, and `npm pack --dry-run` before opening this PR.

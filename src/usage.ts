@@ -19,6 +19,8 @@ export interface Price {
   tier?: { type: "context"; size: number };
   input?: number;
   output?: number;
+  /** Optional first-party rate when reasoning differs from ordinary output. */
+  reasoning?: number;
   cache?: { read?: number; write?: number };
 }
 
@@ -66,8 +68,8 @@ export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
   const tier = prices.filter(p => p.tier && incoming(tokens) > p.tier.size)
     .sort((a, b) => b.tier!.size - a.tier!.size)[0];
   const price = tier ?? prices.find(p => !p.tier);
-  const rates = [price?.input, price?.output, price?.cache?.read, price?.cache?.write];
-  const quantities = [tokens.input, tokens.output + tokens.reasoning, tokens.cache.read, tokens.cache.write];
+  const rates = [price?.input, price?.output, price?.reasoning ?? price?.output, price?.cache?.read, price?.cache?.write];
+  const quantities = [tokens.input, tokens.output, tokens.reasoning, tokens.cache.read, tokens.cache.write];
   return {
     cost: quantities.reduce((sum, quantity, index) => sum + quantity * safe(rates[index]), 0) / 1_000_000,
     defaultPrice: total(tokens) > 0 && (!price || rates.some((rate, index) => quantities[index]! > 0

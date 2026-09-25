@@ -83,9 +83,9 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. C
 - A fork is a separate session tree. Inherited message copies are attributed only to their original source to prevent double counting.
 - `Context` only searches messages after the most recent compaction with `status === "completed"` and is hidden when reliable usage or a model context limit is unavailable.
 - `Steps` counts every assistant message in the tree, whether or not it reported usage, and reuses the fork-copy de-duplication so inherited history is never counted twice.
-- `Est. Cost` prices every message with its recorded model. A complete non-zero price resolved by OpenCode takes precedence. If OpenCode reports a complete zero price, a complete official snapshot price overrides it; incomplete prices fall back for the whole message without mixing rates.
-- Gateway models can use fallback prices through exact model IDs, documented aliases, and known wrappers. A terminal `-free` or `:free` is removed only for an exact base ID lookup; other suffixes are not stripped. The fallback excludes gateway markups, regional premiums, unlisted discounts, tool fees, and taxes, so Est. Cost is an estimate rather than a provider bill.
-- Confirmed free usage displays `$0.00`; unavailable prices display `—`; known subtotals with unpriced messages are marked `partial`. See the [built-in price snapshot](docs/pricing.md) for coverage, sources, and limitations.
+- `Est. Cost` prices every message with its recorded model. A complete non-zero price resolved by OpenCode takes precedence. If OpenCode reports a complete zero price, a complete first-party snapshot price overrides it; incomplete prices fall back for the whole message without mixing rates.
+- The checked-in fallback snapshot is generated from [models.dev](https://models.dev/api.json) using only reviewed first-party provider/model families; a small set of manufacturer-verified exceptions is kept separately. It covers priced text models, without downloading prices while the plugin runs. Gateway models match exact manufacturer IDs, documented aliases, and known wrappers; only a terminal `-free` or `:free` can be removed for a second exact lookup.
+- Confirmed free usage displays `$0.00`; unavailable prices display `—`; known subtotals with unpriced messages are marked `partial`. The snapshot excludes gateway markups, regional premiums, unlisted discounts, non-text billing, tool fees, and taxes, so Est. Cost is not a provider bill. See [price sources and limitations](docs/pricing.md).
 - Initial read failures display `Unavailable`. Later failures retain the last complete snapshot, display `Not updated`, and retry automatically.
 
 ### Development
@@ -98,7 +98,11 @@ npm run build
 npm run test:smoke
 ```
 
-`test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, subagent aggregation, per-message pricing, official-price fallback, model switching, TPS, and TTFT against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
+The [price update workflow](.github/workflows/update-prices.yml) checks models.dev every day at 03:17 UTC (or on demand via **Run workflow**). No snapshot diff means no pull request; a diff that passes typecheck, tests, build, and pack validation opens or updates one review-only PR containing `src/prices.generated.ts`. Enable **Allow GitHub Actions to create and approve pull requests** under repository Actions settings. PRs created with `GITHUB_TOKEN` do not trigger a second CI run, so the update workflow runs the checks before opening the PR. Nothing is merged or published automatically.
+
+For a manual refresh, run `npm run prices:update` in a networked environment, review the generated diff and exceptions, then run the checks above. Builds and plugin refreshes do not contact models.dev.
+
+`test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, subagent aggregation, per-message pricing, first-party price fallback, model switching, TPS, and TTFT against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
 
 To load the plugin from source, build the project and add the repository's absolute path to `plugins` in the target project.
 

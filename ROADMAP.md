@@ -104,3 +104,7 @@ Steps  1,234
 ## 后续评估
 
 * [x] 首次 npm 发布：`@chenlongapps/opencode-token-usage@0.2.1`
+
+## 待解决问题
+
+* [ ] TPS 的实时计算：当前为近似值，后续考虑通过更精确的算法计算

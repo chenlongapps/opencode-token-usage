@@ -84,8 +84,8 @@ opencode plugin add @chenlongapps/opencode-token-usage
 - `Context` 仅搜索最后一次 `status === "completed"` 的 compaction 之后；没有可靠用量或模型上限时隐藏。
 - `Steps` 统计树中全部 assistant 消息，无论是否已上报用量；复用分叉副本去重，继承历史不会重复计数。
 - `Est. Cost` 按每条消息记录的实际模型分别计算。OpenCode 当前解析出的完整非零价格优先；若 OpenCode 给出完整零价，且内置价格快照可以完整计价，则采用快照价格。价格不完整时整条消息回退，不混用两套费率。
-- 网关模型通过精确模型 ID、明确别名和已知包装格式匹配；也会尝试移除终尾 `-free` 或 `:free` 后精确查找基础 ID，其他后缀不会剥离。快照不包含网关加价、区域溢价、未列明的折扣、工具费和税费，因此 Est. Cost 是估算而非提供商账单。
-- 确认免费时显示 `$0.00`；价格不可用时显示 `—`；只有部分消息可计算时在已知小计后标注 `partial`。覆盖范围、来源和限制见[内置官方价格快照](docs/pricing.md)。
+- 内置回退快照从 [models.dev](https://models.dev/api.json) 生成，只采用审核过的原厂 Provider 与自家模型系列；少量经原厂核实的例外单独维护。快照覆盖有价格的文本模型，插件运行时不下载价格。网关模型通过精确原厂 ID、明确别名和已知包装格式匹配；只有终尾 `-free` 或 `:free` 会在再次精确查找前移除。
+- 确认免费时显示 `$0.00`；价格不可用时显示 `—`；只有部分消息可计算时在已知小计后标注 `partial`。快照不含网关加价、区域溢价、未列明的折扣、非文本计费、工具费和税费；Est. Cost 是估算而非账单。覆盖范围、来源和限制见[价格来源与限制](docs/pricing.md)。
 - 首次读取失败显示 `Unavailable`；后续失败保留上次完整快照、标注 `Not updated` 并自动重试。
 
 ### 开发
@@ -98,7 +98,11 @@ npm run build
 npm run test:smoke
 ```
 
-`test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、`/usage`、子代理累计、逐消息计价、官方价格补全、模型切换、TPS 和 TTFT。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
+[价格更新工作流](.github/workflows/update-prices.yml) 每天 UTC 03:17 检查 models.dev，也可通过 **Run workflow** 手动触发。快照无变化就不创建 PR；有变化且通过类型检查、测试、构建和打包检查时，只对 `src/prices.generated.ts` 创建或更新同一个待审 PR。需在仓库 Actions 设置中启用 **Allow GitHub Actions to create and approve pull requests**。使用 `GITHUB_TOKEN` 创建的 PR 不会再次触发 CI，因此更新工作流会先完成检查；不会自动合并或发布。
+
+手动更新时，在联网的维护环境运行 `npm run prices:update`，审阅生成文件及例外差异，再执行上述检查。构建和插件刷新不会请求 models.dev。
+
+`test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、`/usage`、子代理累计、逐消息计价、原厂价格补全、模型切换、TPS 和 TTFT。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
 
 从源码加载时，先构建项目，再将仓库绝对路径加入目标项目的 `plugins`。
 

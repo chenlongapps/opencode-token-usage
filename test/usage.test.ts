@@ -117,6 +117,8 @@ test("ordinary, cache, and reasoning prices are per million tokens", () => {
   assert.equal(estimate(normalize({ input: 1_000_000 }), [price]).cost, 2);
   assert.equal(estimate(normalize({ output: 1_000_000, reasoning: 500_000 }), [price]).cost, 12);
   assert.equal(estimate(normalize({ cache: { read: 1_000_000, write: 1_000_000 } }), [price]).cost, 3.2);
+  assert.equal(estimate(normalize({ output: 1_000_000, reasoning: 500_000 }), [{ ...price, reasoning: 12 }]).cost, 14);
+  assert.equal(estimate(normalize({ reasoning: 50 }), [{ input: 2, reasoning: 12 }]).defaultPrice, false);
 });
 
 test("tiers use per-message incoming tokens and strict thresholds", () => {
@@ -272,6 +274,22 @@ test("Muse Spark Contributor snapshot prices replace OpenCode's complete free ra
   assert.equal(summary.cost, 0.3);
   assert.equal(summary.costStatus, "complete");
   assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], "$0.30");
+});
+
+test("first-party fallback keeps distinct reasoning and unknown cache-write billing honest", () => {
+  const qwen = { providerID: "alibaba", id: "qwen-plus" };
+  const priced = summarize([{
+    id: "reasoned", type: "assistant", model: qwen,
+    tokens: { input: 1_000_000, output: 1_000_000, reasoning: 1_000_000 },
+  }]);
+  assert.equal(priced.cost, 5.6);
+  assert.equal(priced.costStatus, "complete");
+
+  const unknownWrite = summarize([{
+    id: "write", type: "assistant", model: { providerID: "alibaba", id: "qwen3.7-plus" },
+    tokens: { cache: { write: 1_000_000 } },
+  }]);
+  assert.equal(unknownWrite.costStatus, "unavailable");
 });
 
 test("comma grouping, rounding boundaries and dollar display", () => {
