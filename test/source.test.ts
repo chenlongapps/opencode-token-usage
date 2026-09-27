@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { OpenCodeClient } from "@opencode/client";
 import { createSource, loadSnapshot, pages, uniqueMessages, viewedMessages } from "../src/source.js";
 import { modelKey, summarize } from "../src/usage.js";
-import { FakeSource, message, page, session } from "./helpers.js";
+import { FakeSource, deferred, message, page, session, until } from "./helpers.js";
 
 test("paginated history and all descendants, same tree when viewing a grandchild", async () => {
   const source = new FakeSource();
@@ -117,4 +117,82 @@ test("v2 cursors carry pagination options; subsequent requests must not repeat o
     { parentID: "root", order: "asc", limit: 100 }, { cursor: "children-cursor" },
     { sessionID: "root", order: "asc", limit: 100 }, { sessionID: "root", cursor: "messages-cursor" },
   ]);
+});
+
+test("large trees read at most four histories at once and reuse unchanged paginated histories", async () => {
+  const source = new FakeSource();
+  const children = 80;
+  for (let index = 0; index < children; index++) {
+    const id = `child-${index}`;
+    source.sessions.set(id, session(id, "root"));
+    source.history.set(id, [message(`${id}-a`), message(`${id}-b`), message(`${id}-c`)]);
+  }
+  const original = source.messages.bind(source);
+  const gate = deferred<void>();
+  let active = 0;
+  let peak = 0;
+  const reads = new Map<string, number>();
+  source.messages = async (id, cursor) => {
+    reads.set(id, (reads.get(id) ?? 0) + 1);
+    active++;
+    peak = Math.max(peak, active);
+    if (id !== "root") await gate.promise;
+    const result = await original(id, cursor);
+    active--;
+    return result;
+  };
+  const signal = new AbortController().signal;
+  const first = loadSnapshot(source, "root", signal);
+  await until(() => active === 4);
+  assert.equal(peak, 4, "four sessions progress concurrently");
+  gate.resolve();
+  const baseline = await first;
+  assert.equal(baseline.sessions.size, children + 1);
+  assert.equal(summarize(uniqueMessages(baseline)).total, 2_410);
+  assert.ok(peak <= 4);
+  assert.equal([...reads.values()].reduce((sum, count) => sum + count, 0), 161,
+    "the first snapshot reads every paginated history");
+  reads.clear();
+  source.history.set("child-3", [message("child-3-a", 99)]);
+  const next = await loadSnapshot(source, "root", signal, baseline, new Set(["child-3"]));
+  assert.deepEqual([...reads.keys()], ["child-3"]);
+  assert.equal(reads.get("child-3"), 1, "the next snapshot reads one changed page");
+  assert.equal(summarize(uniqueMessages(next)).total, 2_479);
+  assert.equal(summarize(uniqueMessages(baseline)).total, 2_410, "the published snapshot stays immutable");
+  source.sessions.delete("child-5");
+  reads.clear();
+  const removed = await loadSnapshot(source, "root", signal, next, new Set());
+  assert.equal(removed.sessions.has("child-5"), false);
+  assert.equal(removed.messages.has("child-5"), false);
+  assert.equal(reads.size, 0);
+});
+
+test("incremental page failures and timeouts discard partial work; a retry recovers", async () => {
+  const source = new FakeSource();
+  source.sessions.set("child", session("child", "root"));
+  source.history.set("child", [message("old", 5)]);
+  const baseline = await loadSnapshot(source, "root", new AbortController().signal);
+  source.history.set("child", [message("new-1", 7), message("new-2", 8), message("new-3", 9)]);
+  const original = source.messages.bind(source);
+  source.messages = async (id, cursor) => {
+    if (id === "child" && cursor) throw new Error("page unavailable");
+    return original(id, cursor);
+  };
+  await assert.rejects(loadSnapshot(source, "root", new AbortController().signal, baseline, new Set(["child"])), /page unavailable/);
+  assert.equal(summarize(uniqueMessages(baseline)).total, 15);
+  source.messages = async (id, cursor, signal) => {
+    if (id !== "child") return original(id, cursor);
+    await new Promise<void>((_resolve, reject) => {
+      signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+    });
+    return original(id, cursor);
+  };
+  const timeout = new AbortController();
+  setTimeout(() => timeout.abort(new DOMException("Timed out", "TimeoutError")), 20);
+  await assert.rejects(loadSnapshot(source, "root", timeout.signal, baseline, new Set(["child"])),
+    error => error instanceof Error && error.name === "TimeoutError");
+  assert.equal(summarize(uniqueMessages(baseline)).total, 15);
+  source.messages = original;
+  const recovered = await loadSnapshot(source, "root", new AbortController().signal, baseline, new Set(["child"]));
+  assert.equal(summarize(uniqueMessages(recovered)).total, 34);
 });

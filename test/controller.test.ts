@@ -41,15 +41,66 @@ test("new unopened children trigger discovery; token text deltas and unrelated s
   controller.select("root"); await until(() => state.status === "ready");
   const reads = source.reads;
   events.emit("session.text.delta"); events.emit("session.step.ended", "unrelated");
+  events.emit({ type: "session.created", data: { sessionID: "other-child", parentID: "other" } });
+  events.emit({ type: "session.forked", data: { sessionID: "fork", parentID: "root" } });
   await new Promise(r => setTimeout(r, 20));
   assert.equal(source.reads, reads);
   source.sessions.set("child", session("child", "root"));
   source.history.set("child", [message("b", 30)]);
-  events.emit("session.created", "child");
+  events.emit({ type: "session.created", data: { sessionID: "child", parentID: "root" } });
   await until(() => state.summary?.total === 40);
   source.history.set("child", [message("b", 35)]);
   events.emit("session.step.ended", "child");
   await until(() => state.summary?.total === 45);
+});
+
+test("a child update reuses other histories and a session switch discards the old tree cache", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.sessions.set("child", session("child", "root"));
+  source.sessions.set("other", session("other"));
+  source.history.set("child", [message("child-a", 4)]);
+  source.history.set("other", [message("other-a", 7)]);
+  const original = source.messages.bind(source);
+  const reads: string[] = [];
+  source.messages = async (id, cursor) => { reads.push(id); return original(id, cursor); };
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready");
+  reads.length = 0;
+  source.history.set("child", [message("child-a", 9)]);
+  events.emit("session.usage.updated", "child");
+  await until(() => state.summary?.total === 19);
+  assert.deepEqual(reads, ["child"]);
+  controller.select("other");
+  await until(() => state.status === "ready" && state.summary?.total === 7);
+  assert.equal(state.context?.used, 7);
+  assert.deepEqual(reads, ["child", "other"]);
+});
+
+test("staged revert changes viewed context without subtracting historical tree cost", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", [
+    { ...message("a", 20), id: "a" },
+    { id: "b", type: "user" },
+    { ...message("c", 40), id: "c" },
+  ]);
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready");
+  assert.equal(state.context?.used, 40);
+  const total = state.summary?.total, cost = state.summary?.cost;
+  source.sessions.set("root", { ...session("root"), revert: { messageID: "b" } as NonNullable<ReturnType<typeof session>["revert"]> });
+  events.emit("session.revert.staged");
+  await until(() => state.context?.used === 20);
+  assert.equal(state.summary?.total, total);
+  assert.equal(state.summary?.cost, cost);
+  source.sessions.set("root", session("root"));
+  events.emit("session.revert.cleared");
+  await until(() => state.context?.used === 40);
 });
 
 test("failed refresh retains last complete data and automatically recovers; first failure is unavailable", async t => {

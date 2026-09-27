@@ -370,6 +370,15 @@ try {
   await wait(() => /Est\. Cost\s+<\$0\.01/.test(officialTui.screen()), "official fallback cost in sidebar");
   await officialTui.save("09-official-price-fallback");
   console.log("PASS: a model with no OpenCode price uses the packaged manufacturer price");
+  const cleanupTarget = await client.session.create({ location: { directory: project }, title: "Context Cleanup Smoke" });
+  await client.session.prompt({ sessionID: cleanupTarget.id, text: "Return SMOKE_OK." });
+  await client.session.wait({ sessionID: cleanupTarget.id });
+  await wait(async () => (await client.rpc(ContextSourceRpc).latest({ sessionID: cleanupTarget.id },
+    { location: { directory: project } })).estimate !== null, "context stored before deletion");
+  await client.session.remove({ sessionID: cleanupTarget.id });
+  await wait(async () => (await client.rpc(ContextSourceRpc).latest({ sessionID: cleanupTarget.id },
+    { location: { directory: project } })).estimate === null, "deleted session context removed");
+  console.log("PASS: session deletion removes its persisted context estimate");
   await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const [index, terminal] of terminals.entries()) {

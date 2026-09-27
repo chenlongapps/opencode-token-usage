@@ -30,12 +30,20 @@ interface ActiveStep {
   last?: number;
   streamed?: number;
   finishedAt?: number;
+  reconciledAt?: number;
   bytes: number;
   events: Set<string>;
 }
 
 interface RuntimeObservation extends FirstTokenObservation {
   expiresAt?: number;
+}
+
+export interface PreparedPerformance {
+  tps?: number;
+  ttftSum: number;
+  ttftCount: number;
+  historical: ReadonlyMap<string, number>;
 }
 
 export type PerformanceSubscribe = (listener: (event: PerformanceEvent) => void) => () => void;
@@ -69,19 +77,18 @@ export function historicalPerformance(
   messages: Iterable<UsageMessage>,
   observations: Iterable<FirstTokenObservation> = [],
 ): PerformanceSummary {
-  const observed = new Map<string, FirstTokenObservation>();
-  for (const sample of observations) {
-    if (finite(sample.started) && finite(sample.first) && sample.first >= sample.started) observed.set(sample.messageID, sample);
-  }
+  return performanceWithObservations(preparePerformance(messages), observations);
+}
 
+/** The immutable part of a snapshot is scanned once, then reused for stream updates. */
+export function preparePerformance(messages: Iterable<UsageMessage>): PreparedPerformance {
   let output = 0;
   let duration = 0;
-  let ttft = 0;
-  let ttftSamples = 0;
-  const messagesSeen = new Set<string>();
+  let ttftSum = 0;
+  let ttftCount = 0;
+  const historical = new Map<string, number>();
   for (const message of messages) {
     if (message.type !== "assistant") continue;
-    messagesSeen.add(message.id);
     const created = message.time?.created;
     const streamed = message.time?.streamed;
     const tokens = normalize(message.tokens);
@@ -90,24 +97,33 @@ export function historicalPerformance(
       output += generated;
       duration += streamed - created;
     }
-
-    const runtime = observed.get(message.id);
-    const sample = runtime ? runtime.first - runtime.started : historicalFirst(message);
+    const sample = historicalFirst(message);
     if (sample !== undefined && finite(sample) && sample >= 0) {
-      ttft += sample;
-      ttftSamples++;
+      historical.set(message.id, sample);
+      ttftSum += sample;
+      ttftCount++;
     }
   }
+  return { ...(duration > 0 ? { tps: output / (duration / 1_000) } : {}), ttftSum, ttftCount, historical };
+}
 
-  // A live first-token event can arrive before the refreshed message snapshot.
+function performanceWithObservations(
+  prepared: PreparedPerformance, observations: Iterable<FirstTokenObservation>,
+): PerformanceSummary {
+  const observed = new Map<string, FirstTokenObservation>();
+  for (const sample of observations) {
+    if (finite(sample.started) && finite(sample.first) && sample.first >= sample.started) observed.set(sample.messageID, sample);
+  }
+  let ttft = prepared.ttftSum;
+  let ttftSamples = prepared.ttftCount;
   for (const sample of observed.values()) {
-    if (messagesSeen.has(sample.messageID)) continue;
+    const old = prepared.historical.get(sample.messageID);
+    if (old !== undefined) { ttft -= old; ttftSamples--; }
     ttft += sample.first - sample.started;
     ttftSamples++;
   }
-
   const result: PerformanceSummary = {};
-  if (duration > 0) result.tps = output / (duration / 1_000);
+  if (prepared.tps !== undefined) result.tps = prepared.tps;
   if (ttftSamples > 0) result.ttft = ttft / ttftSamples;
   return result;
 }
@@ -161,7 +177,8 @@ export class PerformanceMonitor {
     const now = this.now();
     const changed = new Set<string>();
     for (const [key, step] of this.active) {
-      if (step.finishedAt !== undefined && step.finishedAt + this.retention <= now) {
+      if ((step.finishedAt ?? step.reconciledAt) !== undefined
+        && (step.finishedAt ?? step.reconciledAt)! + this.retention <= now) {
         this.active.delete(key);
         changed.add(step.sessionID);
       }
@@ -180,7 +197,8 @@ export class PerformanceMonitor {
     if (this.disposed || !Number.isFinite(this.retention) || this.retention < 0) return;
     let next = Infinity;
     for (const step of this.active.values()) {
-      if (step.finishedAt !== undefined) next = Math.min(next, step.finishedAt + this.retention);
+      const settled = step.finishedAt ?? step.reconciledAt;
+      if (settled !== undefined) next = Math.min(next, settled + this.retention);
     }
     for (const sample of this.observed.values()) {
       if (sample.expiresAt !== undefined) next = Math.min(next, sample.expiresAt);
@@ -233,6 +251,7 @@ export class PerformanceMonitor {
       step.finishedAt = this.now();
       const sample = this.observed.get(key);
       if (sample) sample.expiresAt = step.finishedAt + this.retention;
+      if (step.reconciledAt !== undefined) this.active.delete(key);
       this.scheduleCleanup();
       return false;
     }
@@ -241,6 +260,13 @@ export class PerformanceMonitor {
     if (typeof data.delta !== "string" || data.delta.length === 0 || !finite(event.created) || event.created < step.started) return false;
     if (event.id && step.events.has(event.id)) return false;
     if (event.id) step.events.add(event.id);
+    if (step.reconciledAt !== undefined) {
+      // A later delta means the snapshot did not represent the final stream.
+      delete step.reconciledAt;
+      const sample = this.observed.get(key);
+      if (sample) delete sample.expiresAt;
+      this.scheduleCleanup();
+    }
     step.bytes += new TextEncoder().encode(data.delta).byteLength;
     step.last = Math.max(step.last ?? event.created, event.created);
     if (step.first === undefined) {
@@ -259,19 +285,32 @@ export class PerformanceMonitor {
         || message.time?.completed !== undefined)) represented.add(message.id);
     }
     for (const [key, step] of this.active) {
-      if (sessions.has(step.sessionID) && represented.has(step.messageID)
-        && (step.finishedAt !== undefined || step.streamed !== undefined)) this.active.delete(key);
+      if (sessions.has(step.sessionID) && represented.has(step.messageID)) {
+        if (step.finishedAt !== undefined) this.active.delete(key);
+        else {
+          // A snapshot can arrive before step.ended. Retain the step to attach
+          // the real expiry later, and set a fallback if that event is lost.
+          step.reconciledAt ??= this.now();
+          const sample = this.observed.get(key);
+          if (sample) sample.expiresAt ??= step.reconciledAt + this.retention;
+        }
+      }
     }
+    this.scheduleCleanup();
   }
 
   summary(messages: Iterable<UsageMessage>, sessionIDs: Iterable<string>): PerformanceSummary {
+    return this.summaryPrepared(preparePerformance(messages), sessionIDs);
+  }
+
+  summaryPrepared(prepared: PreparedPerformance, sessionIDs: Iterable<string>): PerformanceSummary {
     const sessions = new Set(sessionIDs);
     const samples = [...this.observed.values()].filter(sample => sessions.has(sample.sessionID));
-    const result = historicalPerformance(messages, samples);
+    const result = performanceWithObservations(prepared, samples);
     let bytes = 0;
     let duration = 0;
     for (const step of this.active.values()) {
-      if (!sessions.has(step.sessionID) || step.bytes <= 0) continue;
+      if (!sessions.has(step.sessionID) || step.reconciledAt !== undefined || step.bytes <= 0) continue;
       const last = step.streamed ?? step.last;
       if (!finite(last) || last <= step.started) continue;
       bytes += step.bytes;

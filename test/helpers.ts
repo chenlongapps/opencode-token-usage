@@ -38,7 +38,7 @@ export class FakeSource implements UsageSource {
   async children(id: string, cursor?: string) {
     return this.slice([...this.sessions.values()].filter(s => s.parentID === id), cursor);
   }
-  async messages(id: string, cursor?: string) { return this.slice(this.history.get(id) ?? [], cursor); }
+  async messages(id: string, cursor?: string, _signal?: AbortSignal) { return this.slice(this.history.get(id) ?? [], cursor); }
   async model() { return { label: this.label, catalog: new Map([
     [modelKey({ providerID: "test", id: "model" }), this.prices],
     [modelKey({ providerID: "test", id: "expensive" }), [{ input: 10, output: 0, cache: { read: 0, write: 0 } }]],

@@ -83,3 +83,56 @@ test("monitor captures every tree while summaries remain scoped to explicit sess
   assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 4, tpsEstimated: true, ttft: 250 });
   tracker.dispose();
 });
+
+for (const order of ["snapshot first", "end first"] as const) {
+  test(`TTFT expires after ${order} without losing the live sample`, () => {
+    let now = 10_000;
+    const tracker = new PerformanceMonitor(undefined, 100, () => now);
+    const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 1_800 },
+      tokens: { output: 8 }, content: [{ type: "text", text: "answer" }] }];
+    tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
+    tracker.handle(event("session.text.delta", "delta", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "answer" }));
+    tracker.handle(event("session.step.streamed", "streamed", 1_800, { assistantMessageID: "live", sessionID: "root" }));
+    assert.equal(tracker.summary([], ["root"]).ttft, 200);
+    if (order === "snapshot first") tracker.reconcile(history, ["root"]);
+    tracker.handle(event("session.step.ended", "end", 1_900, { assistantMessageID: "live", sessionID: "root" }));
+    if (order === "end first") tracker.reconcile(history, ["root"]);
+    assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, ttft: 200 });
+    now += 101;
+    tracker.handle({ type: "noop", data: {} });
+    assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10 });
+    tracker.dispose();
+  });
+}
+
+test("a represented stream without an end event also expires", () => {
+  let now = 10_000;
+  const tracker = new PerformanceMonitor(undefined, 100, () => now);
+  tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
+  tracker.handle(event("session.text.delta", "delta", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "abcd" }));
+  tracker.handle(event("session.step.streamed", "streamed", 1_800, { assistantMessageID: "live", sessionID: "root" }));
+  const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 1_800 }, tokens: { output: 8 } }];
+  tracker.reconcile(history, ["root"]);
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, ttft: 200 });
+  now += 101;
+  tracker.handle({ type: "noop", data: {} });
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10 });
+  tracker.dispose();
+});
+
+test("a delta after an early snapshot restores live TPS and retains TTFT", () => {
+  let now = 10_000;
+  const tracker = new PerformanceMonitor(undefined, 100, () => now);
+  tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
+  tracker.handle(event("session.text.delta", "first", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "abcd" }));
+  const early: UsageMessage[] = [{ id: "live", type: "assistant", tokens: { output: 1 } }];
+  tracker.reconcile(early, ["root"]);
+  assert.deepEqual(tracker.summary(early, ["root"]), { ttft: 200 });
+  now += 50;
+  tracker.handle(event("session.text.delta", "second", 1_400, { assistantMessageID: "live", sessionID: "root", delta: "efgh" }));
+  assert.deepEqual(tracker.summary(early, ["root"]), { tps: 5, tpsEstimated: true, ttft: 200 });
+  now += 60;
+  tracker.handle({ type: "noop", data: {} });
+  assert.equal(tracker.summary(early, ["root"]).ttft, 200, "the early fallback expiry was cancelled");
+  tracker.dispose();
+});

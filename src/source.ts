@@ -5,7 +5,7 @@ import type { ContextSources } from "./context-sources.js";
 import { modelKey } from "./usage.js";
 import type { PriceCatalog, UsageMessage } from "./usage.js";
 
-export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location" | "title">;
+export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location" | "title" | "revert">;
 export interface Page<T> { data: T[]; cursor: { next?: string | null; previous?: string | null } }
 /** Active model of the viewed session plus the location's current resolved price catalog. */
 export interface ActiveModel {
@@ -74,7 +74,11 @@ export interface Snapshot {
   model: ActiveModel;
 }
 
-export async function loadSnapshot(source: UsageSource, sessionID: string, signal: AbortSignal): Promise<Snapshot> {
+/** A changed set permits reuse of unchanged histories. Omitting it forces a full read. */
+export async function loadSnapshot(
+  source: UsageSource, sessionID: string, signal: AbortSignal,
+  previous?: Snapshot, changed?: ReadonlySet<string>,
+): Promise<Snapshot> {
   const viewed = await source.session(sessionID, signal);
   let root = viewed;
   const ancestors = new Set<string>();
@@ -86,24 +90,38 @@ export async function loadSnapshot(source: UsageSource, sessionID: string, signa
   }
   const sessions = new Map<string, Session>([[root.id, root]]);
   const messages = new Map<string, Map<string, UsageMessage>>();
-  // Breadth-first discovery includes unopened descendants, with bounded parallelism.
-  const queue = [root];
-  for (let index = 0; index < queue.length; index++) {
-    const session = queue[index]!;
-    const [children, history] = await Promise.all([
-      pages(cursor => source.children(session.id, cursor, signal), signal),
-      pages(cursor => source.messages(session.id, cursor, signal), signal),
-    ]);
-    messages.set(session.id, new Map(history.map(message => [message.id, message])));
-    for (const child of children) {
-      if (child.parentID !== session.id) throw new Error("Unexpected child session");
-      if (!sessions.has(child.id)) {
-        sessions.set(child.id, child);
-        queue.push(child);
+  const cache = previous?.rootID === root.id && previous.viewedID === viewed.id && changed
+    ? previous.messages : undefined;
+  // Traverse every branch so additions and removals replace the tree atomically. Each
+  // wave reads at most four sessions concurrently; pagination within one stays ordered.
+  let frontier = [root];
+  while (frontier.length) {
+    const next: Session[] = [];
+    for (let offset = 0; offset < frontier.length; offset += 4) {
+      signal.throwIfAborted();
+      const batch = frontier.slice(offset, offset + 4);
+      const results = await Promise.all(batch.map(async session => {
+        const reused = !changed?.has(session.id) ? cache?.get(session.id) : undefined;
+        const children = await pages(cursor => source.children(session.id, cursor, signal), signal);
+        const history = reused ?? new Map((await pages(cursor => source.messages(session.id, cursor, signal), signal))
+          .map(message => [message.id, message]));
+        return { session, children, history };
+      }));
+      for (const { session, children, history } of results) {
+        messages.set(session.id, history);
+        for (const child of children) {
+          if (child.parentID !== session.id) throw new Error("Unexpected child session");
+          if (!sessions.has(child.id)) {
+            sessions.set(child.id, child);
+            next.push(child);
+          }
+        }
       }
     }
+    frontier = next;
   }
   if (!sessions.has(viewed.id)) throw new Error("Session tree changed during refresh");
+  sessions.set(viewed.id, viewed);
   const model = await source.model(viewed, signal);
   signal.throwIfAborted();
   return { rootID: root.id, viewedID: viewed.id, sessions, messages, model };

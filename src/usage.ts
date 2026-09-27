@@ -178,14 +178,23 @@ const usableLimit = (value: number | undefined): value is number => value !== un
 // the last completed compaction carries the current context size. Running or failed
 // compactions do not reset it, and a last message without usage hides the row entirely
 // instead of falling back to pre-compaction history.
-export function contextDetails(messages: readonly UsageMessage[], limit?: number): ContextDetails | undefined {
+export function contextDetails(
+  messages: readonly UsageMessage[], limit?: number, revertMessageID?: string,
+): ContextDetails | undefined {
   if (!usableLimit(limit)) return undefined;
+  // The staged revert excludes its boundary message and every later message.
+  // Session.message.list is ascending; an absent marker can occur during a
+  // concurrent commit, in which case the ordered ID still gives the cutoff.
+  const found = revertMessageID ? messages.findIndex(message => message.id === revertMessageID) : -1;
+  const next = revertMessageID && found < 0 ? messages.findIndex(message => message.id > revertMessageID) : -1;
+  const end = !revertMessageID ? messages.length : found >= 0 ? found
+    : next >= 0 ? next : messages.length;
   let boundary = -1;
-  for (let index = messages.length - 1; index >= 0; index--) {
+  for (let index = end - 1; index >= 0; index--) {
     const message = messages[index]!;
     if (message.type === "compaction" && message.status === "completed") { boundary = index; break; }
   }
-  for (let index = messages.length - 1; index > boundary; index--) {
+  for (let index = end - 1; index > boundary; index--) {
     const message = messages[index]!;
     if (message.type !== "assistant" || !message.tokens) continue;
     const tokens = normalize(message.tokens);
@@ -195,8 +204,8 @@ export function contextDetails(messages: readonly UsageMessage[], limit?: number
   return undefined;
 }
 
-export function contextUsage(messages: readonly UsageMessage[], limit?: number): ContextUsage | undefined {
-  return contextDetails(messages, limit)?.usage;
+export function contextUsage(messages: readonly UsageMessage[], limit?: number, revertMessageID?: string): ContextUsage | undefined {
+  return contextDetails(messages, limit, revertMessageID)?.usage;
 }
 
 export function formatTokens(value: number): string {

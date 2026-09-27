@@ -344,6 +344,27 @@ test("context uses the last assistant with tokens after the last completed compa
   for (const status of ["running", "failed"]) assert.equal(contextUsage([assistant("a", 100), compact(status)], limit)?.used, 100);
 });
 
+test("revert bounds current context across regeneration and completed compaction", () => {
+  const history: UsageMessage[] = [
+    { id: "a", type: "assistant", tokens: { input: 100 } },
+    { id: "b", type: "user" },
+    { id: "c", type: "assistant", tokens: { input: 200 } },
+    { id: "d", type: "compaction", status: "completed", tokens: { input: 900 } },
+    { id: "e", type: "assistant", tokens: { input: 300 } },
+    { id: "f", type: "user" },
+    { id: "g", type: "assistant", tokens: { input: 400 } },
+  ];
+  assert.equal(contextUsage(history, 1_000)?.used, 400);
+  assert.equal(contextUsage(history, 1_000, "f")?.used, 300);
+  assert.equal(contextUsage(history, 1_000, "e"), undefined, "the last completed compaction is still in scope");
+  assert.equal(contextUsage(history, 1_000, "d")?.used, 200, "a reverted compaction is out of scope");
+  assert.equal(contextUsage(history, 1_000, "b")?.used, 100);
+  const regenerated = [...history.slice(0, 5), { id: "h", type: "assistant", tokens: { input: 350 } }];
+  assert.equal(contextUsage(regenerated, 1_000)?.used, 350);
+  assert.equal(summarize(history.map(value => priced(value))).total, 1_900,
+    "staging a revert does not remove historical costs from the tree");
+});
+
 test("context composition uses the viewed call's five categories, not the tree or pre-compaction history", () => {
   const history: UsageMessage[] = [
     { id: "old", type: "assistant", tokens: { input: 900 } },
