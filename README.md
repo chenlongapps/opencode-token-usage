@@ -42,7 +42,7 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 
 ### Detailed usage
 
-Enter `/usage` in a session to open a native dialog with the session tree's token totals and estimated cost by recorded model. Scroll with ↑/↓, Page Up/Down, Home/End, press `d` to switch between compact and detailed numbers, and close with Escape. The command does not send a prompt to the model.
+Enter `/usage` in a session to open a native dialog with the session tree's token totals and estimated cost by recorded model. Scroll with ↑/↓, Page Up/Down, Home/End, press `d` to switch between compact and detailed numbers and reveal model rates, and close with Escape. The command does not send a prompt to the model.
 
 The subagent picker keeps the summary in the form `Token Usage · Context … · Total … · Cost … · TPS …`. Missing values remain unavailable rather than becoming zero, and the line does not advertise a keyboard shortcut. Clicking it opens a smaller dialog with the sidebar's exact rows (including Steps, TPS and TTFT) without reserving space for the full panel while closed.
 
@@ -54,11 +54,11 @@ The dialog is split into five sections with separate statistics:
 | Last Request | The five token categories and cache rate of the viewed session's most recent reported call |
 | Context Breakdown | Estimated prompt composition, largest first, with bars |
 | Session | Tree totals: steps, calls, tokens, cache rate, cost (single line, or per-category rows in detailed mode) |
-| By Model | Tokens, calls and cost per recorded model, highest cost first |
+| By Model | Tokens, calls and cost per recorded model, highest cost first; detailed mode shows the rates used for each model's cost estimate |
 
 One line under the title names the session and its active model, and the body never repeats the model name. Compact mode uses `K`/`M` abbreviations (`812`, `139.4K`, `3.70M`), hides empty rows and merges the two tool families in Context Breakdown into a single `Tools` row. Detailed mode shows exact numbers, empty rows, and the `System Tools` / `MCP Tools` split. The sidebar keeps exact numbers and its own layout.
 
-Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. Context sections are unavailable until the viewed session has reported usage and a known context limit.
+Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. In detailed mode, By Model shows the applied Input, Output, Reasoning, Cache Read and Cache Write rates in USD per million text tokens. Each rate group names its source (OpenCode or the built-in snapshot), incoming-token tier and call count; a model can have multiple groups. `Incoming` means Input + Cache Read + Cache Write. Missing rates show `—`, confirmed free rates show `$0.00`, and unpriced calls are counted separately. These are the current rates used to estimate recorded calls, not historical provider bills. Context sections are unavailable until the viewed session has reported usage and a known context limit.
 
 **Context Breakdown** separates Messages, System Tools, System Prompt, Skills, MCP Tools, and Other. It estimates the text and tool definitions in the viewed session's **latest assembled model request**; its percentages use the sum of those estimates. These are not provider-reported token counts and do not add up to the measured context window, which also includes output and reasoning. Media and provider-specific framing cannot be measured from the request. A server plugin records only aggregate estimates (not prompt text); sessions without a captured request or an available server RPC show “Source estimates unavailable”.
 

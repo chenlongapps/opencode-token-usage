@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bar, contextDetails, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatTokens, modelKey, normalize, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
+import { bar, contextDetails, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatRate, formatRateTier, formatTokens, modelKey, normalize, rateRows, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
 import type { Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
@@ -217,6 +217,70 @@ test("model cost rows reconcile with tree cost across runtime, official, free an
   assert.deepEqual(summarizeModels([]), []);
 });
 
+test("model rate groups reflect the source and context tier actually used by each call", () => {
+  const model = { providerID: "gateway", id: "gpt-5.6-luna" };
+  const runtime = new Map([[modelKey(model), [
+    { input: 3, output: 6 },
+    { tier: { type: "context" as const, size: 100 }, input: 5, output: 10 },
+  ]]]);
+  const messages: UsageMessage[] = [
+    { id: "base", type: "assistant", model, tokens: { input: 100, output: 10 } },
+    { id: "tier", type: "assistant", model, tokens: { input: 101, output: 10 } },
+    { id: "reasoning", type: "compaction", model, tokens: { input: 50, reasoning: 5 } },
+    { id: "cache-read", type: "assistant", model, tokens: { input: 50, cache: { read: 10 } } },
+    { id: "cache-write", type: "assistant", model, tokens: { input: 50, cache: { write: 10 } } },
+  ];
+  const group = summarizeModels(messages, runtime)[0]!;
+  const tree = summarize(messages, runtime);
+  assert.equal(group.cost, tree.cost);
+  assert.equal(group.costStatus, "complete");
+  assert.equal(group.unpricedCalls, 0);
+  assert.equal(group.appliedRates.length, 3);
+  const base = group.appliedRates.find(rate => rate.source === "OpenCode" && rate.lowerExclusive === undefined)!;
+  const tier = group.appliedRates.find(rate => rate.source === "OpenCode" && rate.lowerExclusive === 100)!;
+  const fallback = group.appliedRates.find(rate => rate.source === "Built-in snapshot")!;
+  assert.equal(base.calls, 2);
+  assert.equal(tier.calls, 1);
+  assert.equal(fallback.calls, 2);
+  assert.equal(formatRateTier(base), "≤100 incoming");
+  assert.equal(formatRateTier(tier), ">100 incoming");
+  assert.equal(formatRateTier(fallback), "≤272,000 incoming");
+  assert.deepEqual(rateRows(base), [
+    ["Input", "$3.00"], ["Output", "$6.00"], ["Reasoning", "$6.00"],
+    ["Cache Read", "—"], ["Cache Write", "—"],
+  ]);
+  assert.deepEqual(rateRows(fallback), [
+    ["Input", "$0.20"], ["Output", "$1.20"], ["Reasoning", "$1.20"],
+    ["Cache Read", "$0.02"], ["Cache Write", "$0.25"],
+  ]);
+});
+
+test("rate details keep free, unavailable, and partial calls distinct", () => {
+  const model = { providerID: "test", id: "free-input" };
+  const messages: UsageMessage[] = [
+    { id: "free", type: "assistant", model, tokens: { input: 10 } },
+    { id: "missing", type: "assistant", model, tokens: { output: 10 } },
+    { id: "unknown", type: "assistant", tokens: { input: 10 } },
+  ];
+  const groups = summarizeModels(messages, new Map([[modelKey(model), [{ input: 0, cache: { read: 0 } }]]]));
+  assert.equal(groups[0]?.model, "test/free-input");
+  assert.equal(groups[0]?.costStatus, "partial");
+  assert.equal(groups[0]?.unpricedCalls, 1);
+  assert.equal(groups[0]?.appliedRates[0]?.source, "OpenCode");
+  assert.deepEqual(rateRows(groups[0]!.appliedRates[0]!), [
+    ["Input", "$0.00"], ["Output", "—"], ["Reasoning", "—"],
+    ["Cache Read", "$0.00"], ["Cache Write", "—"],
+  ]);
+  assert.equal(groups[1]?.model, "Unknown model");
+  assert.equal(groups[1]?.unpricedCalls, 1);
+  assert.deepEqual(groups[1]?.appliedRates, []);
+  assert.equal(formatRate(0.006), "$0.006");
+  assert.equal(formatRate(1e-14), "$1.00e-14");
+  assert.equal(formatRate(undefined), "—");
+  assert.equal(formatRateTier({ lowerExclusive: 100, upperInclusive: 200 }), ">100 to ≤200 incoming");
+  assert.equal(formatRateTier({ lowerExclusive: undefined, upperInclusive: undefined }), "all incoming sizes");
+});
+
 test("incomplete OpenCode prices fall back as a whole and complete zero prices use the snapshot", () => {
   const officialModel = { providerID: "gateway", id: "gpt-5.6-luna" };
   const usage: UsageMessage = { id: "fallback", type: "compaction", model: officialModel, tokens: { input: 1_000_000, output: 1_000_000 } };
@@ -233,6 +297,7 @@ test("a complete OpenCode zero yields to a complete snapshot price only", () => 
   const freeRuntime = new Map([[modelKey(model), [{ input: 0 }]]]);
   assert.equal(summarize([usage], freeRuntime).cost, 0.4);
   assert.equal(summarize([usage], freeRuntime).costStatus, "complete");
+  assert.equal(summarizeModels([usage], freeRuntime)[0]?.appliedRates[0]?.source, "Built-in snapshot");
 
   const paidRuntime = new Map([[modelKey(model), [{ input: 3 }]]]);
   assert.equal(summarize([usage], paidRuntime).cost, 3);
@@ -244,6 +309,7 @@ test("a complete OpenCode zero yields to a complete snapshot price only", () => 
   const freeCacheWrite = new Map([[modelKey(cacheModel), [{ cache: { write: 0 } }]]]);
   assert.equal(summarize([cacheUsage], freeCacheWrite).cost, 0);
   assert.equal(summarize([cacheUsage], freeCacheWrite).costStatus, "complete");
+  assert.equal(summarizeModels([cacheUsage], freeCacheWrite)[0]?.appliedRates[0]?.source, "OpenCode");
 });
 
 test("runtime zero prices for OpenCode Zen free models display as zero", () => {
@@ -284,6 +350,10 @@ test("first-party fallback keeps distinct reasoning and unknown cache-write bill
   }]);
   assert.equal(priced.cost, 5.6);
   assert.equal(priced.costStatus, "complete");
+  assert.equal(summarizeModels([{
+    id: "reasoned", type: "assistant", model: qwen,
+    tokens: { input: 1_000_000, output: 1_000_000, reasoning: 1_000_000 },
+  }])[0]?.appliedRates[0]?.rates.reasoning, 4);
 
   const unknownWrite = summarize([{
     id: "write", type: "assistant", model: { providerID: "alibaba", id: "qwen3.7-plus" },

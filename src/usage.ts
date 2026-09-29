@@ -64,10 +64,14 @@ export const incoming = (t: Tokens) => t.input + t.cache.read + t.cache.write;
 export const total = (t: Tokens) => incoming(t) + t.output + t.reasoning;
 
 // Matches OpenCode 2.0.11 SessionUsage.calculateCost: thresholds are exclusive.
-export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
+function selectedPrice(tokens: Tokens, prices: readonly Price[]): Price | undefined {
   const tier = prices.filter(p => p.tier && incoming(tokens) > p.tier.size)
     .sort((a, b) => b.tier!.size - a.tier!.size)[0];
-  const price = tier ?? prices.find(p => !p.tier);
+  return tier ?? prices.find(p => !p.tier);
+}
+
+export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
+  const price = selectedPrice(tokens, prices);
   const rates = [price?.input, price?.output, price?.reasoning ?? price?.output, price?.cache?.read, price?.cache?.write];
   const quantities = [tokens.input, tokens.output, tokens.reasoning, tokens.cache.read, tokens.cache.write];
   return {
@@ -79,14 +83,68 @@ export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
 
 export type CostStatus = "empty" | "complete" | "partial" | "unavailable";
 
-function priceMessage(tokens: Tokens, model: ModelRef | undefined, catalog: PriceCatalog): number | undefined {
+export type PriceSource = "OpenCode" | "Built-in snapshot";
+
+export interface AppliedRates {
+  source: PriceSource;
+  lowerExclusive: number | undefined;
+  upperInclusive: number | undefined;
+  calls: number;
+  rates: {
+    input: number | undefined;
+    output: number | undefined;
+    reasoning: number | undefined;
+    cacheRead: number | undefined;
+    cacheWrite: number | undefined;
+  };
+}
+
+interface PricedMessage {
+  cost: number;
+  source: PriceSource;
+  price: Price;
+  prices: readonly Price[];
+}
+
+function priceMessage(tokens: Tokens, model: ModelRef | undefined, catalog: PriceCatalog): PricedMessage | undefined {
   if (!model) return undefined;
-  let value = estimate(tokens, catalog.get(modelKey(model)));
+  let prices = catalog.get(modelKey(model)) ?? [];
+  let source: PriceSource = "OpenCode";
+  let value = estimate(tokens, prices);
   if (value.defaultPrice || value.cost === 0) {
-    const snapshot = estimate(tokens, officialPrice(model)?.prices);
-    if (!snapshot.defaultPrice) value = snapshot;
+    const fallback = officialPrice(model)?.prices ?? [];
+    const snapshot = estimate(tokens, fallback);
+    if (!snapshot.defaultPrice) {
+      value = snapshot;
+      prices = fallback;
+      source = "Built-in snapshot";
+    }
   }
-  return value.defaultPrice ? undefined : value.cost;
+  const price = selectedPrice(tokens, prices);
+  return value.defaultPrice || !price ? undefined : { cost: value.cost, source, price, prices };
+}
+
+const validRate = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined;
+
+function appliedRates(value: PricedMessage): AppliedRates {
+  const lowerExclusive = value.price.tier?.size;
+  const next = value.prices.reduce((size, price) => {
+    const threshold = price.tier?.size;
+    return threshold !== undefined && threshold > (lowerExclusive ?? -Infinity) && threshold < size ? threshold : size;
+  }, Infinity);
+  return {
+    source: value.source,
+    lowerExclusive,
+    upperInclusive: Number.isFinite(next) ? next : undefined,
+    calls: 1,
+    rates: {
+      input: validRate(value.price.input),
+      output: validRate(value.price.output),
+      reasoning: validRate(value.price.reasoning ?? value.price.output),
+      cacheRead: validRate(value.price.cache?.read),
+      cacheWrite: validRate(value.price.cache?.write),
+    },
+  };
 }
 
 function costStatus(known: number, missing: number): CostStatus {
@@ -120,7 +178,7 @@ export function summarize(messages: Iterable<UsageMessage>, catalog: PriceCatalo
     calls++;
     const value = priceMessage(t, message.model, catalog);
     if (value === undefined) missingCosts++;
-    else { cost += value; knownCosts++; }
+    else { cost += value.cost; knownCosts++; }
   }
   return {
     tokens, total: total(tokens), cacheRate: incoming(tokens) ? tokens.cache.read / incoming(tokens) : 0,
@@ -136,28 +194,43 @@ export interface ModelCost {
   tokens: number;
   cost: number;
   costStatus: CostStatus;
+  appliedRates: readonly AppliedRates[];
+  unpricedCalls: number;
 }
 
 /** Groups the same per-message estimates used by the tree total; unlabelled calls stay visible. */
 export function summarizeModels(messages: Iterable<UsageMessage>, catalog: PriceCatalog = new Map()): ModelCost[] {
-  const groups = new Map<string | undefined, { calls: number; tokens: number; cost: number; known: number; missing: number }>();
+  const groups = new Map<string | undefined, { calls: number; tokens: number; cost: number; known: number; missing: number; rates: Map<string, AppliedRates> }>();
   for (const message of messages) {
     if (message.type !== "assistant" && message.type !== "compaction") continue;
     const tokens = normalize(message.tokens);
     const count = total(tokens);
     if (count === 0) continue;
     const key = message.model && modelKey(message.model);
-    const group = groups.get(key) ?? { calls: 0, tokens: 0, cost: 0, known: 0, missing: 0 };
+    const group = groups.get(key) ?? { calls: 0, tokens: 0, cost: 0, known: 0, missing: 0, rates: new Map<string, AppliedRates>() };
     group.calls++;
     group.tokens += count;
     const value = priceMessage(tokens, message.model, catalog);
     if (value === undefined) group.missing++;
-    else { group.cost += value; group.known++; }
+    else {
+      group.cost += value.cost;
+      group.known++;
+      const applied = appliedRates(value);
+      const rateKey = JSON.stringify([applied.source, applied.lowerExclusive, applied.upperInclusive, ...Object.values(applied.rates)]);
+      const existing = group.rates.get(rateKey);
+      if (existing) existing.calls++;
+      else group.rates.set(rateKey, applied);
+    }
     groups.set(key, group);
   }
   return [...groups].map(([model, group]) => ({
     model: model ?? "Unknown model", calls: group.calls, tokens: group.tokens,
     cost: group.cost, costStatus: costStatus(group.known, group.missing),
+    appliedRates: [...group.rates.values()].sort((a, b) => {
+      const lowerA = a.lowerExclusive ?? -Infinity, lowerB = b.lowerExclusive ?? -Infinity;
+      return lowerA === lowerB ? a.source.localeCompare(b.source) : lowerA - lowerB;
+    }),
+    unpricedCalls: group.missing,
   })).sort((a, b) => b.cost - a.cost || a.model.localeCompare(b.model));
 }
 
@@ -218,6 +291,31 @@ export function formatEstimatedCost(cost: number, status: CostStatus): string | 
   if (status === "empty") return undefined;
   if (status === "unavailable") return "—";
   return `${formatCost(cost)}${status === "partial" ? " · partial" : ""}`;
+}
+
+/** Per-million rates need more precision than a rounded total cost. */
+export function formatRate(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return "—";
+  if (value === 0) return "$0.00";
+  const decimal = value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 12 });
+  return `$${decimal === "0.00" ? value.toExponential(2) : decimal}`;
+}
+
+export function formatRateTier(value: Pick<AppliedRates, "lowerExclusive" | "upperInclusive">): string {
+  const lower = value.lowerExclusive, upper = value.upperInclusive;
+  if (lower === undefined && upper === undefined) return "all incoming sizes";
+  if (lower === undefined) return `≤${formatTokens(upper!)} incoming`;
+  if (upper === undefined) return `>${formatTokens(lower)} incoming`;
+  return `>${formatTokens(lower)} to ≤${formatTokens(upper)} incoming`;
+}
+
+export function rateRows(value: AppliedRates): readonly (readonly [string, string])[] {
+  const rates = value.rates;
+  return [
+    ["Input", formatRate(rates.input)], ["Output", formatRate(rates.output)],
+    ["Reasoning", formatRate(rates.reasoning)], ["Cache Read", formatRate(rates.cacheRead)],
+    ["Cache Write", formatRate(rates.cacheWrite)],
+  ];
 }
 
 /** Compact display for scan-first views: 812, 139.4K, 3.70M. Detailed views keep formatTokens. */

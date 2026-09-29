@@ -283,6 +283,14 @@ try {
   tui.send("\x1b[F"); // End scrolls to the model breakdown.
   await wait(() => /By Model/.test(tui.screen()) && /usage-test\/small/.test(tui.screen()), "model cost in dialog");
   assert.match(tui.screen(), /Token Usage Smoke · usage-test\/small/, "identity line carries session and model");
+  tui.send("d");
+  await wait(() => /Rates used for Est\. Cost/.test(tui.screen()), "model rate details rendered");
+  tui.send("\x1b[F");
+  await wait(() => /OpenCode · all incoming sizes · 1 call/.test(tui.screen())
+    && /Input\s+\$2\.00/.test(tui.screen()) && /Cache Write\s+\$3\.00/.test(tui.screen()), "applied model rates in detailed mode");
+  tui.send("d");
+  tui.send("\x1b[F");
+  await wait(() => /By Model/.test(tui.screen()) && !/OpenCode · all incoming sizes/.test(tui.screen()), "compact mode hides model rates");
   await tui.save("06-usage-dialog-root");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()) && /Context\s+1,270 \/ 128,000/.test(tui.screen()), "close usage dialog");
@@ -296,10 +304,31 @@ try {
   await wait(() => /Used \/ Limit/.test(narrowTui.screen()), "narrow usage dialog");
   narrowTui.send("\x1b[F");
   await wait(() => /usage-test\/small\s+<\$0\.01/.test(narrowTui.screen()), "scroll narrow usage to model cost");
+  narrowTui.send("d");
+  await wait(() => /Calls\s+1\b/.test(narrowTui.screen()), "narrow detailed mode rendered");
+  narrowTui.send("\x1b[F");
+  await wait(() => /OpenCode · all incoming sizes · 1 call/.test(narrowTui.screen())
+    && /Cache Write\s+\$3\.00/.test(narrowTui.screen()), "narrow detailed model rates");
   await narrowTui.save("06-narrow-usage-dialog");
   narrowTui.send("\x1b");
   await wait(() => !/By Model/.test(narrowTui.screen()), "close narrow usage dialog");
-  console.log("PASS: narrow terminal scrolls to the model cost and closes the usage dialog");
+  const slimTui = openTui(root.id, { cols: 48, rows: 28 });
+  await wait(() => /SMOKE_OK/.test(slimTui.screen()), "slim TUI session");
+  slimTui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  slimTui.send("\r");
+  await wait(() => /Context Window/.test(slimTui.screen()), "slim usage dialog");
+  slimTui.send("d");
+  await wait(() => /Input\s+100\b/.test(slimTui.screen()), "slim detailed mode rendered");
+  slimTui.send("\x1b[F");
+  await wait(() => /OpenCode/.test(slimTui.screen()) && /Cache Write\s+\$3\.00/.test(slimTui.screen()), "slim single-column model rates");
+  const slimScreen = slimTui.screen();
+  assert.ok(lineNumber(slimScreen, /Input\s+\$2\.00/) >= 0 && lineNumber(slimScreen, /Output\s+\$8\.00/) >= 0);
+  assert.notEqual(lineNumber(slimScreen, /Input\s+\$2\.00/), lineNumber(slimScreen, /Output\s+\$8\.00/), "slim terminal stacks rates");
+  await slimTui.save("06-slim-usage-dialog");
+  slimTui.send("\x1b");
+  await wait(() => !/By Model/.test(slimTui.screen()), "close slim usage dialog");
+  console.log("PASS: narrow and slim terminals scroll to model rates, with single-column rates when needed");
   await client.session.prompt({ sessionID: root.id, text: "SPAWN_SMOKE_CHILD" });
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
   const child = (await client.session.list({ parentID: root.id })).data[0];
@@ -368,6 +397,16 @@ try {
   assert.equal(officialSummary.costStatus, "complete");
   const officialTui = openTui(officialTarget.id);
   await wait(() => /Est\. Cost\s+<\$0\.01/.test(officialTui.screen()), "official fallback cost in sidebar");
+  officialTui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  officialTui.send("\r");
+  await wait(() => /By Model/.test(officialTui.screen()), "official fallback usage dialog");
+  officialTui.send("d");
+  await wait(() => /Calls/.test(officialTui.screen()), "official fallback detailed mode");
+  officialTui.send("\x1b[F");
+  await wait(() => /Built-in snapshot · ≤272,000 incoming · 1 call/.test(officialTui.screen())
+    && /Input\s+\$0\.20/.test(officialTui.screen()), "fallback rate source in detailed mode");
+  officialTui.send("\x1b");
   await officialTui.save("09-official-price-fallback");
   console.log("PASS: a model with no OpenCode price uses the packaged manufacturer price");
   const cleanupTarget = await client.session.create({ location: { directory: project }, title: "Context Cleanup Smoke" });

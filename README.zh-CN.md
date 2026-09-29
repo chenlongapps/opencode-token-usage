@@ -42,7 +42,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 
 ### 详细用量
 
-在会话中输入 `/usage`，可打开原生弹窗查看当前会话树的 token 总量，以及按消息实际模型汇总的估算费用。使用 ↑/↓、Page Up/Down、Home/End 滚动，按 `d` 切换紧凑／详细数字，Escape 关闭。该命令不会向模型发送消息。
+在会话中输入 `/usage`，可打开原生弹窗查看当前会话树的 token 总量，以及按消息实际模型汇总的估算费用。使用 ↑/↓、Page Up/Down、Home/End 滚动，按 `d` 切换紧凑／详细数字并查看模型费率，Escape 关闭。该命令不会向模型发送消息。
 
 子代理视图中的摘要格式为 `Token Usage · Context … · Total … · Cost … · TPS …`。缺失数据仍显示不可用，不会被当作零，摘要也不提示快捷键。点击后打开较小的弹窗，按侧边栏原有行序展示精确数值（包括 Steps、TPS 和 TTFT）；关闭时不会为完整面板预留高度。
 
@@ -54,11 +54,11 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | Last Request | 被查看会话最近一次已上报调用的五类 token 与缓存命中率 |
 | Context Breakdown | 提示词构成估算，按占比降序排列并带条形图 |
 | Session | 全树汇总：steps、calls、tokens、缓存率与费用（紧凑模式为单行，详细模式逐类展开） |
-| By Model | 各模型的 tokens、calls 与费用，按费用降序 |
+| By Model | 各模型的 tokens、calls 与费用，按费用降序；详细模式显示用于估算各模型费用的费率 |
 
 标题下方一行注明会话与当前活动模型，正文不再重复模型名。紧凑模式使用 `K`/`M` 缩写（`812`、`139.4K`、`3.70M`），隐藏零值行，并把 Context Breakdown 中的两类工具合并为一行 `Tools`；详细模式显示精确数字、零值行及 `System Tools` / `MCP Tools` 拆分。侧边栏仍使用精确数字和原有布局。
 
-费用沿用侧边栏的价格及 `partial`、不可定价、免费口径。当前会话尚未上报用量或上下文上限未知时，上下文相关区域显示不可用。
+费用沿用侧边栏的价格及 `partial`、不可定价、免费口径。详细模式下，By Model 显示 Input、Output、Reasoning、Cache Read、Cache Write 的美元／百万文本 token 费率。每组费率注明来源（OpenCode 或内置快照）、传入 token 档位和调用数；同一模型可能有多组。传入 token 为 Input + Cache Read + Cache Write。缺失费率显示 `—`，确认免费显示 `$0.00`，无法定价的调用单独计数。这些是当前用于估算已记录调用的费率，不是历史提供商账单。当前会话尚未上报用量或上下文上限未知时，上下文相关区域显示不可用。
 
 弹窗中的 **Context Breakdown** 将消息、系统工具、系统提示词、技能、MCP 工具及其他分开展示。它根据被查看会话**最近一次已组装的模型请求**中的文本和工具定义估算，占比的分母是六项估算值之和；这些不是提供商上报的精确 token，也不会与上方含输出、推理的实测上下文窗口相加一致。媒体内容与提供商额外包装无法准确计量。服务端插件仅保存分类数值，不保存提示词正文；未捕获到请求或服务端 RPC 不可用时显示“来源估算不可用”。
 

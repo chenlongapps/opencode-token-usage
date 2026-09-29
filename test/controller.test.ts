@@ -134,6 +134,8 @@ test("detailed view shares tree totals with the sidebar and retains a complete r
   assert.equal(state.summary?.total, 40);
   assert.equal(state.details?.models[0]?.tokens, 40);
   assert.equal(state.details?.models[0]?.cost, state.summary?.cost);
+  assert.equal(state.details?.models[0]?.appliedRates[0]?.source, "OpenCode");
+  assert.equal(state.details?.models[0]?.appliedRates[0]?.calls, 2);
   assert.equal(state.details?.context?.usage.used, 30);
   assert.equal(state.context?.used, 30);
 
@@ -141,6 +143,7 @@ test("detailed view shares tree totals with the sidebar and retains a complete r
   events.emit("session.step.ended", "child");
   await until(() => state.status === "stale");
   assert.equal(state.details?.models[0]?.tokens, 40);
+  assert.equal(state.details?.models[0]?.appliedRates[0]?.calls, 2);
   source.fail = false;
   source.history.set("child", [message("child-a", 50)]);
   await until(() => state.status === "ready" && state.summary?.total === 60);

@@ -7,7 +7,7 @@ import type { UsageState } from "./controller.js";
 import { PerformanceMonitor } from "./performance.js";
 import { breakdownRows } from "./context-sources.js";
 import { createSource } from "./source.js";
-import { bar, countLabel, formatCompact, formatEstimatedCost, formatTokens, requestRows, summaryRows, usageRows } from "./usage.js";
+import { bar, countLabel, formatCompact, formatEstimatedCost, formatRateTier, formatTokens, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
 
 function UsageView(props: {
   context: Plugin.Context;
@@ -195,7 +195,7 @@ function UsageDialog(props: {
     const cell = ([label, value]: readonly [string, string]) => (
       <box flexDirection="row" justifyContent="space-between" gap={2}>
         <text fg={theme().muted} flexShrink={0}>{label}</text>
-        <text fg={theme().base}>{value}</text>
+        <text fg={theme().base} wrapMode="word" minWidth={0}>{value}</text>
       </box>
     );
     return pairColumns()
@@ -294,6 +294,9 @@ function UsageDialog(props: {
             </box>
             <box>
               <text fg={theme().base}><b>By Model</b></text>
+              <Show when={detailed() && models().length}>
+                <text fg={theme().muted} wrapMode="word">Rates used for Est. Cost · USD / 1M text tokens · incoming = Input + Cache Read + Cache Write</text>
+              </Show>
               <Show when={models().length} fallback={<text fg={theme().muted}>No model usage yet</text>}>
                 <For each={models()}>{(model) => (
                   <box>
@@ -302,6 +305,17 @@ function UsageDialog(props: {
                       <text fg={theme().base} flexShrink={0}>{formatEstimatedCost(model.cost, model.costStatus) ?? ""}</text>
                     </box>
                     <text fg={theme().muted}>{number(model.tokens)} tokens · {countLabel(model.calls, "call")}</text>
+                    <Show when={detailed()}>
+                      <For each={model.appliedRates}>{(rates) => (
+                        <box marginTop={1}>
+                          <text fg={theme().muted} wrapMode="word">{rates.source} · {formatRateTier(rates)} · {countLabel(rates.calls, "call")}</text>
+                          {requestRowsList(rateRows(rates))}
+                        </box>
+                      )}</For>
+                      <Show when={model.unpricedCalls > 0}>
+                        <text fg={theme().muted} wrapMode="word">Pricing unavailable for {countLabel(model.unpricedCalls, "call")}</text>
+                      </Show>
+                    </Show>
                   </box>
                 )}</For>
               </Show>

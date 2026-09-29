@@ -1,5 +1,18 @@
 # 验证记录
 
+## v0.4.3 开发验证（`/usage` 模型费率展示）
+
+验证日期：2026-09-29。Node.js v22.23.2；SDK 2.0.11；真实宿主使用隔离的 `@opencode/cli-darwin-arm64@2.0.11`，包版本仍为 0.4.2。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 69 项通过 |
+| `npm run build` | 通过 |
+| `npm run test:smoke` | 通过，打包产物 + 真实 OpenCode 2.0.11 + 本地模拟提供商 |
+
+`/usage` 的 By Model 详细模式按逐消息估算实际采用的 OpenCode／内置快照价格及上下文档位列出五类 token 费率和调用数；紧凑模式不显示费率。自动化测试覆盖同模型跨来源／档位、Reasoning 沿用 Output、零价、缺价和 `partial`，并核对逐模型与全树费用。真实宿主测试验证 160 × 54 与 100 × 28 终端的展开／收起、48 × 28 终端的单列费率，以及内置快照回退来源；未向付费模型发送请求。测试产物保存在 `/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-4RnnLf`。
+
 ## v0.4.2（正确性与刷新性能）
 
 验证日期：2026-09-26。Node.js v22.23.2；SDK 2.0.11；真实宿主使用校验 npm SHA-512 完整性的 `@opencode/cli-darwin-arm64@2.0.11` 隔离二进制。
