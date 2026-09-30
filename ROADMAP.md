@@ -113,7 +113,8 @@ Steps  1,234
 
 ### 后续评估与维护
 
-* [ ] GPT-6 Luna 实际约为 30 tok/s，但在 实时统计中仅显示 ~1.5 tok/s，而且这个数字长期不变化。初步怀疑是 Responses API 的原因。
-* [ ] TPS 的实时计算：当前为近似值，后续考虑通过更精确的算法计算。
+* [ ] 在 update-prices.yml 中自动合并 main 分支, 并在 PR 中显示新增、修改、删除的模型价格。
+* [x] 修正 reasoning 模型的实时 TPS：OpenAI Responses 等接口在流式阶段不会提供完整的隐藏 reasoning token 增量，而旧算法又将可见 delta 的近似 token 数除以包含 TTFT 和隐藏推理阶段的总耗时，导致 GPT-6 Luna 等模型实时 TPS 严重偏低且变化迟缓。现改为首个可见 delta 之后约 2 秒滑动窗口内的可观察吞吐（UTF-8 字节 / 4，EWMA α=0.35 平滑），保留 `~` 表示估算；请求完成后继续使用 provider 上报的真实 usage 计算精确 TPS。
+* [ ] TPS 的实时计算仍为近似值（`~` 标记）；后续若 OpenCode 暴露流式累计 usage 或 Provider 原始 stream usage，再考虑用真实 token delta 替代 UTF-8 估算，并评估是否拆分 `Visible TPS / Total TPS`。
 * [ ] 在定时或发布前验证中运行打包产物的真实宿主 smoke 测试；升级 OpenCode／SDK 时重新核对消息排序、分叉副本、compaction、事件与价格语义。
 * [ ] 同步仓库指南中的当前包版本与测试数量，避免 `AGENTS.md` 的状态说明落后于实际工程。

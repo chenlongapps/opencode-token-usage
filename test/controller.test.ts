@@ -249,11 +249,17 @@ test("stream deltas publish estimated TPS and TTFT without source reads, then co
   events.emit({ type: "session.step.started", id: "start", created: 1_000, data: {
     assistantMessageID: "live", sessionID: "root", started: 1_000,
   } });
-  events.emit({ type: "session.text.delta", id: "delta", created: 1_500, data: {
+  events.emit({ type: "session.text.delta", id: "delta-1", created: 1_500, data: {
+    assistantMessageID: "live", sessionID: "root", delta: "abcdefgh",
+  } });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.performance?.tpsEstimated, undefined, "one delta is not a rate yet");
+  assert.equal(state.performance?.ttft, 500);
+  events.emit({ type: "session.text.delta", id: "delta-2", created: 2_000, data: {
     assistantMessageID: "live", sessionID: "root", delta: "abcdefgh",
   } });
   await until(() => state.performance?.tpsEstimated === true);
-  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(state.performance, { tps: 8, tpsEstimated: true, ttft: 500 });
   assert.equal(source.reads, reads);
 
   source.history.set("root", [message("a"), {
@@ -285,24 +291,28 @@ test("a shared monitor restores a stream captured before switching to its sessio
   events.emit({ type: "session.text.delta", id: "other-delta-1", created: 1_500, data: {
     assistantMessageID: "other-live", sessionID: "other", delta: "abcdefgh",
   } });
+  events.emit({ type: "session.text.delta", id: "other-delta-2", created: 2_000, data: {
+    assistantMessageID: "other-live", sessionID: "other", delta: "abcdefghijklmnop",
+  } });
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(state.performance?.tpsEstimated, undefined, "another tree does not update the current panel");
 
   controller.select("other");
   await until(() => state.status === "ready" && state.summary?.total === 7);
-  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(state.performance, { tps: 12, tpsEstimated: true, ttft: 500 });
 
   controller.select("root");
   await until(() => state.status === "ready" && state.summary?.total === 10);
-  events.emit({ type: "session.text.delta", id: "other-delta-2", created: 2_000, data: {
-    assistantMessageID: "other-live", sessionID: "other", delta: "abcdefghijklmnop",
+  events.emit({ type: "session.text.delta", id: "other-delta-3", created: 2_500, data: {
+    assistantMessageID: "other-live", sessionID: "other", delta: "abcdefgh",
   } });
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(state.performance?.tpsEstimated, undefined);
 
   controller.select("other");
   await until(() => state.status === "ready" && state.summary?.total === 7);
-  assert.deepEqual(state.performance, { tps: 6, tpsEstimated: true, ttft: 500 });
+  // Window now holds 8 + 16 + 8 bytes over 1 s => 8 tok/s raw, eased from 12.
+  assert.deepEqual(state.performance, { tps: 12 * 0.65 + 8 * 0.35, tpsEstimated: true, ttft: 500 });
 });
 
 test("a rebuilt controller recovers shared stream state and a new child joins the current tree immediately", async t => {
@@ -315,7 +325,10 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   events.emit({ type: "session.step.started", id: "root-start", created: 1_000, data: {
     assistantMessageID: "root-live", sessionID: "root", started: 1_000,
   } });
-  events.emit({ type: "session.text.delta", id: "root-delta", created: 1_250, data: {
+  events.emit({ type: "session.text.delta", id: "root-delta-1", created: 1_250, data: {
+    assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
+  } });
+  events.emit({ type: "session.text.delta", id: "root-delta-2", created: 1_500, data: {
     assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
   } });
   await until(() => firstState.performance?.tpsEstimated === true);
@@ -326,7 +339,7 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   t.after(() => { controller.dispose(); performance.dispose(); });
   controller.select("root");
   await until(() => state.status === "ready");
-  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 250 });
+  assert.deepEqual(state.performance, { tps: 8, tpsEstimated: true, ttft: 250 });
 
   source.sessions.set("child", session("child", "root"));
   source.history.set("child", []);
@@ -334,9 +347,13 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   events.emit({ type: "session.step.started", id: "child-start", created: 2_000, data: {
     assistantMessageID: "child-live", sessionID: "child", started: 2_000,
   } });
-  events.emit({ type: "session.text.delta", id: "child-delta", created: 2_500, data: {
+  events.emit({ type: "session.text.delta", id: "child-delta-1", created: 2_500, data: {
+    assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
+  } });
+  events.emit({ type: "session.text.delta", id: "child-delta-2", created: 2_750, data: {
     assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
   } });
   await until(() => state.performance?.ttft === 375);
-  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 375 });
+  // Root: 8 bytes / 0.25 s = 8; child: 16 bytes / 0.25 s = 16; duration-weighted average = 12.
+  assert.deepEqual(state.performance, { tps: 12, tpsEstimated: true, ttft: 375 });
 });

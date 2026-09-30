@@ -56,6 +56,8 @@ const mock = createServer(async (request, response) => {
     const lastUser = data.messages.findLastIndex(message => message.role === "user");
     const userText = JSON.stringify(data.messages[lastUser]);
     const switchSmoke = userText.includes("SWITCH_SMOKE");
+    const longTtftSmoke = userText.includes("LONG_TTFT_SMOKE");
+    const reasoningSmoke = userText.includes("REASONING_SMOKE");
     const spawnChild = userText.includes("SPAWN_SMOKE_CHILD")
       && !data.messages.slice(lastUser + 1).some(message => message.role === "tool");
     const tool = data.tools?.find(tool => tool.function.name === "subagent");
@@ -63,7 +65,11 @@ const mock = createServer(async (request, response) => {
       name: "subagent", arguments: JSON.stringify({ agent: childAgent, description: "Usage smoke child", prompt: "Return CHILD_DONE." }),
     } }] : undefined;
     const content = toolCalls ? undefined : "SMOKE_OK";
-    const usage = {
+    const usage = reasoningSmoke ? {
+      prompt_tokens: 1200, completion_tokens: 270, total_tokens: 1470,
+      prompt_tokens_details: { cached_tokens: 1000, cache_write_tokens: 100 },
+      completion_tokens_details: { reasoning_tokens: 200 },
+    } : {
       prompt_tokens: 1200, completion_tokens: 70, total_tokens: 1270,
       prompt_tokens_details: { cached_tokens: 1000, cache_write_tokens: 100 },
       completion_tokens_details: { reasoning_tokens: 20 },
@@ -75,9 +81,9 @@ const mock = createServer(async (request, response) => {
         choices: [{ index: 0, delta, finish_reason }], ...(reportedUsage ? { usage: reportedUsage } : {}),
       })}\n\n`);
       chunk({ role: "assistant" });
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, longTtftSmoke ? 2_000 : reasoningSmoke ? 1_500 : 300));
       chunk(toolCalls ? { tool_calls: toolCalls } : { content: content.slice(0, 4) });
-      await new Promise(resolve => setTimeout(resolve, switchSmoke ? 2_500 : 700));
+      await new Promise(resolve => setTimeout(resolve, longTtftSmoke || reasoningSmoke ? 100 : switchSmoke ? 2_500 : 700));
       if (content) chunk({ content: content.slice(4) });
       await new Promise(resolve => setTimeout(resolve, 100));
       chunk({}, toolCalls ? "tool_calls" : "stop", usage);
@@ -409,6 +415,30 @@ try {
   officialTui.send("\x1b");
   await officialTui.save("09-official-price-fallback");
   console.log("PASS: a model with no OpenCode price uses the packaged manufacturer price");
+  const longTtftTarget = await client.session.create({ location: { directory: project }, title: "Long TTFT Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  const longTtftTui = openTui(longTtftTarget.id);
+  await wait(() => /Token Usage/.test(longTtftTui.screen()), "long TTFT sidebar");
+  const longTtftPrompt = client.session.prompt({ sessionID: longTtftTarget.id, text: "LONG_TTFT_SMOKE Return SMOKE_OK." });
+  await wait(() => /TPS\s+~([\d.]+) tok\/s/.test(longTtftTui.screen()), "live TPS after long TTFT");
+  const longTtftLive = Number(longTtftTui.screen().match(/TPS\s+~([\d.]+) tok\/s/)?.[1]);
+  assert.ok(longTtftLive > 5, `long TTFT must not pin live TPS near zero, got ${longTtftLive}`);
+  await longTtftPrompt;
+  await wait(async () => (await client.message.list({ sessionID: longTtftTarget.id })).data.some(m => m.type === "assistant" && m.tokens), "long TTFT usage");
+  await wait(() => /TPS\s+[\d.]+ tok\/s/.test(longTtftTui.screen()) && !/TPS\s+~/.test(longTtftTui.screen()), "long TTFT converges to exact TPS");
+  await longTtftTui.save("10-long-ttft");
+  console.log("PASS: a 2s TTFT followed by fast output shows responsive live TPS and converges to exact TPS");
+  const reasoningTarget = await client.session.create({ location: { directory: project }, title: "Reasoning Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  const reasoningTui = openTui(reasoningTarget.id);
+  await wait(() => /Token Usage/.test(reasoningTui.screen()), "reasoning sidebar");
+  const reasoningPrompt = client.session.prompt({ sessionID: reasoningTarget.id, text: "REASONING_SMOKE Return SMOKE_OK." });
+  await wait(() => /TPS\s+~([\d.]+) tok\/s/.test(reasoningTui.screen()), "reasoning-style live TPS");
+  const reasoningLive = Number(reasoningTui.screen().match(/TPS\s+~([\d.]+) tok\/s/)?.[1]);
+  assert.ok(reasoningLive > 5, `reasoning-style live TPS reflects visible speed, got ${reasoningLive}`);
+  await reasoningPrompt;
+  await wait(async () => (await client.message.list({ sessionID: reasoningTarget.id })).data.some(m => m.type === "assistant" && m.tokens?.reasoning === 200), "reasoning usage");
+  await wait(() => /TPS\s+[\d.]+ tok\/s/.test(reasoningTui.screen()) && !/TPS\s+~/.test(reasoningTui.screen()), "reasoning converges to provider TPS");
+  await reasoningTui.save("11-reasoning");
+  console.log("PASS: reasoning-style streams show visible-speed live TPS, then switch to provider-reported TPS");
   const cleanupTarget = await client.session.create({ location: { directory: project }, title: "Context Cleanup Smoke" });
   await client.session.prompt({ sessionID: cleanupTarget.id, text: "Return SMOKE_OK." });
   await client.session.wait({ sessionID: cleanupTarget.id });

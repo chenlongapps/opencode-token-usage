@@ -74,7 +74,7 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. I
 | `Context` | Latest context usage after the most recent completed compaction in the viewed session; not aggregated across the subtree |
 | `Steps` | Assistant message count across the session tree, including subagents; follows OpenCode's own stats definition, so compaction and user messages are not steps |
 | `Est. Cost` | Estimated cost across the tree, pricing each assistant and compaction call with its actual model |
-| `TPS` | Generation throughput for `Output + Reasoning` across the tree; live estimates are marked with `~` |
+| `TPS` | Generation throughput for `Output + Reasoning` across the tree. While streaming, it estimates recent observable text, reasoning-summary and tool-input deltas (UTF-8 bytes / 4) over a short sliding window after the first delta, excluding pre-first-token waiting, and marks the value with `~`. APIs such as OpenAI Responses do not expose complete hidden reasoning tokens in real time, so live values cannot represent hidden reasoning throughput. After completion it uses provider-reported Output and Reasoning tokens and removes `~` |
 | `TTFT` | Average time to first token across measurable assistant steps in the tree |
 
 #### Behavior
@@ -86,6 +86,7 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. I
 - `Est. Cost` prices every message with its recorded model. A complete non-zero price resolved by OpenCode takes precedence. If OpenCode reports a complete zero price, a complete first-party snapshot price overrides it; incomplete prices fall back for the whole message without mixing rates.
 - The checked-in fallback snapshot is generated from [models.dev](https://models.dev/api.json) using only reviewed first-party provider/model families; a small set of manufacturer-verified exceptions is kept separately. It covers priced text models, without downloading prices while the plugin runs. Gateway models match exact manufacturer IDs, documented aliases, and known wrappers; only a terminal `-free` or `:free` can be removed for a second exact lookup.
 - Confirmed free usage displays `$0.00`; unavailable prices display `—`; known subtotals with unpriced messages are marked `partial`. The snapshot excludes gateway markups, regional premiums, unlisted discounts, non-text billing, tool fees, and taxes, so Est. Cost is not a provider bill. See [price sources and limitations](docs/pricing.md).
+- Live `TPS` with `~` is an estimate from recent observable deltas after the first delta over a ~2s sliding window with light smoothing; it excludes TTFT and hidden-reasoning waits. Without `~` it is exact provider-reported `Output + Reasoning` throughput. No model-specific multipliers or hidden-reasoning guesses are applied.
 - Initial read failures display `Unavailable`. Later failures retain the last complete snapshot, display `Not updated`, and retry automatically.
 
 ### Development

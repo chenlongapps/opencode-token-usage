@@ -22,6 +22,36 @@ export interface PerformanceEvent {
   created?: number;
 }
 
+export interface StreamSample {
+  time: number;
+  bytes: number;
+}
+
+export const LIVE_WINDOW_MS = 2_000;
+export const LIVE_EWMA_ALPHA = 0.35;
+export const LIVE_BYTES_PER_TOKEN = 4;
+
+/** Raw live throughput from one step's recent observable deltas. */
+export function estimatedLiveTps(samples: readonly StreamSample[]): number | undefined {
+  if (samples.length < 2) return undefined;
+  const first = samples[0]!;
+  const last = samples[samples.length - 1]!;
+  const duration = last.time - first.time;
+  if (!Number.isFinite(duration) || duration <= 0) return undefined;
+  let bytes = 0;
+  for (const sample of samples) {
+    if (!Number.isFinite(sample.time) || !Number.isFinite(sample.bytes) || sample.bytes < 0) return undefined;
+    bytes += sample.bytes;
+  }
+  if (bytes <= 0) return undefined;
+  return (bytes / LIVE_BYTES_PER_TOKEN) / (duration / 1_000);
+}
+
+export function smoothLiveTps(previous: number | undefined, raw: number): number {
+  if (previous === undefined || !Number.isFinite(previous)) return raw;
+  return previous * (1 - LIVE_EWMA_ALPHA) + raw * LIVE_EWMA_ALPHA;
+}
+
 interface ActiveStep {
   messageID: string;
   sessionID: string;
@@ -32,6 +62,8 @@ interface ActiveStep {
   finishedAt?: number;
   reconciledAt?: number;
   bytes: number;
+  samples: StreamSample[];
+  liveTps?: number;
   events: Set<string>;
 }
 
@@ -234,7 +266,7 @@ export class PerformanceMonitor {
       if (!finite(data.started)) return false;
       if (this.active.has(key)) return false;
       this.active.set(key, {
-        messageID, sessionID, started: data.started, bytes: 0, events: new Set(),
+        messageID, sessionID, started: data.started, bytes: 0, samples: [], events: new Set(),
       });
       return false;
     }
@@ -267,7 +299,11 @@ export class PerformanceMonitor {
       if (sample) delete sample.expiresAt;
       this.scheduleCleanup();
     }
-    step.bytes += new TextEncoder().encode(data.delta).byteLength;
+    const sampleBytes = new TextEncoder().encode(data.delta).byteLength;
+    step.bytes += sampleBytes;
+    step.samples.push({ time: event.created, bytes: sampleBytes });
+    const cutoff = event.created - LIVE_WINDOW_MS;
+    while (step.samples.length > 0 && step.samples[0]!.time < cutoff) step.samples.shift();
     step.last = Math.max(step.last ?? event.created, event.created);
     if (step.first === undefined) {
       step.first = event.created;
@@ -307,17 +343,25 @@ export class PerformanceMonitor {
     const sessions = new Set(sessionIDs);
     const samples = [...this.observed.values()].filter(sample => sessions.has(sample.sessionID));
     const result = performanceWithObservations(prepared, samples);
-    let bytes = 0;
-    let duration = 0;
+    // Live throughput covers only observable deltas after the first one, over a
+    // short sliding window. TTFT keeps the started -> first wait separately, and
+    // completed provider usage still replaces this estimate via reconcile().
+    let weighted = 0;
+    let durationTotal = 0;
     for (const step of this.active.values()) {
-      if (!sessions.has(step.sessionID) || step.reconciledAt !== undefined || step.bytes <= 0) continue;
-      const last = step.streamed ?? step.last;
-      if (!finite(last) || last <= step.started) continue;
-      bytes += step.bytes;
-      duration += last - step.started;
+      if (!sessions.has(step.sessionID) || step.reconciledAt !== undefined) continue;
+      const raw = estimatedLiveTps(step.samples);
+      if (raw === undefined) continue;
+      const first = step.samples[0]!;
+      const last = step.samples[step.samples.length - 1]!;
+      const duration = last.time - first.time;
+      if (!finite(duration) || duration <= 0) continue;
+      step.liveTps = smoothLiveTps(step.liveTps, raw);
+      weighted += step.liveTps * duration;
+      durationTotal += duration;
     }
-    if (bytes > 0 && duration > 0) {
-      result.tps = (bytes / 4) / (duration / 1_000);
+    if (durationTotal > 0) {
+      result.tps = weighted / durationTotal;
       result.tpsEstimated = true;
     }
     return result;

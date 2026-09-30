@@ -74,7 +74,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | `Context` | 当前会话最后一次已完成压缩后的最新上下文用量，不随子树累计 |
 | `Steps` | 全树（含子代理）的 assistant 消息数，口径与 OpenCode 自带统计一致，compaction 与用户消息不计为 step |
 | `Est. Cost` | 按每条 assistant 与 compaction 消息实际模型估算的全树费用 |
-| `TPS` | 全树 `Output + Reasoning` 的生成速度；生成中的估算值带 `~` 标记 |
+| `TPS` | 全树 `Output + Reasoning` 的生成吞吐。请求进行中时，插件根据首个流式增量之后最近的可观察文本、reasoning summary 和工具输入流（UTF-8 字节数 / 4）按短时间滑动窗口估算输出速度，不包含首 token 前等待时间，并以 `~` 标记。OpenAI Responses 等 API 不会实时暴露完整的隐藏 reasoning token，因此实时值不能表示隐藏推理吞吐。请求完成后，插件使用服务端上报的 Output 与 Reasoning token 及时间信息计算精确 TPS，并移除 `~` 标记 |
 | `TTFT` | 全树中可测 assistant step 的平均首 token 时间 |
 
 #### 行为
@@ -86,6 +86,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 - `Est. Cost` 按每条消息记录的实际模型分别计算。OpenCode 当前解析出的完整非零价格优先；若 OpenCode 给出完整零价，且内置价格快照可以完整计价，则采用快照价格。价格不完整时整条消息回退，不混用两套费率。
 - 内置回退快照从 [models.dev](https://models.dev/api.json) 生成，只采用审核过的原厂 Provider 与自家模型系列；少量经原厂核实的例外单独维护。快照覆盖有价格的文本模型，插件运行时不下载价格。网关模型通过精确原厂 ID、明确别名和已知包装格式匹配；只有终尾 `-free` 或 `:free` 会在再次精确查找前移除。
 - 确认免费时显示 `$0.00`；价格不可用时显示 `—`；只有部分消息可计算时在已知小计后标注 `partial`。快照不含网关加价、区域溢价、未列明的折扣、非文本计费、工具费和税费；Est. Cost 是估算而非账单。覆盖范围、来源和限制见[价格来源与限制](docs/pricing.md)。
+- 带 `~` 的实时 `TPS` 是首个流式增量之后约 2 秒滑动窗口内可观察增量的估算值（带轻度平滑），不包含 TTFT 与隐藏推理等待；不带 `~` 时为服务端上报的 `Output + Reasoning` 精确吞吐。不做模型专属倍率，也不猜测隐藏 reasoning token。
 - 首次读取失败显示 `Unavailable`；后续失败保留上次完整快照、标注 `Not updated` 并自动重试。
 
 ### 开发
