@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-01",
+  verified: "2026-10-02",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-01"},
@@ -87,6 +87,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"cohere","id":"command-r7b-12-2024","prices":[{"input":0.0375,"output":0.15}],"released":"2024-12-02"},
     {"providerID":"cohere","id":"command-r7b-arabic-02-2025","prices":[{"input":0.0375,"output":0.15}],"released":"2025-02-27"},
     {"providerID":"cohere","id":"north-mini-code-1-0","prices":[{"input":0,"output":0}],"released":"2026-06-09"},
+    {"providerID":"cohere","id":"north-small-translate-09-2026","prices":[{"input":0,"output":0}],"released":"2026-09-09"},
     {"providerID":"deepseek","id":"deepseek-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
     {"providerID":"deepseek","id":"deepseek-v4-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
     {"providerID":"deepseek","id":"deepseek-v4-flash-vision-exp","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
@@ -170,6 +171,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"nvidia","id":"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning","prices":[{"input":0,"output":0}],"released":"2026-04-28"},
     {"providerID":"nvidia","id":"nvidia/nemotron-3-super-120b-a12b","prices":[{"input":0.2,"output":0.8}],"released":"2026-03-11"},
     {"providerID":"nvidia","id":"nvidia/nemotron-3-ultra-550b-a55b","prices":[{"input":0.5,"output":2.5,"cache":{"read":0.15}}],"released":"2026-06-04"},
+    {"providerID":"nvidia","id":"nvidia/nemotron-3.5-content-safety","prices":[{"input":0,"output":0}],"released":"2026-06-04"},
     {"providerID":"nvidia","id":"nvidia/nemotron-3.5-lightning-30b-a3b","prices":[{"input":0,"output":0}],"released":"2026-08-11"},
     {"providerID":"nvidia","id":"nvidia/nemotron-content-safety-reasoning-4b","prices":[{"input":0,"output":0}],"released":"2026-01-22"},
     {"providerID":"nvidia","id":"nvidia/nemotron-mini-4b-instruct","prices":[{"input":0,"output":0}],"released":"2024-08-21"},
