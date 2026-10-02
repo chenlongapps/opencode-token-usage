@@ -47,7 +47,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test test/*.test.ts test/*.test.mjs",
     "test:smoke": "node scripts/smoke.mjs",
     "prices:update": "tsx scripts/update-prices.ts",
     "release:patch": "npm version patch",

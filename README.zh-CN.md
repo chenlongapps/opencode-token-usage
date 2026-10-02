@@ -34,7 +34,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 ```
 
 > [!NOTE]
-> 需要 Node.js 22+。项目历次发布已验证 OpenCode 2.0.9、2.0.10 和 2.0.11；当前 SDK 2.0.11 构建已在 OpenCode 2.0.11 上重新验证。
+> 需要 Node.js 22+。项目历次发布已验证 OpenCode 2.0.9、2.0.10 和 2.0.11；当前 SDK 2.0.11 构建已在 OpenCode 2.0.11 和 2.0.22 上重新验证。
 
 安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方保留一行实时摘要，显示 Context、Total、Cost 和 TPS。点击摘要可在居中弹窗中查看完整统计；按 Escape 或点击 **esc** 即可关闭，关闭弹窗不会中断子代理。
 
@@ -104,6 +104,16 @@ npm run test:smoke
 手动更新时，在联网的维护环境运行 `npm run prices:update`，审阅生成文件及例外差异，再执行上述检查。构建和插件刷新不会请求 models.dev。
 
 `test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、`/usage`、子代理累计、逐消息计价、原厂价格补全、模型切换、TPS 和 TTFT。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
+
+默认使用 `PATH` 中的 `opencode`。OpenCode 2.0.9 及之后的稳定版 2.x 可以运行；尚未与当前 SDK 验证的宿主会输出警告，然后继续实际兼容性检查。仅通过版本检查不代表兼容性已验证。SDK 依赖仍独立锁定，不随本机 CLI 更新而自动升级。
+
+如需用独立安装的二进制复现基准，而不降级日常使用的安装：
+
+```bash
+OPENCODE_BIN=/absolute/path/to/opencode-2.0.11 npm run test:smoke
+```
+
+`OPENCODE_BIN` 为版本检查、隔离服务端和 TUI 统一选择同一个可执行文件。相对路径以执行命令时的目录为基准解析。smoke 输出和 `result.json` 会记录宿主版本与所选二进制；已测试组合见[验证记录](docs/verification.md)。
 
 从源码加载时，先构建项目，再将仓库绝对路径加入目标项目的 `plugins`。
 

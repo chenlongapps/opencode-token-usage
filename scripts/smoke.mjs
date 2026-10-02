@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { OpenCode } from "@opencode/client";
 import xterm from "@xterm/headless";
+import { checkOpenCodeVersion, resolveOpenCodeBinary, verifiedOpenCodeVersions } from "./smoke-runtime.mjs";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
+const opencode = resolveOpenCodeBinary(process.env);
 const work = await mkdtemp(path.join(tmpdir(), "token-usage-smoke-"));
 const project = path.join(work, "project");
 const installation = path.join(work, "installation");
@@ -19,15 +21,18 @@ const env = {
   XDG_DATA_HOME: path.join(work, "data"), XDG_CONFIG_HOME: path.join(work, "config"),
   XDG_STATE_HOME: path.join(work, "state"), XDG_CACHE_HOME: path.join(work, "cache"),
   TERM: "xterm-256color", COLORTERM: "truecolor",
-  OPENCODE_CLI_CONFIG_CONTENT: JSON.stringify({ session: { sidebar: "auto" }, animations: false }),
+  // The baseline uses tabs.enabled; current OpenCode still supports this spelling.
+  OPENCODE_CLI_CONFIG_CONTENT: JSON.stringify({ session: { sidebar: "auto" }, tabs: { enabled: false }, animations: false }),
 };
 delete env.OPENCODE_CONFIG;
 delete env.OPENCODE_CONFIG_CONTENT;
 const npmEnv = { ...process.env };
 if (!npmEnv.npm_config_cache && !npmEnv.NPM_CONFIG_CACHE) npmEnv.npm_config_cache = path.join(work, "npm-cache");
 console.log(`Smoke artifacts: ${work}`);
-const opencodeVersion = execFileSync("opencode", ["--version"], { env, encoding: "utf8" }).trim();
-assert.match(opencodeVersion, /^opencode v2\.0\.(?:9|10|11)\b/, "OpenCode v2.0.9, v2.0.10 or v2.0.11 is required");
+const opencodeVersion = execFileSync(opencode, ["--version"], { env, encoding: "utf8" }).trim();
+const host = checkOpenCodeVersion(opencodeVersion);
+console.log(`Smoke OpenCode: ${opencodeVersion} (${opencode})`);
+if (!host.verified) console.warn(`WARNING: OpenCode ${host.version} has not been verified with the current SDK; running compatibility checks. Verified hosts: ${verifiedOpenCodeVersions.join(", ")}`);
 const packageName = JSON.parse(await readFile(path.join(repo, "package.json"), "utf8")).name;
 
 const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8", env: npmEnv }));
@@ -47,6 +52,29 @@ const { historicalPerformance } = await import(path.join(plugin, "dist/performan
 
 let childAgent = "general";
 const requests = [];
+// Keep live checks observable until the TUI has rendered them, rather than racing a fixed delay.
+const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE"]
+  .map(marker => [marker, { started: false, ...Promise.withResolvers() }]));
+const compactionSummary = `## Objective
+- Return SMOKE_OK.
+## Requirements
+- (none)
+## Decisions
+- Use the local smoke provider.
+## Work State
+### Completed
+- Returned SMOKE_OK.
+### Active
+- (none)
+### Blocked
+- (none)
+## Next Move
+1. Await the next smoke prompt.
+## Relevant Files
+- (none)
+## Important Context
+- This is an isolated smoke session.
+`;
 const mock = createServer(async (request, response) => {
   try {
     let body = "";
@@ -55,16 +83,18 @@ const mock = createServer(async (request, response) => {
     requests.push(data);
     const lastUser = data.messages.findLastIndex(message => message.role === "user");
     const userText = JSON.stringify(data.messages[lastUser]);
-    const switchSmoke = userText.includes("SWITCH_SMOKE");
+    const gate = [...streamGates].find(([marker]) => userText.includes(marker))?.[1];
     const longTtftSmoke = userText.includes("LONG_TTFT_SMOKE");
     const reasoningSmoke = userText.includes("REASONING_SMOKE");
+    const compactionSmoke = (userText.includes("## Objective") && userText.includes("## Work State"))
+      || userText.includes("required summary template");
     const spawnChild = userText.includes("SPAWN_SMOKE_CHILD")
       && !data.messages.slice(lastUser + 1).some(message => message.role === "tool");
     const tool = data.tools?.find(tool => tool.function.name === "subagent");
     const toolCalls = spawnChild && tool ? [{ index: 0, id: "usage-smoke-child", type: "function", function: {
       name: "subagent", arguments: JSON.stringify({ agent: childAgent, description: "Usage smoke child", prompt: "Return CHILD_DONE." }),
     } }] : undefined;
-    const content = toolCalls ? undefined : "SMOKE_OK";
+    const content = compactionSmoke ? compactionSummary : toolCalls ? undefined : gate ? "SMOKE_OK ".repeat(4).trim() : "SMOKE_OK";
     const usage = reasoningSmoke ? {
       prompt_tokens: 1200, completion_tokens: 270, total_tokens: 1470,
       prompt_tokens_details: { cached_tokens: 1000, cache_write_tokens: 100 },
@@ -82,9 +112,16 @@ const mock = createServer(async (request, response) => {
       })}\n\n`);
       chunk({ role: "assistant" });
       await new Promise(resolve => setTimeout(resolve, longTtftSmoke ? 2_000 : reasoningSmoke ? 1_500 : 300));
-      chunk(toolCalls ? { tool_calls: toolCalls } : { content: content.slice(0, 4) });
-      await new Promise(resolve => setTimeout(resolve, longTtftSmoke || reasoningSmoke ? 100 : switchSmoke ? 2_500 : 700));
-      if (content) chunk({ content: content.slice(4) });
+      const fragmentSize = compactionSmoke ? content.length : gate ? 8 : 4;
+      chunk(toolCalls ? { tool_calls: toolCalls } : { content: content.slice(0, fragmentSize) });
+      if (content) {
+        // Multiple spaced deltas survive host batching and fit inside the live TPS window.
+        for (let offset = fragmentSize; offset < content.length; offset += fragmentSize) {
+          await new Promise(resolve => setTimeout(resolve, gate ? 300 : 700));
+          chunk({ content: content.slice(offset, offset + fragmentSize) });
+        }
+      }
+      if (gate) { gate.started = true; await gate.promise; }
       await new Promise(resolve => setTimeout(resolve, 100));
       chunk({}, toolCalls ? "tool_calls" : "stop", usage);
       response.end("data: [DONE]\n\n");
@@ -108,7 +145,7 @@ const probe = createServer();
 await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
 const port = probe.address().port;
 await new Promise(resolve => probe.close(resolve));
-const server = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", String(port)], { cwd: project, env });
+const server = spawn(opencode, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], { cwd: project, env });
 let serverLog = "";
 server.stdout.on("data", data => { serverLog += data; });
 server.stderr.on("data", data => { serverLog += data; });
@@ -121,6 +158,9 @@ const client = OpenCode.make({
   },
 });
 const source = createSource(client);
+const streamEvents = [];
+const eventController = new AbortController();
+let eventCapture;
 const wait = async (check, label, timeout = 30_000) => {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -129,11 +169,17 @@ const wait = async (check, label, timeout = 30_000) => {
   }
   throw new Error(`Timed out: ${label}`);
 };
+const scrollToEnd = (tui, check, label) => wait(() => {
+  if (check(tui.screen())) return true;
+  // Expanded rows and optional RPC data can change the scroll extent after a frame.
+  tui.send("\x1b[F");
+  return false;
+}, label);
 const terminals = [];
 const lineNumber = (screen, pattern) => screen.split("\n").findIndex(line => pattern.test(line));
 const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
   const terminal = new xterm.Terminal({ ...size, allowProposedApi: true });
-  const process = spawn("python3", [path.join(repo, "scripts/terminal.py"), "opencode", "--server", `http://127.0.0.1:${port}`, "--session", sessionID], {
+  const process = spawn("python3", [path.join(repo, "scripts/terminal.py"), opencode, "--server", `http://127.0.0.1:${port}`, "--session", sessionID], {
     cwd: project, env: { ...env, USAGE_SMOKE_COLS: String(size.cols), USAGE_SMOKE_ROWS: String(size.rows) },
   });
   let raw = "";
@@ -167,6 +213,13 @@ try {
     return true;
   }, "server credentials");
   await wait(() => client.server.info(), "server startup");
+  eventCapture = (async () => {
+    for await (const event of client.event.subscribe({ signal: eventController.signal })) {
+      if (/^session\.(?:step\.|text\.delta|reasoning\.delta|tool\.input\.delta)/.test(event.type)) streamEvents.push(event);
+    }
+  })().catch(error => {
+    if (!eventController.signal.aborted) streamEvents.push({ error: String(error) });
+  });
   await writeFile(path.join(work, "config.json"), JSON.stringify(await client.config.get({ location: { directory: project } }), null, 2));
   await wait(async () => {
     const inventory = await client.plugin.list({ location: { directory: project } });
@@ -199,7 +252,8 @@ try {
 
   const switchTarget = await client.session.create({ location: { directory: project }, title: "Live Switch Target", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const switchPrompt = client.session.prompt({ sessionID: switchTarget.id, text: "SWITCH_SMOKE" });
-  await new Promise(resolve => setTimeout(resolve, 650));
+  await wait(() => streamGates.get("SWITCH_SMOKE").started, "switch target begins streaming");
+  await writeFile(path.join(work, "switch-stream-messages.json"), JSON.stringify(await client.message.list({ sessionID: switchTarget.id }), null, 2));
   tui.send("\x18");
   await new Promise(resolve => setTimeout(resolve, 50));
   tui.send("l");
@@ -210,6 +264,7 @@ try {
   await wait(() => !/Sessions for project/.test(tui.screen()) && /TPS\s+~[\d.]+ tok\/s/.test(tui.screen())
     && /TTFT\s+[\d.]+s/.test(tui.screen()), "live performance restored after session switch");
   await tui.save("02-switched-streaming");
+  streamGates.get("SWITCH_SMOKE").resolve();
   await switchPrompt;
   await wait(async () => (await client.message.list({ sessionID: switchTarget.id })).data.some(m => m.type === "assistant" && m.tokens), "switched session usage");
   const switchSnapshot = await loadSnapshot(source, switchTarget.id, new AbortController().signal);
@@ -230,9 +285,10 @@ try {
   await wait(() => !/Sessions for project/.test(tui.screen()) && /Token Usage/.test(tui.screen())
     && /Cache Rate\s+0\.0%/.test(tui.screen()) && !/\bTPS\b/.test(tui.screen()), "return to empty root session");
 
-  const firstPrompt = client.session.prompt({ sessionID: root.id, text: "Return SMOKE_OK." });
+  const firstPrompt = client.session.prompt({ sessionID: root.id, text: "FIRST_SMOKE Return SMOKE_OK." });
   await wait(() => /TPS\s+~[\d.]+ tok\/s/.test(tui.screen()) && /TTFT\s+[\d.]+s/.test(tui.screen()), "live TPS and TTFT");
   await tui.save("04-streaming");
+  streamGates.get("FIRST_SMOKE").resolve();
   await firstPrompt;
   await wait(async () => (await client.message.list({ sessionID: root.id })).data.some(m => m.type === "assistant" && m.tokens), "first usage");
   let snapshot = await loadSnapshot(source, root.id, new AbortController().signal);
@@ -286,17 +342,14 @@ try {
   tui.send("d");
   await wait(() => /1 step · 1 call · 1\.3K tokens · 83\.3% cached/.test(tui.screen()), "d switches back to compact mode");
   assert.match(tui.screen(), /Tools\s+[█░]+\s+[\d.]+K?\s+\d+\.\d%/, "compact mode merges the tool families into Tools");
-  tui.send("\x1b[F"); // End scrolls to the model breakdown.
-  await wait(() => /By Model/.test(tui.screen()) && /usage-test\/small/.test(tui.screen()), "model cost in dialog");
+  await scrollToEnd(tui, screen => /By Model/.test(screen) && /usage-test\/small/.test(screen), "model cost in dialog");
   assert.match(tui.screen(), /Token Usage Smoke · usage-test\/small/, "identity line carries session and model");
   tui.send("d");
   await wait(() => /Rates used for Est\. Cost/.test(tui.screen()), "model rate details rendered");
-  tui.send("\x1b[F");
-  await wait(() => /OpenCode · all incoming sizes · 1 call/.test(tui.screen())
-    && /Input\s+\$2\.00/.test(tui.screen()) && /Cache Write\s+\$3\.00/.test(tui.screen()), "applied model rates in detailed mode");
+  await scrollToEnd(tui, screen => /OpenCode · all incoming sizes · 1 call/.test(screen)
+    && /Input\s+\$2\.00/.test(screen) && /Cache Write\s+\$3\.00/.test(screen), "applied model rates in detailed mode");
   tui.send("d");
-  tui.send("\x1b[F");
-  await wait(() => /By Model/.test(tui.screen()) && !/OpenCode · all incoming sizes/.test(tui.screen()), "compact mode hides model rates");
+  await scrollToEnd(tui, screen => /By Model/.test(screen) && !/OpenCode · all incoming sizes/.test(screen), "compact mode hides model rates");
   await tui.save("06-usage-dialog-root");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()) && /Context\s+1,270 \/ 128,000/.test(tui.screen()), "close usage dialog");
@@ -308,13 +361,11 @@ try {
   await new Promise(resolve => setTimeout(resolve, 250));
   narrowTui.send("\r");
   await wait(() => /Used \/ Limit/.test(narrowTui.screen()), "narrow usage dialog");
-  narrowTui.send("\x1b[F");
-  await wait(() => /usage-test\/small\s+<\$0\.01/.test(narrowTui.screen()), "scroll narrow usage to model cost");
+  await scrollToEnd(narrowTui, screen => /usage-test\/small\s+<\$0\.01/.test(screen), "scroll narrow usage to model cost");
   narrowTui.send("d");
   await wait(() => /Calls\s+1\b/.test(narrowTui.screen()), "narrow detailed mode rendered");
-  narrowTui.send("\x1b[F");
-  await wait(() => /OpenCode · all incoming sizes · 1 call/.test(narrowTui.screen())
-    && /Cache Write\s+\$3\.00/.test(narrowTui.screen()), "narrow detailed model rates");
+  await scrollToEnd(narrowTui, screen => /OpenCode · all incoming sizes · 1 call/.test(screen)
+    && /Cache Write\s+\$3\.00/.test(screen), "narrow detailed model rates");
   await narrowTui.save("06-narrow-usage-dialog");
   narrowTui.send("\x1b");
   await wait(() => !/By Model/.test(narrowTui.screen()), "close narrow usage dialog");
@@ -326,8 +377,7 @@ try {
   await wait(() => /Context Window/.test(slimTui.screen()), "slim usage dialog");
   slimTui.send("d");
   await wait(() => /Input\s+100\b/.test(slimTui.screen()), "slim detailed mode rendered");
-  slimTui.send("\x1b[F");
-  await wait(() => /OpenCode/.test(slimTui.screen()) && /Cache Write\s+\$3\.00/.test(slimTui.screen()), "slim single-column model rates");
+  await scrollToEnd(slimTui, screen => /OpenCode/.test(screen) && /Cache Write\s+\$3\.00/.test(screen), "slim single-column model rates");
   const slimScreen = slimTui.screen();
   assert.ok(lineNumber(slimScreen, /Input\s+\$2\.00/) >= 0 && lineNumber(slimScreen, /Output\s+\$8\.00/) >= 0);
   assert.notEqual(lineNumber(slimScreen, /Input\s+\$2\.00/), lineNumber(slimScreen, /Output\s+\$8\.00/), "slim terminal stacks rates");
@@ -385,8 +435,7 @@ try {
   tui.send("\r");
   await wait(() => /Used \/ Limit\s+1\.3K \/ 32\.0K \(4\.0%\)/.test(tui.screen()), "usage after model switch");
   assert.match(tui.screen(), /Token Usage Smoke · usage-test\/large/);
-  tui.send("\x1b[F");
-  await wait(() => /usage-test\/small\s+<\$0\.01/.test(tui.screen()), "historical costs stay on the recorded model");
+  await scrollToEnd(tui, screen => /usage-test\/small\s+<\$0\.01/.test(screen), "historical costs stay on the recorded model");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()), "close switched usage dialog");
   await tui.save("08-model-switch");
@@ -409,9 +458,8 @@ try {
   await wait(() => /By Model/.test(officialTui.screen()), "official fallback usage dialog");
   officialTui.send("d");
   await wait(() => /Calls/.test(officialTui.screen()), "official fallback detailed mode");
-  officialTui.send("\x1b[F");
-  await wait(() => /Built-in snapshot · ≤272,000 incoming · 1 call/.test(officialTui.screen())
-    && /Input\s+\$0\.20/.test(officialTui.screen()), "fallback rate source in detailed mode");
+  await scrollToEnd(officialTui, screen => /Built-in snapshot · ≤272,000 incoming · 1 call/.test(screen)
+    && /Input\s+\$0\.20/.test(screen), "fallback rate source in detailed mode");
   officialTui.send("\x1b");
   await officialTui.save("09-official-price-fallback");
   console.log("PASS: a model with no OpenCode price uses the packaged manufacturer price");
@@ -422,6 +470,7 @@ try {
   await wait(() => /TPS\s+~([\d.]+) tok\/s/.test(longTtftTui.screen()), "live TPS after long TTFT");
   const longTtftLive = Number(longTtftTui.screen().match(/TPS\s+~([\d.]+) tok\/s/)?.[1]);
   assert.ok(longTtftLive > 5, `long TTFT must not pin live TPS near zero, got ${longTtftLive}`);
+  streamGates.get("LONG_TTFT_SMOKE").resolve();
   await longTtftPrompt;
   await wait(async () => (await client.message.list({ sessionID: longTtftTarget.id })).data.some(m => m.type === "assistant" && m.tokens), "long TTFT usage");
   await wait(() => /TPS\s+[\d.]+ tok\/s/.test(longTtftTui.screen()) && !/TPS\s+~/.test(longTtftTui.screen()), "long TTFT converges to exact TPS");
@@ -434,6 +483,7 @@ try {
   await wait(() => /TPS\s+~([\d.]+) tok\/s/.test(reasoningTui.screen()), "reasoning-style live TPS");
   const reasoningLive = Number(reasoningTui.screen().match(/TPS\s+~([\d.]+) tok\/s/)?.[1]);
   assert.ok(reasoningLive > 5, `reasoning-style live TPS reflects visible speed, got ${reasoningLive}`);
+  streamGates.get("REASONING_SMOKE").resolve();
   await reasoningPrompt;
   await wait(async () => (await client.message.list({ sessionID: reasoningTarget.id })).data.some(m => m.type === "assistant" && m.tokens?.reasoning === 200), "reasoning usage");
   await wait(() => /TPS\s+[\d.]+ tok\/s/.test(reasoningTui.screen()) && !/TPS\s+~/.test(reasoningTui.screen()), "reasoning converges to provider TPS");
@@ -448,8 +498,57 @@ try {
   await wait(async () => (await client.rpc(ContextSourceRpc).latest({ sessionID: cleanupTarget.id },
     { location: { directory: project } })).estimate === null, "deleted session context removed");
   console.log("PASS: session deletion removes its persisted context estimate");
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: opencodeVersion.replace(/^opencode v/, ""), root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, package: packed[0].filename, files }, null, 2));
+
+  // Version upgrades must recheck the host's fork-copy and compaction projection semantics.
+  const semanticsTarget = await client.session.create({ location: { directory: project }, title: "Host Semantics Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  await client.session.prompt({ sessionID: semanticsTarget.id, text: "Return SMOKE_OK." });
+  await client.session.wait({ sessionID: semanticsTarget.id });
+  const beforeCompaction = await loadSnapshot(source, semanticsTarget.id, new AbortController().signal);
+  const originalAssistant = viewedMessages(beforeCompaction).find(message => message.type === "assistant" && message.tokens);
+  assert.ok(originalAssistant, "host semantics source has reported usage");
+  const fork = await client.session.fork({ sessionID: semanticsTarget.id });
+  let forkSnapshot = await loadSnapshot(source, fork.id, new AbortController().signal);
+  assert.equal(forkSnapshot.rootID, fork.id, "a fork is a separate root, not a subagent");
+  assert.equal(forkSnapshot.sessions.get(fork.id).fork?.sessionID, semanticsTarget.id);
+  const inherited = viewedMessages(forkSnapshot).filter(message => message.type === "assistant");
+  assert.equal(inherited.length, 1, "fork projects the source assistant");
+  assert.match(inherited[0].id, /_\d+$/, "inherited copy IDs retain the source-sequence suffix");
+  assert.equal(summarize(uniqueMessages(forkSnapshot), forkSnapshot.model.catalog).total, 0, "inherited usage stays with its original source");
+  assert.equal(summarize(uniqueMessages(forkSnapshot)).steps, 0);
+  assert.equal(contextUsage(viewedMessages(forkSnapshot), forkSnapshot.model.context)?.used, 1270, "inherited usage still counts toward the viewed context");
+  await client.session.prompt({ sessionID: fork.id, text: "Return SMOKE_OK in the fork." });
+  await client.session.wait({ sessionID: fork.id });
+  forkSnapshot = await loadSnapshot(source, fork.id, new AbortController().signal);
+  const forkSummary = summarize(uniqueMessages(forkSnapshot), forkSnapshot.model.catalog);
+  assert.equal(forkSummary.total, 1270, "only the fork's own call is charged");
+  assert.equal(forkSummary.steps, 1);
+  assert.equal(forkSummary.cost, 0.00126);
+  console.log("PASS: real forks retain copy IDs, independent roots, inherited context and source-only billing");
+
+  await client.session.compact({ sessionID: semanticsTarget.id });
+  await client.session.wait({ sessionID: semanticsTarget.id });
+  const compacted = await loadSnapshot(source, semanticsTarget.id, new AbortController().signal);
+  const compactedMessages = viewedMessages(compacted);
+  await writeFile(path.join(work, "compaction-messages.json"), JSON.stringify(compactedMessages, null, 2));
+  const compactionIndex = compactedMessages.findIndex(message => message.type === "compaction");
+  const compaction = compactedMessages[compactionIndex];
+  assert.equal(compaction?.status, "completed", "host compaction projects the completed status");
+  assert.ok(compactionIndex > compactedMessages.findIndex(message => message.id === originalAssistant.id), "ascending history retains the assistant before compaction");
+  assert.equal(contextUsage(compactedMessages, compacted.model.context), undefined, "completed compaction clears the previous assistant context");
+  await client.session.prompt({ sessionID: semanticsTarget.id, text: "Return SMOKE_OK after compaction." });
+  await client.session.wait({ sessionID: semanticsTarget.id });
+  const afterCompaction = await loadSnapshot(source, semanticsTarget.id, new AbortController().signal);
+  const afterMessages = viewedMessages(afterCompaction);
+  assert.ok(afterMessages.findIndex(message => message.type === "compaction") < afterMessages.findLastIndex(message => message.type === "assistant"), "new assistant follows compaction in ascending history");
+  assert.equal(contextUsage(afterMessages, afterCompaction.model.context)?.used, 1270);
+  assert.equal(summarize(uniqueMessages(afterCompaction)).steps, 2, "compaction is not an assistant step");
+  console.log("PASS: real completed compaction resets viewed context and preserves ascending full history");
+
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
 } finally {
+  for (const gate of streamGates.values()) gate.resolve();
+  eventController.abort();
+  await eventCapture;
   for (const [index, terminal] of terminals.entries()) {
     await terminal.save(`final-${index}`);
     terminal.process.kill("SIGTERM");
@@ -460,4 +559,5 @@ try {
   await new Promise(resolve => mock.close(resolve));
   await writeFile(path.join(work, "server.log"), serverLog.replace(/server password \S+/g, "server password [redacted]"));
   await writeFile(path.join(work, "requests.json"), JSON.stringify(requests, null, 2));
+  await writeFile(path.join(work, "stream-events.json"), JSON.stringify(streamEvents, null, 2));
 }

@@ -2,12 +2,12 @@
 
 ## 当前状态
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，当前包版本为 0.4.0，使用 `@opencode/plugin@2.0.11`。
+- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，当前包版本为 0.4.3，使用 `@opencode/plugin@2.0.11`。
 - `src/usage.ts` 负责统计、上下文、定价与格式化；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏、子代理浮窗和 `/usage` 弹窗。
-- 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 使用打包产物和隔离的 OpenCode 2.0.11、Python 3 终端、本地模拟提供商进行集成验证。
+- 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 默认使用 PATH 中的稳定版 OpenCode 2（最低 2.0.9）、Python 3 终端、本地模拟提供商与隔离配置验证打包产物；未验证版本只警告并继续实际检查。可用 `OPENCODE_BIN` 指定独立基准二进制，统一用于版本探测、服务端与 TUI。
 - `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。
 - 修改 README 时，必须同步更新英文版 `README.md` 与简体中文版 `README.zh-CN.md`，确保安装、用法、功能和版本信息等内容一致。
-- 2026-09-24 已通过类型检查、62 项自动化测试、构建及 SDK 2.0.11 + 真实 OpenCode 2.0.11 打包集成验证，记录见 `docs/verification.md`。
+- 2026-10-02 已通过类型检查、85 项自动化测试、构建及 SDK 2.0.11 + 真实 OpenCode 2.0.11 / 2.0.22 打包集成验证，包含真实分叉、压缩与消息排序检查，记录见 `docs/verification.md`。
 
 ## 产品约定
 
@@ -25,7 +25,7 @@
 - `/usage` 分为 Context Window、Last Request、Context Breakdown、Session、By Model 五个区域，口径互相独立：Context Window 只回答上下文占用（分母为活动模型 `limit.context`）；Last Request 是被查看会话最近一次已上报调用的五类 token 与缓存率；Session 为全树汇总；By Model 为逐模型 tokens/calls/费用，按费用降序。标题下方一行显示会话与活动模型（多模型时显示模型数量），正文不重复模型名。
 - 弹窗默认紧凑模式：数字用 `K`/`M` 缩写（`812`、`139.4K`、`3.70M`），隐藏零值行，Context Breakdown 中 `System Tools` 与 `MCP Tools` 合并为 `Tools` 并按占比降序；按 `d` 切换详细模式，显示精确数字、零值行、两类工具拆分与 Session 逐类明细。侧边栏始终使用精确数字和原有行序。
 - `/usage` 的六类来源占比是最近一次已组装模型请求的文本与工具定义估算值，占比以六类估算和为分母；不得将其当作实测 Context 或与之强行加总。服务端 `context` 钩子仅保存分类数值，RPC 不可用或未捕获请求时显示不可用，不影响实测用量。
-- 2.0.9–2.0.11 在子代理视图中不挂载侧边栏；`session.composer.top` 仅显示 Context、Total、Cost、TPS 单行实时摘要，不显示快捷键；点击摘要打开居中原生弹窗，弹窗复用摘要的同一控制器及侧边栏完整面板并可用 Esc 关闭，保持子代理中的全树统计可按需查看且不挤占会话高度。
+- 2.0.9–2.0.11 与 2.0.22 在子代理视图中不挂载侧边栏；`session.composer.top` 仅显示 Context、Total、Cost、TPS 单行实时摘要，不显示快捷键；点击摘要打开居中原生弹窗，弹窗复用摘要的同一控制器及侧边栏完整面板并可用 Esc 关闭，保持子代理中的全树统计可按需查看且不挤占会话高度。
 
 ## 官方文档
 

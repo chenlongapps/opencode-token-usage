@@ -1,5 +1,29 @@
 # 验证记录
 
+## 2026-10-02 · smoke 宿主版本策略与兼容性
+
+环境：macOS、Node.js v22.23.2、插件包 0.4.3。OpenCode SDK 仍精确锁定 2.0.11，未随本机 CLI 升级；本机默认宿主为 Homebrew 安装的 OpenCode 2.0.22。旧版基准使用校验 npm SHA-512 完整性的官方 `@opencode/cli-darwin-arm64@2.0.11` 独立二进制，没有降级或修改日常安装。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 85 项通过，含 6 项 smoke 版本与二进制选择回归测试 |
+| `npm run build` | 通过，两版 smoke 的 `npm pack` 均执行真实构建 |
+| `npm run test:smoke`，默认宿主 2.0.22 | 完整通过 |
+| `OPENCODE_BIN=… npm run test:smoke`，独立宿主 2.0.11 | 完整通过 |
+
+版本检查不再把补丁版本列为白名单：允许稳定版 `>=2.0.9 <3.0.0` 运行实际集成检查。尚未与当前 SDK 验证的宿主会输出警告，但不被提前拒绝；当前已验证列表为 2.0.11、2.0.22。低于最低版本、其他主版本以及无法解析的稳定版输出仍会失败。版本检查通过本身不代表兼容性已验证。`OPENCODE_BIN` 统一用于版本探测、隔离服务端与 TUI；相对路径在切换到临时项目之前解析，结果文件记录实际宿主版本与所选二进制。
+
+本轮保留全部原有 token、费用、上下文、布局、子代理、TPS 与 TTFT 断言，并修正测试夹具的时序：实时场景提供多段、300ms 间隔的模拟文本，避免短片段被宿主批处理合并或跨出 2s TPS 窗口；模拟流在 TUI 观察到实时指标后才结束。隔离 CLI 配置关闭持久标签页，避免不同 TUI 进程复用其他会话的焦点；详细模式滚动持续等待真实目标行可见，避免旧宿主在重新排版前处理 End。压缩模拟响应使用宿主要求的结构化摘要格式。现有 OpenCode 配置未修改，也未调用付费模型。
+
+两版真实宿主新增验证：分叉为独立根，继承 assistant ID 保留 `_序号` 后缀；继承消息仍占被查看会话的 Context，但不重复累计用量或 Steps；分叉自己的调用单独计价。真实压缩投影为 `status === "completed"`，`order: "asc"` 的完整历史仍保留压缩前消息，压缩后没有新 assistant 时隐藏旧 Context，新消息恢复 Context，compaction 不计为 assistant step。原有全树 Total 5,080、成本 `$0.00504`、上下文上限 128,000 → 32,000 与原厂回退价 `$0.000149` 均保持通过。
+
+验证产物：
+- OpenCode 2.0.22：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-93KAN2`。
+- OpenCode 2.0.11：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-p0SsRF`。
+
+产物包含 `result.json`、终端捕获、已隐藏服务器密码的日志，以及流式事件、生成中的消息和压缩消息诊断文件。2.0.9、2.0.10 的历史记录保留在下方，本轮未重新执行这两个宿主；后续版本仍需实际运行 smoke，不能据版本范围宣称兼容。
+
 ## v0.4.3 开发验证（`/usage` 模型费率展示）
 
 验证日期：2026-09-29。Node.js v22.23.2；SDK 2.0.11；真实宿主使用隔离的 `@opencode/cli-darwin-arm64@2.0.11`，包版本仍为 0.4.2。

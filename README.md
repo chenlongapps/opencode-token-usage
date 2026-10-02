@@ -34,7 +34,7 @@ Alternatively, add the package to your project's `opencode.json` or `opencode.js
 ```
 
 > [!NOTE]
-> Requires Node.js 22+. OpenCode 2.0.9, 2.0.10, and 2.0.11 have been verified across project releases. The current SDK 2.0.11 build has been reverified on OpenCode 2.0.11.
+> Requires Node.js 22+. OpenCode 2.0.9, 2.0.10, and 2.0.11 have been verified across project releases. The current SDK 2.0.11 build has been reverified on OpenCode 2.0.11 and 2.0.22.
 
 Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
 
@@ -104,6 +104,16 @@ The [price update workflow](.github/workflows/update-prices.yml) checks models.d
 For a manual refresh, run `npm run prices:update` in a networked environment, review the generated diff and exceptions, then run the checks above. Builds and plugin refreshes do not contact models.dev.
 
 `test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, subagent aggregation, per-message pricing, first-party price fallback, model switching, TPS, and TTFT against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
+
+By default, smoke uses `opencode` from `PATH`. Stable OpenCode 2 versions from 2.0.9 onward can run; a host not yet verified with the current SDK prints a warning and continues through the actual compatibility checks. Passing the version check alone does not establish compatibility. The SDK dependencies remain pinned independently of your local CLI updates.
+
+To reproduce a baseline with a separately installed binary, without downgrading your normal installation:
+
+```bash
+OPENCODE_BIN=/absolute/path/to/opencode-2.0.11 npm run test:smoke
+```
+
+`OPENCODE_BIN` selects the same executable for the version check, isolated server, and TUI. Relative paths resolve from the directory where you run the command. The host version and selected binary are recorded in the smoke output and `result.json`; see the [verification record](docs/verification.md) for tested combinations.
 
 To load the plugin from source, build the project and add the repository's absolute path to `plugins` in the target project.
 
