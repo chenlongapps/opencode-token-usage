@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-02",
+  verified: "2026-10-03",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-01"},
@@ -91,7 +91,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"deepseek","id":"deepseek-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
     {"providerID":"deepseek","id":"deepseek-v4-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
     {"providerID":"deepseek","id":"deepseek-v4-flash-vision-exp","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
-    {"providerID":"deepseek","id":"deepseek-v4-pro","prices":[{"input":0.435,"output":0.87,"cache":{"read":0.003625}}],"released":"2026-08-12"},
+    {"providerID":"deepseek","id":"deepseek-v4-pro","prices":[{"input":0.66,"output":1.98,"cache":{"read":0.022}}],"released":"2026-08-12"},
     {"providerID":"google","id":"deep-research-max-preview-04-2026","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-04-21"},
     {"providerID":"google","id":"deep-research-preview-04-2026","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-04-21"},
     {"providerID":"google","id":"gemini-2.5-computer-use-preview-10-2025","prices":[{"input":1.25,"output":10},{"input":2.5,"output":15,"tier":{"type":"context","size":200000}}],"released":"2025-10-07"},
