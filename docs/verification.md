@@ -1,5 +1,25 @@
 # 验证记录
 
+## 2026-10-05 · 自动价格 patch 与 npm 发布链路（本地验证）
+
+环境：macOS、Node.js v22.23.2、插件包仍为 0.4.4，SDK 仍锁定 2.0.11。本轮只修改价格更新与发布自动化、测试和文档，未更新真实价格快照、未推送提交或标签、未创建 GitHub Release，也未实际发布 npm。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 101 项通过，新增 16 项价格刷新／发布回归验证 |
+| `npm run build` | 通过 |
+| `npm pack --dry-run` | 通过，执行真实 `prepack` 构建 |
+| `npm publish --dry-run` | 通过，完整执行类型检查、101 项测试与构建；未写入 registry |
+| GitHub 工作流 | 通过 actionlint 1.7.12、YAML 解析和 bash 语法检查；检查工具来自官方发行且校验 SHA-256 |
+| npm 只读查询 | 当前 `0.4.4` 已存在；发布状态为 `published=true`，价格恢复状态为 `retry=false` |
+
+发布测试在临时仓库和本地 bare remote 中实际运行 `npm version patch`、受限提交、带注释标签及 `git push --atomic`，验证 `0.4.4 → 0.4.5` 的两个 package 文件同步、仅提交三个允许文件、版本钩子不执行，以及并发更新 `main` 时不覆盖远端提交或留下孤立标签。另覆盖未完成价格版本按原标签重试、禁止每日任务发布未完成的手动版本、已占用版本／标签、registry 故障与错误响应、锁文件不一致、`latest` 倒退和发布可见性延迟。
+
+价格刷新覆盖无变化时跨日期保持字节不变、忽略未导入的上游元数据，以及新增、移除、零价、缓存、Reasoning 和档位差异。独立临时副本将全部生成模型的已有费率改为另一组数字，重新运行价格与用量测试，确认正常调价不再被写死的旧费率断言拦住；算法固定夹具和人工价格例外的精确断言仍保留。
+
+真实 GitHub 定时任务、机器人推送／Release／dispatch 和 npm OIDC 写入尚未执行；需将这些变更提交到默认分支，并满足发布说明中的权限及 Trusted Publisher 配置后，在实际工作流中验证。此次未重新运行 OpenCode TUI smoke，之前已验证的宿主结果保留在下方。
+
 ## 2026-10-02 · smoke 宿主版本策略与兼容性
 
 环境：macOS、Node.js v22.23.2、插件包 0.4.3。OpenCode SDK 仍精确锁定 2.0.11，未随本机 CLI 升级；本机默认宿主为 Homebrew 安装的 OpenCode 2.0.22。旧版基准使用校验 npm SHA-512 完整性的官方 `@opencode/cli-darwin-arm64@2.0.11` 独立二进制，没有降级或修改日常安装。

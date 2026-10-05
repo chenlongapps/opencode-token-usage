@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fromModelsDev, renderSnapshot } from "../scripts/pricing-source.js";
+import { diffSnapshots, fromModelsDev, refreshSnapshot, renderSnapshot } from "../scripts/pricing-source.js";
 import { ORIGINAL_PROVIDERS, PRICE_OVERRIDES } from "../src/overrides.js";
 import { OFFICIAL_PRICE_SNAPSHOT, officialPrice } from "../src/pricing.js";
 import type { OfficialPriceEntry } from "../src/pricing.js";
@@ -65,11 +65,11 @@ test("manufacturer IDs, exact gateway wrappers, version aliases, and free suffix
 
 test("unrelated makers, unknown wrappers and similarly named modes never borrow a rate", () => {
   for (const [provider, id] of [
-    ["openrouter", "openai/gpt-6-sol-pro"],
-    ["openrouter", "openai/gpt-6-luna-fast"],
-    ["openrouter", "anthropic/claude-opus-5-fast"],
-    ["openrouter", "openai/gpt-6-sol-pro-free"],
-    ["openrouter", "xiaomi/mimo-v2.6-flash-free-preview"],
+    ["openrouter", "openai/gpt-6-sol-unknown-test-mode"],
+    ["openrouter", "openai/gpt-6-luna-unknown-test-mode"],
+    ["openrouter", "anthropic/claude-opus-5-unknown-test-mode"],
+    ["openrouter", "openai/gpt-6-sol-unknown-test-mode-free"],
+    ["openrouter", "xiaomi/mimo-v2.6-flash-free-unknown-test-mode"],
     ["openrouter", "foo/gpt-6-sol"],
     ["custom", "prefix-gpt-6-sol"],
     ["alibaba", "kimi-k3"], // Alibaba hosts Kimi, but is not its manufacturer.
@@ -81,21 +81,25 @@ test("unrelated makers, unknown wrappers and similarly named modes never borrow 
 });
 
 test("tier boundaries, Fast restrictions, and first-party override rates remain precise", () => {
-  const sol = find("openai", "gpt-6-sol")!;
-  assert.deepEqual(sol.prices, [
-    { input: 2, output: 10, cache: { read: 0.2, write: 2.5 } },
-    { tier: { type: "context", size: 272_000 }, input: 4, output: 15, cache: { read: 0.4, write: 5 } },
+  // Algorithm assertions use a fixed fixture, not prices that automation updates.
+  const snapshot = fromModelsDev(fixture(), "2026-09-25");
+  const example = snapshot.entries.find(entry => entry.id === "gpt-example")!;
+  assert.deepEqual(example.prices, [
+    { input: 1, output: 2, cache: { read: 0.1 } },
+    { input: 3, output: 4, cache: { read: 0.3 }, tier: { type: "context", size: 272_000 } },
   ]);
-  assert.equal(estimate(normalize({ input: 272_000 }), sol.prices).cost, 0.544);
-  assert.equal(estimate(normalize({ input: 272_001 }), sol.prices).cost, 1.088004);
+  assert.equal(estimate(normalize({ input: 272_000 }), example.prices).cost, 0.272);
+  assert.equal(estimate(normalize({ input: 272_001 }), example.prices).cost, 0.816003);
   const fast = find("openai", "gpt-5.5-fast")!;
   assert.equal(find("openrouter", "openai/gpt-5.5-fast"), undefined);
   assert.equal(estimate(normalize({ input: 272_000 }), fast.prices).defaultPrice, false);
   assert.equal(estimate(normalize({ input: 272_001 }), fast.prices).defaultPrice, true);
-  assert.equal(find("anthropic", "claude-opus-5-5-fast")?.prices[0]?.input, 8);
-  assert.equal(find("openrouter", "anthropic/claude-opus-5-5-fast"), undefined);
+  for (const entry of OFFICIAL_PRICE_SNAPSHOT.entries.filter(entry => entry.providers)) {
+    assert.equal(find(entry.providerID, entry.id)?.id, entry.id);
+    assert.equal(find("openrouter", `${entry.providerID}/${entry.id}`), undefined);
+  }
 
-  const grok = find("xai", "grok-4.7")!;
+  const grok = snapshot.entries.find(entry => entry.id === "grok-example")!;
   assert.equal(grok.prices[1]?.tier?.size, 199_999);
   assert.equal(estimate(normalize({ input: 200_000 }), grok.prices).cost, 0.8);
   const fugu = find("openrouter", "sakana/fugu-ultra-v2")!;
@@ -106,8 +110,8 @@ test("tier boundaries, Fast restrictions, and first-party override rates remain 
   assert.equal(find("zai", "glm-5.3")?.prices[0]?.cache?.write, undefined);
   assert.equal(find("alibaba", "qwen3.8-27b")?.prices[0]?.cache?.read, 0.1);
   assert.equal(find("alibaba", "qwen3.5-plus-2026-04-20")?.prices[1]?.tier?.size, 256_000);
-  assert.equal(find("alibaba", "qwen3.7-plus")?.prices[0]?.cache?.write, undefined);
-  assert.equal(find("opencode", "muse-spark-1.3-contributor-free")?.prices[0]?.input, 0.1);
+  assert.equal(snapshot.entries.find(entry => entry.id === "qwen-reasoner")?.prices[0]?.cache?.write, undefined);
+  assert.deepEqual(find("opencode", "muse-spark-1.3-contributor-free")?.prices, find("meta", "muse-spark-1.3-contributor")?.prices);
 });
 
 function fixture() {
@@ -122,7 +126,7 @@ function fixture() {
     tiers: [{ input: 3, output: 4, cache_read: 0.3, tier: { type: "context", size: 272_000 } }],
   }, { experimental: { modes: { fast: { cost: { input: 2, output: 4, cache_read: 0.2 } } } } });
   catalog.alibaba!.models["kimi-k3"] = model("kimi-k3", { input: 999, output: 999 });
-  catalog.alibaba!.models["qwen-reasoner"] = model("qwen-reasoner", { input: 1, output: 2, reasoning: 5 });
+  catalog.alibaba!.models["qwen-reasoner"] = model("qwen-reasoner", { input: 1, output: 2, reasoning: 5, cache_write: 1 });
   catalog.xai!.models["grok-example"] = model("grok-example", {
     input: 1, output: 2, tiers: [{ input: 4, output: 5, tier: { type: "context", size: 200_000 } }],
   });
@@ -159,4 +163,42 @@ test("pure importer selects manufacturer text models, modes, reasoning and repre
     cost: { input: 1, output: 2, tiers: [{ input: 3, output: 4, tier: { type: "output", size: 10 } }] },
   };
   assert.throws(() => fromModelsDev(unknownTier, "2026-09-25"), /Invalid openai\/gpt-invalid/);
+});
+
+test("price refresh is byte-identical across dates and unrelated catalog metadata", () => {
+  const before = fromModelsDev(fixture(), "2026-09-25");
+  const data = fixture();
+  data.openai!.models["gpt-example"] = { ...data.openai!.models["gpt-example"] as object, name: "Renamed upstream" };
+  const update = refreshSnapshot(data, before, "2026-10-05");
+  assert.deepEqual([update.added, update.removed, update.changed], [[], [], []]);
+  assert.equal(renderSnapshot(update.snapshot), renderSnapshot(before));
+});
+
+test("snapshot diff detects added, removed, repriced, zero, cache and tier changes", () => {
+  const before = fromModelsDev(fixture(), "2026-09-25");
+  const after = {
+    ...before, verified: "2026-10-05", entries: before.entries
+      .filter(entry => entry.id !== "gpt-free")
+      .map(entry => entry.id === "gpt-example" ? { ...entry, prices: [{ input: 0, output: 0, cache: { read: 0 } }] } : entry),
+  };
+  after.entries.push({ providerID: "openai", id: "gpt-added", prices: [{ input: 1, output: 2 }] });
+  assert.deepEqual(diffSnapshots(before, after), {
+    added: ["openai/gpt-added"], removed: ["openai/gpt-free"], changed: ["openai/gpt-example"],
+  });
+  for (const prices of [
+    [{ input: 1, output: 2, cache: { read: 0.2 } }],
+    [{ input: 1, output: 2, cache: { write: 0 } }],
+    [{ input: 1, output: 2, reasoning: 5 }],
+    [{ input: 1, output: 2 }, { input: 3, output: 4, tier: { type: "context" as const, size: 100 } }],
+  ]) {
+    const repriced = { ...before, entries: before.entries.map(entry => entry.id === "gpt-example" ? { ...entry, prices } : entry) };
+    assert.deepEqual(diffSnapshots(before, repriced).changed, ["openai/gpt-example"]);
+  }
+  const data = fixture();
+  data.openai!.models["gpt-free"] = {
+    id: "gpt-free", modalities: { input: ["text"], output: ["text"] }, cost: { input: 1, output: 2 }, release_date: "2026-09-20",
+  };
+  const update = refreshSnapshot(data, before, "2026-10-05");
+  assert.deepEqual(update.changed, ["openai/gpt-free"]);
+  assert.equal(update.snapshot.verified, "2026-10-05");
 });

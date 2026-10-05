@@ -14,7 +14,7 @@ export interface GeneratedPrice {
 export interface GeneratedSnapshot {
   verified: string;
   source: string;
-  entries: GeneratedPrice[];
+  entries: readonly GeneratedPrice[];
 }
 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -109,6 +109,24 @@ export function fromModelsDev(input: unknown, verified: string): GeneratedSnapsh
   }
   if (!entries.length) throw new Error("Empty manufacturer price snapshot");
   return { verified, source: PRICE_SOURCE_URL, entries };
+}
+
+/** Compare the shipped entries, not the download date or unrelated API metadata. */
+export function diffSnapshots(before: GeneratedSnapshot, after: GeneratedSnapshot) {
+  const oldEntries = new Map(before.entries.map(entry => [`${entry.providerID}/${entry.id}`, entry] as const));
+  const newEntries = new Map(after.entries.map(entry => [`${entry.providerID}/${entry.id}`, entry] as const));
+  const added = [...newEntries.keys()].filter(key => !oldEntries.has(key)).sort();
+  const removed = [...oldEntries.keys()].filter(key => !newEntries.has(key)).sort();
+  const changed = [...newEntries].filter(([key, value]) => oldEntries.has(key) && JSON.stringify(oldEntries.get(key)) !== JSON.stringify(value))
+    .map(([key]) => key).sort();
+  return { added, removed, changed };
+}
+
+export function refreshSnapshot(input: unknown, previous: GeneratedSnapshot, verified: string) {
+  const snapshot = fromModelsDev(input, verified);
+  const changes = diffSnapshots(previous, snapshot);
+  if (!changes.added.length && !changes.removed.length && !changes.changed.length) snapshot.verified = previous.verified;
+  return { snapshot, ...changes };
 }
 
 export function renderSnapshot(snapshot: GeneratedSnapshot): string {

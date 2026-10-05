@@ -99,7 +99,9 @@ npm run build
 npm run test:smoke
 ```
 
-[价格更新工作流](.github/workflows/update-prices.yml) 每天 UTC 03:17 检查 models.dev，也可通过 **Run workflow** 手动触发。快照无变化就不创建 PR；有变化且通过类型检查、测试、构建和打包检查时，只对 `src/prices.generated.ts` 创建或更新同一个待审 PR。需在仓库 Actions 设置中启用 **Allow GitHub Actions to create and approve pull requests**。使用 `GITHUB_TOKEN` 创建的 PR 不会再次触发 CI，因此更新工作流会先完成检查；不会自动合并或发布。
+[价格更新工作流](.github/workflows/update-prices.yml) 每天 UTC 22:00 检查 models.dev，也可在 `main` 上通过 **Run workflow** 手动触发。快照无变化就不发布。经审核的原厂来源白名单内有变化时，先通过类型检查、测试、构建和打包检查，再自动升级 patch 版本（例如 `0.4.4` → `0.4.5`），只提交 `src/prices.generated.ts`、`package.json` 和 `package-lock.json`，并原子推送 `main` 与版本标签。工作流创建 GitHub Release，显式触发该标签上的 [`publish.yml`](.github/workflows/publish.yml)，通过 npm Trusted Publishing/OIDC 发布，无需长期 npm token。仓库必须允许 GitHub Actions 推送 `main` 和创建标签；npm 必须信任 `publish.yml` 并允许执行 `npm publish`。
+
+验证失败不会升版本。已打标签但未完成的自动价格发布会优先重试同一版本，再检查新价格；registry 故障不会被当作版本不存在。发布时跳过 npm 已有版本、防止 `latest` 倒退，并在发布后核验 registry 中的版本。新增原厂／来源白名单、别名及人工核实的价格例外仍需人工审核。配置和重试方法见[发布说明](docs/releasing.md)。
 
 手动更新时，在联网的维护环境运行 `npm run prices:update`，审阅生成文件及例外差异，再执行上述检查。构建和插件刷新不会请求 models.dev。
 

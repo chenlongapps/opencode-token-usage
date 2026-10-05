@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { officialPrice } from "../src/pricing.js";
 import { bar, contextDetails, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatRate, formatRateTier, formatTokens, modelKey, normalize, rateRows, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
-import type { Price, UsageMessage } from "../src/usage.js";
+import type { ModelRef, Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
 const model = { providerID: "test", id: "model" };
 const catalog = (prices: readonly Price[] = [price]) => new Map([[modelKey(model), prices]]);
 const priced = (message: UsageMessage): UsageMessage => ({ ...message, model });
+const snapshotPrices = (model: ModelRef) => {
+  const entry = officialPrice(model);
+  assert.ok(entry, modelKey(model));
+  return entry.prices;
+};
 
 test("five disjoint categories, per-message model cost, cache rate, and message types", () => {
   const value = summarize([
@@ -146,10 +152,11 @@ test("free prices are distinct from missing prices and absent applicable tiers",
 test("OpenCode prices win, official prices fill gaps, and message-recorded cost is ignored", () => {
   const officialModel = { providerID: "gateway", id: "openai/gpt-5.6-luna" };
   const usage: UsageMessage = { id: "official", type: "assistant", model: officialModel, cost: 999, tokens: { input: 1_000_000 } };
+  const expected = estimate(normalize(usage.tokens), snapshotPrices(officialModel)).cost;
   const complete = summarize([usage]);
-  assert.equal(complete.cost, 0.4);
+  assert.equal(complete.cost, expected);
   assert.equal(complete.costStatus, "complete");
-  assert.equal(usageRows(complete).find(([label]) => label === "Est. Cost")?.[1], "$0.40");
+  assert.equal(usageRows(complete).find(([label]) => label === "Est. Cost")?.[1], formatEstimatedCost(expected, "complete"));
 
   const runtime = new Map([[modelKey(officialModel), [{ input: 3 }]]]);
   assert.equal(summarize([usage], runtime).cost, 3);
@@ -162,9 +169,9 @@ test("OpenCode prices win, official prices fill gaps, and message-recorded cost 
     usage,
     { id: "missing", type: "assistant", model: { providerID: "test", id: "unknown" }, tokens: { input: 10 } },
   ]);
-  assert.equal(partial.cost, 0.4);
+  assert.equal(partial.cost, expected);
   assert.equal(partial.costStatus, "partial");
-  assert.equal(usageRows(partial).find(([label]) => label === "Est. Cost")?.[1], "$0.40 · partial");
+  assert.equal(usageRows(partial).find(([label]) => label === "Est. Cost")?.[1], formatEstimatedCost(expected, "partial"));
 });
 
 test("mixed-model trees price every message with its own model", () => {
@@ -204,21 +211,27 @@ test("model cost rows reconcile with tree cost across runtime, official, free an
   const models = summarizeModels(messages, catalog);
   assert.equal(tree.costStatus, "partial");
   assert.equal(models.reduce((sum, value) => sum + value.cost, 0), tree.cost);
-  assert.deepEqual(models.map(({ model, costStatus, calls }) => [model, costStatus, calls]), [
+  assert.deepEqual(models.map(({ model, costStatus, calls }) => [model, costStatus, calls]).sort(), [
     ["test/priced", "partial", 3], ["gateway/gpt-5.6-luna", "complete", 1],
     ["test/free", "complete", 1], ["Unknown model", "unavailable", 1],
-  ]);
-  assert.equal(models[0]?.cost, 3);
-  assert.equal(models[0]?.tokens, 1_500_100);
-  assert.equal(models[1]?.cost, 0.4);
-  assert.equal(formatEstimatedCost(models[0]!.cost, models[0]!.costStatus), "$3.00 · partial");
-  assert.equal(formatEstimatedCost(models[2]!.cost, models[2]!.costStatus), "$0.00");
-  assert.equal(formatEstimatedCost(models[3]!.cost, models[3]!.costStatus), "—");
+  ].sort());
+  const runtimeRow = models.find(row => row.model === modelKey(runtime))!;
+  const fallbackRow = models.find(row => row.model === modelKey(fallback))!;
+  assert.equal(runtimeRow.cost, 3);
+  assert.equal(runtimeRow.tokens, 1_500_100);
+  assert.equal(fallbackRow.cost, estimate(normalize({ input: 1_000_000 }), snapshotPrices(fallback)).cost);
+  assert.equal(formatEstimatedCost(runtimeRow.cost, runtimeRow.costStatus), "$3.00 · partial");
+  const freeRow = models.find(row => row.model === modelKey(free))!;
+  assert.equal(formatEstimatedCost(freeRow.cost, freeRow.costStatus), "$0.00");
+  const unknownRow = models.find(row => row.model === "Unknown model")!;
+  assert.equal(formatEstimatedCost(unknownRow.cost, unknownRow.costStatus), "—");
+  assert.ok(models.every((row, index) => index === 0 || models[index - 1]!.cost >= row.cost));
   assert.deepEqual(summarizeModels([]), []);
 });
 
 test("model rate groups reflect the source and context tier actually used by each call", () => {
-  const model = { providerID: "gateway", id: "gpt-5.6-luna" };
+  // This manually reviewed override is not changed by the models.dev updater.
+  const model = { providerID: "openai", id: "gpt-5.6-luna-fast" };
   const runtime = new Map([[modelKey(model), [
     { input: 3, output: 6 },
     { tier: { type: "context" as const, size: 100 }, input: 5, output: 10 },
@@ -250,8 +263,8 @@ test("model rate groups reflect the source and context tier actually used by eac
     ["Cache Read", "—"], ["Cache Write", "—"],
   ]);
   assert.deepEqual(rateRows(fallback), [
-    ["Input", "$0.20"], ["Output", "$1.20"], ["Reasoning", "$1.20"],
-    ["Cache Read", "$0.02"], ["Cache Write", "$0.25"],
+    ["Input", "$0.40"], ["Output", "$2.40"], ["Reasoning", "$2.40"],
+    ["Cache Read", "$0.04"], ["Cache Write", "$0.50"],
   ]);
 });
 
@@ -284,10 +297,11 @@ test("rate details keep free, unavailable, and partial calls distinct", () => {
 test("incomplete OpenCode prices fall back as a whole and complete zero prices use the snapshot", () => {
   const officialModel = { providerID: "gateway", id: "gpt-5.6-luna" };
   const usage: UsageMessage = { id: "fallback", type: "compaction", model: officialModel, tokens: { input: 1_000_000, output: 1_000_000 } };
+  const expected = estimate(normalize(usage.tokens), snapshotPrices(officialModel)).cost;
   const incomplete = new Map([[modelKey(officialModel), [{ input: 9 }]]]);
-  assert.equal(summarize([usage], incomplete).cost, 2.2);
+  assert.equal(summarize([usage], incomplete).cost, expected);
   const free = new Map([[modelKey(officialModel), [{ input: 0, output: 0 }]]]);
-  assert.equal(summarize([usage], free).cost, 2.2);
+  assert.equal(summarize([usage], free).cost, expected);
   assert.equal(summarize([usage], free).costStatus, "complete");
 });
 
@@ -295,14 +309,14 @@ test("a complete OpenCode zero yields to a complete snapshot price only", () => 
   const model = { providerID: "gateway", id: "gpt-5.6-luna" };
   const usage: UsageMessage = { id: "zero", type: "assistant", model, tokens: { input: 1_000_000 } };
   const freeRuntime = new Map([[modelKey(model), [{ input: 0 }]]]);
-  assert.equal(summarize([usage], freeRuntime).cost, 0.4);
+  assert.equal(summarize([usage], freeRuntime).cost, estimate(normalize(usage.tokens), snapshotPrices(model)).cost);
   assert.equal(summarize([usage], freeRuntime).costStatus, "complete");
   assert.equal(summarizeModels([usage], freeRuntime)[0]?.appliedRates[0]?.source, "Built-in snapshot");
 
   const paidRuntime = new Map([[modelKey(model), [{ input: 3 }]]]);
   assert.equal(summarize([usage], paidRuntime).cost, 3);
 
-  const cacheModel = { providerID: "gateway", id: "mimo-v2.6-flash" };
+  const cacheModel = { providerID: "gateway", id: "qwen3.8-27b" }; // Reviewed override has no cache-write rate.
   const cacheUsage: UsageMessage = {
     id: "unpriced-cache-write", type: "assistant", model: cacheModel, tokens: { cache: { write: 1_000_000 } },
   };
@@ -333,30 +347,34 @@ test("runtime zero prices for OpenCode Zen free models display as zero", () => {
 test("Muse Spark Contributor snapshot prices replace OpenCode's complete free rate", () => {
   const model = { providerID: "opencode", id: "muse-spark-1.3-contributor-free" };
   const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
+  const tokens = { input: 1_000_000, output: 1_000_000 };
+  const expected = estimate(normalize(tokens), snapshotPrices(model)).cost;
   const summary = summarize([{
     id: "contributor", type: "assistant", model,
-    tokens: { input: 1_000_000, output: 1_000_000 },
+    tokens,
   }], new Map([[modelKey(model), [freePrice]]]));
-  assert.equal(summary.cost, 0.3);
+  assert.equal(summary.cost, expected);
   assert.equal(summary.costStatus, "complete");
-  assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], "$0.30");
+  assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], formatEstimatedCost(expected, "complete"));
 });
 
 test("first-party fallback keeps distinct reasoning and unknown cache-write billing honest", () => {
   const qwen = { providerID: "alibaba", id: "qwen-plus" };
+  const tokens = { input: 1_000_000, output: 1_000_000, reasoning: 1_000_000 };
+  const prices = snapshotPrices(qwen);
   const priced = summarize([{
     id: "reasoned", type: "assistant", model: qwen,
-    tokens: { input: 1_000_000, output: 1_000_000, reasoning: 1_000_000 },
+    tokens,
   }]);
-  assert.equal(priced.cost, 5.6);
+  assert.equal(priced.cost, estimate(normalize(tokens), prices).cost);
   assert.equal(priced.costStatus, "complete");
   assert.equal(summarizeModels([{
     id: "reasoned", type: "assistant", model: qwen,
-    tokens: { input: 1_000_000, output: 1_000_000, reasoning: 1_000_000 },
-  }])[0]?.appliedRates[0]?.rates.reasoning, 4);
+    tokens,
+  }])[0]?.appliedRates[0]?.rates.reasoning, prices[0]?.reasoning ?? prices[0]?.output);
 
   const unknownWrite = summarize([{
-    id: "write", type: "assistant", model: { providerID: "alibaba", id: "qwen3.7-plus" },
+    id: "write", type: "assistant", model: { providerID: "alibaba", id: "qwen3.8-27b" },
     tokens: { cache: { write: 1_000_000 } },
   }]);
   assert.equal(unknownWrite.costStatus, "unavailable");

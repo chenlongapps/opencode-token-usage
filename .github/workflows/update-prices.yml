@@ -2,8 +2,8 @@ name: Update model prices
 
 on:
   schedule:
-    # Every day at 03:17 UTC; avoid the top of the hour when schedules are busy.
-    - cron: '17 3 * * *'
+    # Every day at 22:00 UTC.
+    - cron: '0 22 * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,25 +15,30 @@ concurrency:
 
 jobs:
   update:
-    if: github.repository == 'chenlongapps/opencode-token-usage'
+    if: github.repository == 'chenlongapps/opencode-token-usage' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
-      pull-requests: write
+      actions: write
     steps:
       - uses: actions/checkout@v6
         with:
           ref: main
-          persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Check for an unfinished price release
+        id: previous
+        run: node scripts/release.mjs price-state
       - name: Refresh first-party price snapshot
+        if: steps.previous.outputs.retry != 'true'
         run: npm run prices:update
       - name: Check for changes
+        if: steps.previous.outputs.retry != 'true'
         id: changes
         shell: bash
         run: |
@@ -42,7 +47,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No price changes; skipping checks and pull request."
+            echo "No price changes; skipping validation and release." >> "$GITHUB_STEP_SUMMARY"
           fi
       - if: steps.changes.outputs.changed == 'true'
         run: npm run typecheck
@@ -52,18 +57,32 @@ jobs:
         run: npm run build
       - if: steps.changes.outputs.changed == 'true'
         run: npm pack --dry-run
-      - name: Open or update price pull request
+      - name: Prepare and push the patch release
         if: steps.changes.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          token: ${{ github.token }}
-          add-paths: src/prices.generated.ts
-          branch: automation/update-model-prices
-          commit-message: 'chore: update first-party model prices'
-          title: 'chore: update first-party model prices'
-          body: |
-            Daily snapshot refresh from https://models.dev/api.json.
-
-            Only `src/prices.generated.ts` is changed. Please review added, removed, and repriced models before merging; manufacturer exceptions and aliases require separate manual review.
-
-            The update workflow ran typecheck, tests, build, and `npm pack --dry-run` before opening this PR.
+        id: release
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          node scripts/release.mjs prepare-price
+      - name: Create the GitHub Release if needed
+        if: steps.previous.outputs.retry == 'true' || steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.previous.outputs.tag || steps.release.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+              --notes 'Automatic first-party price snapshot update from models.dev. Typecheck, tests, build, and pack validation passed before the version bump. Manufacturer exceptions and source allowlists remain manually maintained.'
+          fi
+      # GITHUB_TOKEN-created releases do not trigger release workflows. Dispatch explicitly,
+      # on the immutable tag, so npm OIDC/provenance remains attached to publish.yml and that commit.
+      - name: Request npm publication (or retry the same version)
+        if: steps.previous.outputs.retry == 'true' || steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.previous.outputs.tag || steps.release.outputs.tag }}
+        run: |
+          gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Requested npm publication for $TAG via publish.yml. Check that workflow for the final registry result." >> "$GITHUB_STEP_SUMMARY"

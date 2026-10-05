@@ -4,7 +4,9 @@
 
 ## 更新方式
 
-GitHub Actions [价格更新工作流](../.github/workflows/update-prices.yml) 每天 UTC 03:17 从 models.dev 检查一次。生成文件与仓库版本相同就结束；有变化时先运行类型检查、测试、构建和打包检查，再创建或更新同一个仅包含 `src/prices.generated.ts` 的 PR，等待人工审阅与合并，不自动发布。也可从 Actions 页面手动触发。仓库须允许 GitHub Actions 创建 PR；使用内置 `GITHUB_TOKEN` 创建 PR 不会再次触发常规 CI，故上述检查在更新工作流内完成。
+GitHub Actions [价格更新工作流](../.github/workflows/update-prices.yml) 每天 UTC 22:00 从 models.dev 检查一次，也可从 Actions 页面在 `main` 上手动触发。生成快照没有差异就结束，不会因检查日期或 API 中未导入的元数据变化发布新版本。白名单内的快照有变化（包含新增、移除和重新定价）时，先运行类型检查、测试、构建和 `npm pack --dry-run`，全部通过后自动升级 patch 版本，只提交 `src/prices.generated.ts`、`package.json`、`package-lock.json`，原子推送 `main` 与版本标签，再创建 GitHub Release 并显式触发 `publish.yml` 自动发布 npm。
+
+验证失败不升版本；并发修改 `main` 会令原子推送失败，不覆盖他人提交或留下孤立的远端标签。已推送但 npm 未完成的自动价格版本会先重试原标签，不再递增版本。npm 查询只有明确的 404 才视为版本不存在，网络错误会停止流程。工作流摘要记录快照条数与新增／移除／变化数量；最终 npm 结果见发布工作流。仓库推送权限与 npm Trusted Publishing 配置见[发布说明](releasing.md)。
 
 本地手动更新可在联网的维护环境中运行：
 
@@ -15,7 +17,7 @@ npm test
 npm run build
 ```
 
-审阅生成文件与 `overrides.ts` 的差异后提交。更新脚本只请求 `https://models.dev/api.json`，从人工确认的**原厂 Provider + 自家模型系列**提取公开的文本模型价格；原厂平台上托管的其他厂商模型、OpenRouter 等网关报价、地域性/订阅制费率不作为回退价格来源。API 不标注模型的真实厂商，因此新增原厂或新系列需要维护者先审核并扩充 `ORIGINAL_PROVIDERS`，不能按相似名称自动猜测。
+本地更新时，审阅生成文件与 `overrides.ts` 的差异后提交。更新脚本只请求 `https://models.dev/api.json`，从人工确认的**原厂 Provider + 自家模型系列**提取公开的文本模型价格；原厂平台上托管的其他厂商模型、OpenRouter 等网关报价、地域性/订阅制费率不作为回退价格来源。自动化不修改来源白名单、别名或人工例外。API 不标注模型的真实厂商，因此新增原厂或新系列需要维护者先审核并扩充 `ORIGINAL_PROVIDERS`，不能按相似名称自动猜测。
 
 `src/prices.generated.ts` 是随 npm 包发布的离线快照：插件启动、刷新、构建、打包和测试均不请求 models.dev。`src/aliases.ts` 只记录无法按已知包装形式解决的厂商 slug 与精确模型 ID 差异；`src/overrides.ts` 只记录有原厂来源的缺失 SKU、已核实的例外费率及无法直接使用的 API 字段。普通价格变动通过重新生成快照维护，不往别名或例外表中增加常规型号。
 
