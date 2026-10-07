@@ -15,7 +15,7 @@ test("last request estimates six distinct input sources without treating them as
     messages: [
       { role: "user", content: [{ type: "text", text: "Question <skill_content id=\"guide\">Skill instructions</skill_content>" }] },
       { role: "tool", content: [{ type: "tool-result", name: "read", id: "tool-1", result: { type: "text", value: "File contents" } }] },
-      { role: "user", content: [{ type: "media", mediaType: "image/png", data: "encoded" }] },
+      { role: "user", content: [{ type: "media", media: { mediaType: "image/png", source: { type: "base64", mediaType: "image/png", data: "encoded" } } }] },
     ],
   } as unknown as Pick<SessionContext, "system" | "messages" | "tools" | "model">;
   const sources = estimateContextSources(request, ["github"], 1234);
@@ -74,6 +74,37 @@ test("tool-result files do not count inline media URIs as text tokens", () => {
     } }] }],
   } as unknown as Pick<SessionContext, "system" | "messages" | "tools" | "model">;
   assert.ok(estimateContextSources(request).tokens.Messages < 100);
+});
+
+test("media assets estimate only their label, never bytes, base64, or remote URLs", () => {
+  const sources = [
+    { type: "bytes", data: new Uint8Array(20_000), mediaType: "image/png" },
+    { type: "base64", data: "A".repeat(20_000), mediaType: "image/png" },
+    { type: "url", url: `https://example.invalid/${"A".repeat(20_000)}`, mediaType: "image/png" },
+  ];
+  for (const source of sources) {
+    const part = { type: "media", media: { mediaType: "image/png", source } };
+    const request = {
+      model: { providerID: "test", id: "small" }, system: [], tools: {},
+      messages: [{ role: "user", content: [part] }],
+    } as unknown as Pick<SessionContext, "system" | "messages" | "tools" | "model">;
+    const result = estimateContextSources(request);
+    assert.equal(result.tokens.Other, 3, `${source.type} counts only image/png`);
+    assert.equal(result.tokens.Messages, 0);
+    Object.assign(part, { filename: "uploaded-diagram-preview.png" });
+    assert.equal(estimateContextSources(request).tokens.Other, 7, "filename takes precedence over media type");
+  }
+});
+
+test("media estimates retain legacy hook support and tolerate missing labels", () => {
+  const request = {
+    model: { providerID: "test", id: "small" }, system: [], tools: {},
+    messages: [{ role: "user", content: [
+      { type: "media", mediaType: "image/png", data: "A".repeat(20_000) },
+      { type: "media", data: "A".repeat(20_000) },
+    ] }],
+  } as unknown as Pick<SessionContext, "system" | "messages" | "tools" | "model">;
+  assert.equal(estimateContextSources(request).tokens.Other, 3);
 });
 
 test("breakdown rows hide empty categories in compact mode and keep them in detailed mode", () => {

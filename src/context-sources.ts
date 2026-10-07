@@ -74,7 +74,10 @@ export function estimateContextSources(
       }
       if (part.type === "media") {
         // Media payload sizes do not translate to provider token counts.
-        tokens.Other += estimate(part.filename ?? part.mediaType);
+        // Older hosts expose mediaType directly; SDK 2.0.24 wraps it in an asset.
+        const mediaType = part.media?.mediaType
+          ?? ("mediaType" in part && typeof part.mediaType === "string" ? part.mediaType : "");
+        tokens.Other += estimate(part.filename ?? mediaType);
         continue;
       }
       if (part.type === "tool-call") {

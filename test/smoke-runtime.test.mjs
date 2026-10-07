@@ -8,10 +8,11 @@ test("smoke accepts historical hosts without claiming all were verified with the
   assert.deepEqual(checkOpenCodeVersion("opencode v2.0.10"), { version: "2.0.10", verified: false });
   assert.deepEqual(checkOpenCodeVersion("opencode v2.0.11\n"), { version: "2.0.11", verified: true });
   assert.deepEqual(checkOpenCodeVersion("opencode v2.0.22"), { version: "2.0.22", verified: true });
+  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.24"), { version: "2.0.24", verified: true });
 });
 
 test("newer OpenCode 2 hosts can run compatibility checks without updating an allowlist", () => {
-  for (const version of ["2.0.23", "2.0.99", "2.1.0", "2.10.0"]) {
+  for (const version of ["2.0.23", "2.0.25", "2.0.99", "2.1.0", "2.10.0"]) {
     assert.deepEqual(checkOpenCodeVersion(`opencode v${version}`), { version, verified: false });
   }
 });

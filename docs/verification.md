@@ -1,5 +1,33 @@
 # 验证记录
 
+## 2026-10-07 · SDK 2.0.24 升级
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包仍为 0.4.4。`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 从 2.0.11 同步精确升级到 2.0.24；锁文件中的全部七个 OpenCode 包均为 2.0.24。OpenTUI 从 0.5.10 同步到 SDK 与 theme 配套的 0.5.14，没有追随独立发布的 0.5.15。未修改价格快照、未升插件包版本、未提交或推送、未实际发布 npm。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm ci --no-audit --no-fund` | Node 22 下通过，保留 OpenTUI 引擎警告 |
+| `npm run typecheck` | 通过 |
+| `npm test` | 103 项通过，新增两项媒体封装与旧宿主兼容回归测试 |
+| `npm run build` | 通过 |
+| `npm pack --dry-run` | 通过，完整执行 `prepack` 构建，包含 37 个发布文件 |
+| `npm run test:smoke`，默认宿主 2.0.24 | 完整通过，打包、隔离安装、真实服务端与 TUI |
+| `OPENCODE_BIN=… npm run test:smoke`，独立宿主 2.0.22 | 完整通过 |
+| `OPENCODE_BIN=… npm run test:smoke`，独立宿主 2.0.11 | 完整通过 |
+
+新版 `@opencode/ai` 将请求媒体从平铺的 `mediaType` / `data` 改为 `media` asset。上下文来源估算现在优先读取 `part.media.mediaType`，同时兼容旧宿主的 `part.mediaType`；有文件名时仍优先按文件名估算，缺少标签时不伪造媒体 token。新增测试覆盖 bytes、base64 和 URL 负载不会计入文本 token，以及旧格式与缺失标签。插件入口、请求钩子、RPC、客户端分页及 TUI 插槽无需迁移，实测五类 token、上下文和计费口径不变。
+
+OpenTUI 0.5.14 的原生 Node 运行时声明 Node `>=26.4.0` / Bun `>=1.3.0`。本轮 Node 22 干净安装和打包安装均报告 `EBADENGINE`，未强制绕过或隐藏警告；类型检查、测试与构建不运行原生 Node TUI，真实终端验证使用 OpenCode 自带运行时。因此保留项目 Node 22+ 要求，但不宣称独立 Node 22 原生 TUI 渲染受支持；启用 npm `engine-strict` 时仍须满足该依赖的 Node 引擎要求。
+
+三版宿主均保留并通过原有完整断言：空会话、切换到生成中的会话、实时 TPS / TTFT、完成后精确吞吐、`/usage` 的紧凑／详细模式与 100 / 48 列布局、子代理全树累计和浮窗、按消息模型计费、模型切换与原厂价格回退、删除会话清理 RPC，以及真实分叉和 compaction。分叉继承 ID 仍带 `_序号` 后缀，用量只归原来源但占用分叉本地 Context；真实 compaction 仍为 `status === "completed"`，完整升序历史保留压缩前消息，压缩边界后的新 assistant 恢复 Context。全树 Total 5,080、费用 `$0.00504`、上下文上限 128,000 → 32,000 和回退费用 `$0.000149` 均未变化。
+
+旧版宿主使用校验 npm SHA-512 完整性的官方 `@opencode/cli-darwin-arm64` 独立二进制，未修改日常 OpenCode 安装、用户配置或调用付费模型。当前 SDK 的已验证宿主列表更新为 2.0.11、2.0.22、2.0.24；2.0.9 / 2.0.10 未在本轮复测，保留下方历史记录，不据 smoke 可运行范围扩展兼容声明。
+
+验证产物：
+- OpenCode 2.0.24：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-gka7v0`。
+- OpenCode 2.0.22：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-RpSxaf`。
+- OpenCode 2.0.11：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-NQbaNC`。
+
 ## 2026-10-05 · 自动价格 patch 与 npm 发布链路（本地验证）
 
 环境：macOS、Node.js v22.23.2、插件包仍为 0.4.4，SDK 仍锁定 2.0.11。本轮只修改价格更新与发布自动化、测试和文档，未更新真实价格快照、未推送提交或标签、未创建 GitHub Release，也未实际发布 npm。

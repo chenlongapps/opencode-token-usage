@@ -34,7 +34,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 ```
 
 > [!NOTE]
-> 需要 Node.js 22+。项目历次发布已验证 OpenCode 2.0.9、2.0.10 和 2.0.11；当前 SDK 2.0.11 构建已在 OpenCode 2.0.11 和 2.0.22 上重新验证。
+> 需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。此前发布已验证 OpenCode 2.0.9 和 2.0.10；当前 SDK 2.0.24 构建已在 OpenCode 2.0.11、2.0.22 和 2.0.24 上验证。
 
 安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方保留一行实时摘要，显示 Context、Total、Cost 和 TPS。点击摘要可在居中弹窗中查看完整统计；按 Escape 或点击 **esc** 即可关闭，关闭弹窗不会中断子代理。
 
@@ -98,6 +98,8 @@ npm test
 npm run build
 npm run test:smoke
 ```
+
+OpenCode SDK 包精确锁定为 `2.0.24`，OpenTUI 为 `0.5.14`。Node.js 22 下已通过干净安装、类型检查、测试、构建和真实宿主 smoke。OpenTUI 为其原生 Node 运行时声明 Node.js `>=26.4.0`，因此 Node 22 安装时 npm 会输出 `EBADENGINE`；启用 `engine-strict` 时须使用满足该依赖引擎要求的 Node 版本。插件的 TUI 在 OpenCode 内运行，并非独立的 Node 22 渲染器。本次升级保持项目 Node.js 22+ 的最低要求不变。
 
 [价格更新工作流](.github/workflows/update-prices.yml) 每天 UTC 22:00 检查 models.dev，也可在 `main` 上通过 **Run workflow** 手动触发。快照无变化就不发布。经审核的原厂来源白名单内有变化时，先通过类型检查、测试、构建和打包检查，再自动升级 patch 版本（例如 `0.4.4` → `0.4.5`），只提交 `src/prices.generated.ts`、`package.json` 和 `package-lock.json`，并原子推送 `main` 与版本标签。工作流创建 GitHub Release，显式触发该标签上的 [`publish.yml`](.github/workflows/publish.yml)，通过 npm Trusted Publishing/OIDC 发布，无需长期 npm token。仓库必须允许 GitHub Actions 推送 `main` 和创建标签；npm 必须信任 `publish.yml` 并允许执行 `npm publish`。
 

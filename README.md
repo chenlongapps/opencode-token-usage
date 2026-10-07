@@ -34,7 +34,7 @@ Alternatively, add the package to your project's `opencode.json` or `opencode.js
 ```
 
 > [!NOTE]
-> Requires Node.js 22+. OpenCode 2.0.9, 2.0.10, and 2.0.11 have been verified across project releases. The current SDK 2.0.11 build has been reverified on OpenCode 2.0.11 and 2.0.22.
+> Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. The current SDK 2.0.24 build has been verified on OpenCode 2.0.11, 2.0.22, and 2.0.24.
 
 Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
 
@@ -98,6 +98,8 @@ npm test
 npm run build
 npm run test:smoke
 ```
+
+The OpenCode SDK packages are pinned to `2.0.24`, with OpenTUI `0.5.14`. Clean installation, typecheck, tests, build, and real-host smoke have passed on Node.js 22. OpenTUI declares Node.js `>=26.4.0` for its native Node runtime, so npm reports `EBADENGINE` on Node 22; `engine-strict` installations require a Node version meeting that dependency's engine requirement. The plugin's TUI runs inside OpenCode, not as a standalone Node 22 renderer. This upgrade keeps the project's Node.js 22+ minimum unchanged.
 
 The [price update workflow](.github/workflows/update-prices.yml) checks models.dev every day at 22:00 UTC (or on demand via **Run workflow** on `main`). No snapshot diff means no release. Changes within the reviewed first-party source allowlist pass typecheck, tests, build, and pack validation, then automatically bump the patch version (for example, `0.4.4` → `0.4.5`), commit only `src/prices.generated.ts`, `package.json`, and `package-lock.json`, and atomically push `main` and its version tag. The workflow creates a GitHub Release and explicitly dispatches [`publish.yml`](.github/workflows/publish.yml) on that tag to publish via npm Trusted Publishing/OIDC; no long-lived npm token is needed. GitHub Actions must be allowed to push to `main` and create tags, and npm must trust `publish.yml` with permission to run `npm publish`.
 
