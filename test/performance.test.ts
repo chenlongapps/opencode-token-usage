@@ -4,6 +4,7 @@ import {
   estimatedLiveTps,
   historicalPerformance,
   PerformanceMonitor,
+  preparePerformance,
   smoothLiveTps,
 } from "../src/performance.js";
 import type { PerformanceEvent } from "../src/performance.js";
@@ -124,11 +125,13 @@ test("sliding window drops samples older than two seconds", () => {
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
   tracker.handle(event("session.text.delta", "t0", 0, { assistantMessageID: "a", sessionID: "root", delta: text(100) }));
   tracker.handle(event("session.text.delta", "t1", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(100) }));
+  assert.equal(tracker.summary([], ["root"]).tps, 50);
   tracker.handle(event("session.text.delta", "t2", 4_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
+  assert.equal(tracker.summary([], ["root"]).tps, undefined, "one remaining sample cannot expose the cached rate");
   tracker.handle(event("session.text.delta", "t3", 5_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
-  // Only the last two samples remain: 800 bytes => 200 tokens over 1 s.
+  // Only the last two samples remain: 800 bytes => 200 tokens over 1 s, eased from 50.
   const summary = tracker.summary([], ["root"]);
-  assert.equal(summary.tps, 200);
+  assert.equal(summary.tps, 50 * 0.65 + 200 * 0.35);
   tracker.dispose();
 });
 
@@ -140,6 +143,7 @@ test("fast recent output quickly replaces an old slow average", () => {
   }
   tracker.handle(event("session.text.delta", "fast-1", 5_000, { assistantMessageID: "a", sessionID: "root", delta: text(120) }));
   tracker.handle(event("session.text.delta", "fast-2", 6_000, { assistantMessageID: "a", sessionID: "root", delta: text(120) }));
+  tracker.handle(event("session.text.delta", "fast-3", 7_000, { assistantMessageID: "a", sessionID: "root", delta: text(120) }));
   const summary = tracker.summary([], ["root"]);
   assert.ok(summary.tps !== undefined && summary.tps > 25, `expected fast window, got ${summary.tps}`);
   tracker.dispose();
@@ -177,8 +181,20 @@ test("concurrent steps keep independent windows and aggregate within one tree", 
   assert.equal(tracker.summary([], ["root", "child"]).tps, 60);
   assert.deepEqual(tracker.summary([], ["other"]), {});
 
+  tracker.handle(event("session.text.delta", "root-3", 2_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
+  // Root eases from 40 toward 120. Child keeps its cached 80 over a shorter window.
+  assert.equal(tracker.summary([], ["root"]).tps, 68);
+  assert.equal(tracker.summary([], ["child"]).tps, 80);
+  assert.equal(tracker.summary([], ["root", "child"]).tps, 72);
+
+  tracker.handle(event("session.text.delta", "child-3", 2_000, { assistantMessageID: "b", sessionID: "child", delta: text(80) }));
+  // Only child advances (80 -> 73); both windows now span one second.
+  assert.equal(tracker.summary([], ["child"]).tps, 73);
+  assert.equal(tracker.summary([], ["root", "child"]).tps, 70.5);
+  assert.equal(tracker.summary([], ["root"]).tps, 68);
+
   tracker.handle({ type: "session.deleted", data: { sessionID: "child" } });
-  assert.equal(tracker.summary([], ["root", "child"]).tps, 40);
+  assert.equal(tracker.summary([], ["root", "child"]).tps, 68);
   tracker.dispose();
 });
 
@@ -222,13 +238,13 @@ test("unicode deltas use UTF-8 bytes without claiming tokenizer precision", () =
   tracker.handle(event("session.reasoning.delta", "emoji", 1_400, { assistantMessageID: "a", sessionID: "root", delta: "😀" }));
   tracker.handle(event("session.tool.input.delta", "code", 1_600, { assistantMessageID: "a", sessionID: "root", delta: '{"a":1}' }));
   const summary = tracker.summary([], ["root"]);
-  // 4 + 6 + 4 + 7 = 21 bytes => 5.25 tokens / 0.6 s = 8.75.
-  assert.equal(summary.tps, 8.75);
+  // Raw UTF-8 rates are 12.5, 8.75, 8.75; each new sample advances smoothing once.
+  assert.equal(summary.tps, (12.5 * 0.65 + 8.75 * 0.35) * 0.65 + 8.75 * 0.35);
   assert.equal(summary.tpsEstimated, true);
   tracker.dispose();
 });
 
-test("EWMA smoothing follows sudden jumps without hiding them", () => {
+test("EWMA smoothing advances only for new samples, never summary reads", () => {
   assert.equal(estimatedLiveTps([]), undefined);
   assert.equal(estimatedLiveTps([{ time: 1_000, bytes: 4 }]), undefined);
   assert.equal(estimatedLiveTps([{ time: 1_000, bytes: 4 }, { time: 1_000, bytes: 4 }]), undefined);
@@ -242,8 +258,44 @@ test("EWMA smoothing follows sudden jumps without hiding them", () => {
   assert.equal(tracker.summary([], ["root"]).tps, 20);
   tracker.handle(event("session.text.delta", "third", 2_500, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
   // Raw jumps to 80; the displayed value eases toward it.
-  assert.equal(tracker.summary([], ["root"]).tps, 20 * 0.65 + 80 * 0.35);
+  const prepared = preparePerformance([]);
+  const expected = { tps: 41, tpsEstimated: true, ttft: 0 };
+  for (let i = 0; i < 3; i++) {
+    assert.deepEqual(tracker.summary([], ["root"]), expected);
+    assert.deepEqual(tracker.summaryPrepared(prepared, ["root"]), expected);
+  }
+  assert.equal(tracker.handle(event("session.text.delta", "third", 2_500, { assistantMessageID: "a", sessionID: "root", delta: text(400) })), false);
+  assert.equal(tracker.handle(event("session.text.delta", "empty", 2_750, { assistantMessageID: "a", sessionID: "root", delta: "" })), false);
+  tracker.handle(event("session.step.streamed", "streamed", 3_000, { assistantMessageID: "a", sessionID: "root" }));
+  assert.deepEqual(tracker.summaryPrepared(prepared, ["root"]), expected);
+
+  tracker.handle(event("session.text.delta", "fourth", 3_000, { assistantMessageID: "a", sessionID: "root", delta: text(160) }));
+  // The new window is still 80 tok/s raw; only this new sample advances EWMA.
+  assert.equal(tracker.summary([], ["root"]).tps, 41 * 0.65 + 80 * 0.35);
+  assert.equal(tracker.summaryPrepared(prepared, ["root"]).tps, 41 * 0.65 + 80 * 0.35);
   tracker.dispose();
+});
+
+test("live TPS is independent of summary read frequency, including no readers", t => {
+  const stream = [
+    event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }),
+    event("session.text.delta", "first", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }),
+    event("session.reasoning.delta", "second", 2_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }),
+    event("session.tool.input.delta", "third", 2_500, { assistantMessageID: "a", sessionID: "root", delta: text(400) }),
+  ];
+  const prepared = preparePerformance([]);
+  for (const reads of [0, 1, 3]) {
+    const tracker = new PerformanceMonitor();
+    t.after(() => tracker.dispose());
+    for (const sample of stream) {
+      tracker.handle(sample);
+      for (let i = 0; i < reads; i++) {
+        tracker.summary([], ["root"]);
+        tracker.summaryPrepared(prepared, ["root"]);
+      }
+    }
+    assert.deepEqual(tracker.summaryPrepared(prepared, ["root"]), { tps: 41, tpsEstimated: true, ttft: 0 }, `${reads} reads per event`);
+  }
 });
 
 for (const order of ["snapshot first", "end first"] as const) {

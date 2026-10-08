@@ -323,6 +323,52 @@ test("stream deltas publish estimated TPS and TTFT without source reads, then co
   assert.equal(state.performance?.ttft, 500);
 });
 
+test("opening a detailed view shares live TPS without advancing the sidebar's smoothing", async t => {
+  const source = new FakeSource(), events = new Events();
+  const performance = new PerformanceMonitor(events.subscribe);
+  let sidebarState: UsageState = { status: "loading" };
+  const sidebar = new UsageController(source, events.subscribe, value => { sidebarState = value; }, 2, 3_000, 2, performance);
+  t.after(() => { sidebar.dispose(); performance.dispose(); });
+  sidebar.select("root");
+  await until(() => sidebarState.status === "ready");
+
+  events.emit({ type: "session.step.started", id: "start", created: 1_000, data: {
+    assistantMessageID: "live", sessionID: "root", started: 1_000,
+  } });
+  for (const created of [1_000, 2_000]) {
+    events.emit({ type: "session.text.delta", id: `delta-${created}`, created, data: {
+      assistantMessageID: "live", sessionID: "root", delta: "a".repeat(40),
+    } });
+  }
+  await until(() => sidebarState.performance?.tps === 20);
+  events.emit({ type: "session.text.delta", id: "third", created: 2_500, data: {
+    assistantMessageID: "live", sessionID: "root", delta: "a".repeat(400),
+  } });
+  await until(() => sidebarState.performance?.tps !== 20);
+  assert.deepEqual(sidebarState.performance, { tps: 41, tpsEstimated: true, ttft: 0 });
+
+  let dialogState: UsageState = { status: "loading" };
+  const dialog = new UsageController(source, events.subscribe, value => { dialogState = value; }, 2, 3_000, 5, performance, true);
+  t.after(() => dialog.dispose());
+  dialog.select("root");
+  await until(() => dialogState.status === "ready");
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+
+  const reads = source.reads;
+  events.emit({ type: "session.text.delta", id: "fourth", created: 3_000, data: {
+    assistantMessageID: "live", sessionID: "root", delta: "a".repeat(160),
+  } });
+  await until(() => sidebarState.performance?.tps !== 41 && dialogState.performance?.tps !== 41);
+  assert.deepEqual(sidebarState.performance, { tps: 41 * 0.65 + 80 * 0.35, tpsEstimated: true, ttft: 0 });
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+  assert.equal(source.reads, reads);
+
+  const previous = dialogState;
+  dialog.refresh();
+  await until(() => dialogState !== previous);
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+});
+
 test("a shared monitor restores a stream captured before switching to its session tree", async t => {
   const source = new FakeSource(), events = new Events();
   source.sessions.set("other", session("other"));

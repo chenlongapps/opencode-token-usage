@@ -304,6 +304,9 @@ export class PerformanceMonitor {
     step.samples.push({ time: event.created, bytes: sampleBytes });
     const cutoff = event.created - LIVE_WINDOW_MS;
     while (step.samples.length > 0 && step.samples[0]!.time < cutoff) step.samples.shift();
+    // Advance smoothing once per accepted delta, independently of summary readers.
+    const raw = estimatedLiveTps(step.samples);
+    if (raw !== undefined) step.liveTps = smoothLiveTps(step.liveTps, raw);
     step.last = Math.max(step.last ?? event.created, event.created);
     if (step.first === undefined) {
       step.first = event.created;
@@ -350,13 +353,11 @@ export class PerformanceMonitor {
     let durationTotal = 0;
     for (const step of this.active.values()) {
       if (!sessions.has(step.sessionID) || step.reconciledAt !== undefined) continue;
-      const raw = estimatedLiveTps(step.samples);
-      if (raw === undefined) continue;
+      if (step.liveTps === undefined || step.samples.length < 2) continue;
       const first = step.samples[0]!;
       const last = step.samples[step.samples.length - 1]!;
       const duration = last.time - first.time;
       if (!finite(duration) || duration <= 0) continue;
-      step.liveTps = smoothLiveTps(step.liveTps, raw);
       weighted += step.liveTps * duration;
       durationTotal += duration;
     }
