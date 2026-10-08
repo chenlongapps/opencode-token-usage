@@ -41,6 +41,15 @@ async function repo(t) {
 
 const changePrices = cwd => writeFile(path.join(cwd, "src/prices.generated.ts"), "// prices after\n");
 
+function pollingClock() {
+  const clock = { elapsed: 0, delays: [], messages: [] };
+  return Object.assign(clock, {
+    now: () => clock.elapsed,
+    wait: async delay => { clock.delays.push(delay); clock.elapsed += delay; },
+    log: message => clock.messages.push(message),
+  });
+}
+
 test("patch versions and latest comparisons use stable numeric semver", () => {
   assert.equal(nextPatch("0.4.4"), "0.4.5");
   assert.equal(nextPatch("1.2.99"), "1.2.100");
@@ -181,14 +190,203 @@ test("mismatched lockfile versions stop both price and publishing jobs", async t
   await assert.rejects(publishState({ cwd, fetcher: catalog() }), /matching names and versions/);
 });
 
-test("publication verification waits for registry visibility and checks latest", async t => {
+test("publication verification waits beyond the old two-minute window for registry visibility", async t => {
   const { cwd } = await repo(t);
-  let waits = 0;
-  const fetcher = async url => waits === 0 ? new Response(null, { status: 404 }) : catalog()(url);
-  await verifyPublished({ cwd, fetcher, wait: async () => { waits++; } });
-  assert.equal(waits, 1);
-  await assert.rejects(verifyPublished({ cwd, fetcher: catalog(["0.4.4"], "0.4.3"), attempts: 2, wait: async () => {} }), /latest does not point/);
-  await assert.rejects(verifyPublished({ cwd, fetcher: catalog([]), attempts: 1 }), /not visible/);
-  await assert.rejects(verifyPublished({ cwd, fetcher: async () => new Response(null, { status: 503 }), attempts: 1 }), /lookup failed/);
-  await verifyPublished({ cwd, fetcher: catalog(["0.4.4"], "0.5.0"), expectLatest: false });
+  const clock = pollingClock();
+  let requests = 0;
+  const fetcher = async url => {
+    requests++;
+    return clock.elapsed < 180_000 ? new Response(null, { status: 404 }) : catalog()(url);
+  };
+  await verifyPublished({ cwd, fetcher, ...clock });
+  assert.equal(clock.elapsed, 180_000);
+  assert.deepEqual(clock.delays, Array(18).fill(10_000));
+  assert.equal(requests, 20); // Nineteen version lookups, then latest.
+  assert.match(clock.messages[0], /Waiting up to 600s/);
+  assert.ok(clock.messages.some(message => /not visible on npm yet/.test(message)));
+});
+
+test("publication verification separately waits for latest and reports its current version", async t => {
+  const { cwd } = await repo(t);
+  const clock = pollingClock();
+  const fetcher = url => catalog(["0.4.4"], clock.elapsed < 240_000 ? "0.4.3" : "0.4.4")(url);
+  await verifyPublished({ cwd, fetcher, ...clock });
+  assert.equal(clock.elapsed, 240_000);
+  assert.deepEqual(clock.delays, Array(24).fill(10_000));
+  assert.ok(clock.messages.some(message => /currently 0.4.3; target version is visible/.test(message)));
+  assert.ok(clock.messages.some(message => /230\/600s/.test(message)));
+});
+
+test("already published verification does not query or modify a newer latest", async t => {
+  const { cwd } = await repo(t);
+  const clock = pollingClock();
+  const fetcher = url => {
+    assert.notEqual(decodeURIComponent(new URL(url).pathname.split("/").at(-1)), "latest");
+    return catalog(["0.4.4"], "0.5.0")(url);
+  };
+  await verifyPublished({ cwd, fetcher, expectLatest: false, ...clock });
+  assert.equal(clock.elapsed, 0);
+  assert.deepEqual(clock.delays, []);
+});
+
+test("publication verification recovers from transient registry errors without calling them missing", async t => {
+  const { cwd } = await repo(t);
+  const clock = pollingClock();
+  const failures = [
+    new Response(null, { status: 503 }),
+    new Response(null, { status: 429 }),
+    new Error("offline"),
+    Response.json({}),
+    Response.json({ version: "0.4.5" }),
+  ];
+  const fetcher = url => {
+    const failure = failures.shift();
+    if (failure instanceof Error) throw failure;
+    return failure ?? catalog()(url);
+  };
+  await verifyPublished({ cwd, fetcher, ...clock });
+  assert.equal(clock.elapsed, 50_000);
+  for (const reason of [/HTTP 503/, /HTTP 429/, /offline/, /stable npm version/, /Unexpected npm version/]) {
+    assert.ok(clock.messages.some(message => reason.test(message)));
+  }
+  assert.ok(clock.messages.every(message => !/not visible/.test(message)));
+});
+
+test("verification timeout preserves the last observation and never turns registry faults into success", async t => {
+  const { cwd } = await repo(t);
+  const failures = [
+    [catalog([]), /not visible/],
+    [catalog(["0.4.4"], "0.4.3"), /latest does not point.*currently 0.4.3/],
+    ...[401, 403, 429, 500, 503].map(status => [async () => new Response(null, { status }), new RegExp(`HTTP ${status}`)]),
+    [async () => { throw new Error("offline"); }, /offline/],
+    [async () => Response.json({}), /stable npm version/],
+    [async () => Response.json({ version: "0.4.5" }), /Unexpected npm version/],
+    [async () => new Response("not JSON"), /JSON/],
+  ];
+  for (const [fetcher, reason] of failures) {
+    const clock = pollingClock();
+    await assert.rejects(verifyPublished({ cwd, fetcher, timeoutMs: 25_000, ...clock }), error => {
+      assert.match(error.message, /npm registry verification timed out after 25s/);
+      assert.match(error.message, /does not prove npm publish failed/);
+      assert.match(error.message, /rerun the same tag without bumping the version/);
+      assert.match(error.message, reason);
+      assert.match(error.cause.message, reason);
+      return true;
+    });
+    assert.equal(clock.elapsed, 25_000);
+    assert.deepEqual(clock.delays, [10_000, 10_000, 5_000]);
+    assert.equal(clock.messages.length, 4); // Initial budget and three failed polls.
+  }
+});
+
+test("version lookups, latest lookups and sleeps share a single total deadline", async t => {
+  const { cwd } = await repo(t);
+  const clock = pollingClock(), timeouts = [], versions = [];
+  t.mock.method(AbortSignal, "timeout", milliseconds => {
+    timeouts.push(milliseconds);
+    return new AbortController().signal;
+  });
+  const fetcher = async url => {
+    versions.push(decodeURIComponent(new URL(url).pathname.split("/").at(-1)));
+    clock.elapsed += [12_000, 5_000, 8_000][versions.length - 1];
+    return versions.length === 1 ? new Response(null, { status: 404 }) : catalog(["0.4.4"], "0.4.3")(url);
+  };
+  await assert.rejects(verifyPublished({ cwd, fetcher, timeoutMs: 35_000, ...clock }), /verification timed out.*latest does not point/);
+  assert.deepEqual(versions, ["0.4.4", "0.4.4", "latest"]);
+  assert.deepEqual(timeouts, [30_000, 13_000, 8_000]);
+  assert.deepEqual(clock.delays, [10_000]);
+  assert.equal(clock.elapsed, 35_000);
+});
+
+test("verification never starts a latest lookup after the total deadline", async t => {
+  const { cwd } = await repo(t);
+  const clock = pollingClock(), versions = [];
+  const fetcher = async url => {
+    versions.push(decodeURIComponent(new URL(url).pathname.split("/").at(-1)));
+    clock.elapsed += 10_000;
+    return catalog()(url);
+  };
+  await assert.rejects(verifyPublished({ cwd, fetcher, timeoutMs: 10_000, ...clock }), /deadline reached before looking up @test\/prices@latest/i);
+  assert.deepEqual(versions, ["0.4.4"]);
+  assert.deepEqual(clock.delays, []);
+});
+
+test("a lookup completing after the deadline cannot produce a verification success", async t => {
+  const { cwd } = await repo(t);
+  const clock = pollingClock();
+  const fetcher = async url => {
+    clock.elapsed += 10_001;
+    return catalog()(url);
+  };
+  await assert.rejects(verifyPublished({ cwd, fetcher, expectLatest: false, timeoutMs: 10_000, ...clock }), /deadline reached during the registry lookup/i);
+  assert.deepEqual(clock.delays, []);
+});
+
+test("a stalled registry request is aborted within the remaining verification budget", { timeout: 2_000 }, async t => {
+  const { cwd } = await repo(t);
+  let signal;
+  // AbortSignal.timeout uses an unref'ed timer; keep the mocked request alive until it aborts.
+  const keepAlive = setTimeout(() => {}, 2_000);
+  t.after(() => clearTimeout(keepAlive));
+  const fetcher = (_, options) => new Promise((resolve, reject) => {
+    signal = options.signal;
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+  await assert.rejects(verifyPublished({ cwd, fetcher, timeoutMs: 30, log: () => {} }), error => {
+    assert.match(error.message, /verification timed out/);
+    assert.equal(error.cause.name, "TimeoutError");
+    return true;
+  });
+  assert.equal(signal.aborted, true);
+});
+
+test("verification rejects invalid duration configuration before contacting npm", async () => {
+  const fetcher = () => assert.fail("Invalid configuration must never query npm");
+  for (const field of ["timeoutMs", "intervalMs"]) {
+    for (const value of [0, -1, 0.5, NaN, Infinity, 2_147_483_648, "10000", null]) {
+      await assert.rejects(verifyPublished({ fetcher, [field]: value }), new RegExp(`${field} must be an integer`));
+    }
+  }
+});
+
+test("the verification CLI validates settings and summarizes visibility timeouts and successes", async t => {
+  const { root, cwd } = await repo(t);
+  const script = path.resolve("scripts/release.mjs"), summary = path.join(root, "summary.md");
+  for (const field of ["NPM_VERIFY_TIMEOUT_MS", "NPM_VERIFY_INTERVAL_MS"]) {
+    assert.throws(() => execFileSync(process.execPath, [script, "verify-published"], {
+      cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, NPM_VERIFY_TIMEOUT_MS: "600000", NPM_VERIFY_INTERVAL_MS: "10000", [field]: "invalid", GITHUB_STEP_SUMMARY: summary },
+    }), error => {
+      assert.equal(error.status, 1);
+      assert.match(error.stderr, /must be an integer/);
+      return true;
+    });
+  }
+  const text = await readFile(summary, "utf8");
+  assert.match(text, /npm registry verification failed: timeoutMs must be an integer/);
+  assert.match(text, /npm registry verification failed: intervalMs must be an integer/);
+  assert.doesNotMatch(text, /Verified/);
+
+  // Preload a local mock so CLI coverage never contacts or writes to the real npm registry.
+  const mock = path.join(root, "registry.mjs"), args = ["--import", mock, script, "verify-published"];
+  const env = { ...process.env, EXPECT_LATEST: "true", NPM_VERIFY_TIMEOUT_MS: "25", NPM_VERIFY_INTERVAL_MS: "10", GITHUB_STEP_SUMMARY: summary };
+  await writeFile(mock, "globalThis.fetch = async () => new Response(null, { status: 404 });\n");
+  assert.throws(() => execFileSync(process.execPath, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), error => {
+    assert.equal(error.status, 1);
+    assert.match(error.stdout, /Waiting up to 0.025s/);
+    assert.match(error.stderr, /verification timed out.*not visible/);
+    return true;
+  });
+  const failureSummary = await readFile(summary, "utf8");
+  assert.match(failureSummary, /verification timed out after 0.025s/);
+  assert.match(failureSummary, /rerun the same tag without bumping the version/);
+  assert.doesNotMatch(failureSummary, /Verified/);
+
+  await writeFile(mock, 'globalThis.fetch = async () => Response.json({ version: "0.4.4" });\n');
+  const stdout = execFileSync(process.execPath, args, {
+    cwd, env: { ...env, NPM_VERIFY_TIMEOUT_MS: "1000" }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.match(stdout, /Waiting up to 1s/);
+  assert.match(stdout, /Verified @test\/prices@0.4.4 on npm \(latest\)/);
+  assert.match(await readFile(summary, "utf8"), /Verified @test\/prices@0.4.4 on npm \(latest\)/);
 });

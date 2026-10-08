@@ -1,5 +1,32 @@
 # 验证记录
 
+## 2026-10-07 · npm 发布可见性校验“假失败”修复
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，本地包版本为 0.4.5、SDK 为 2.0.24。本轮仅修改发布校验、工作流、测试与文档，未修改价格快照或插件运行时代码，未升级版本、移动标签、提交、推送、重跑 GitHub 工作流或实际发布 npm。
+
+只读诊断确认已有真实自动发布链路：
+
+- [价格更新运行 37555311596](https://github.com/chenlongapps/opencode-token-usage/actions/runs/37555311596) 由 `schedule` 触发，验证、patch 提交／原子推送、GitHub Release 和 dispatch 均成功。
+- [发布运行 37555363814](https://github.com/chenlongapps/opencode-token-usage/actions/runs/37555363814) 固定在 `v0.4.5`（`66e0584e1f125f2e5012b081014e42d7d8d57d19`）。`npm publish` 成功，生成 provenance，并在 UTC 01:06:28 提示包仍在处理、可能需几分钟才能可用；失败的是 UTC 01:08:21 的 registry 可见性校验。旧实现只查询 12 次、间隔 10 秒，约 2 分钟即超时。
+- 当前 registry 查询已返回目标版本与 `latest` 均为 `0.4.5`，`gitHead` 匹配上述提交，`dist.shasum` 为 `75f8490aa51a974a5d76942a4e1ffa2d9d13fd3c`，与真实发布日志一致。因此不能把该工作流的失败结论当作 npm 未收到版本，更不能为此另升 patch。
+
+修复将按次数重试改为默认 10 分钟总时限，使用单调时钟计算剩余预算；每次版本／`latest` 请求最多 30 秒，且不得超过剩余预算，等待同样按剩余时间截短。`NPM_VERIFY_TIMEOUT_MS` 与 `NPM_VERIFY_INTERVAL_MS` 可配置并校验合法性。日志显示轮询进度、当前 `latest` 与具体查询错误；最终超时仍返回非零退出码，在 Actions 摘要中保留最后原因及原标签重试提示，不用 `continue-on-error` 掩盖故障。发布校验步骤上限为 11 分钟，整个任务仍为 20 分钟；已发布版本跳过发布与 `latest` 核验，原有禁止倒退 `latest`、registry 故障不等于版本不存在等保护保持不变。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `node --test test/release.test.mjs` | 发布专项 23 项通过 |
+| `npm test` | 113 项通过，比上轮净增 10 项发布校验回归测试 |
+| `npm run build` | 通过 |
+| `npm pack --dry-run` | 通过，执行 `prepack` 构建，包含 37 个发布文件 |
+| `npm publish --dry-run` | 通过，执行类型检查、113 项测试与构建；未写入 registry |
+| GitHub 工作流 | 三个工作流均通过官方 actionlint 1.7.12 检查，下载产物已校验 SHA-256 |
+| npm 只读查询 | `publish-state` 返回 `published=true`；新版 `verify-published` 确认 `0.4.5` 与 `latest` |
+
+回归测试用注入时钟模拟版本在 3 分钟后可见、`latest` 在 4 分钟后更新；同时覆盖 404、HTTP 401／403／429／500／503、网络及无效响应、最后原因保留、单次请求 30 秒上限、请求与等待共用预算、到期后不再发起 `latest` 查询或判定成功，以及真实 AbortSignal 中止挂起请求。CLI 测试预载本地 registry 模拟，不访问真实 npm，验证环境配置、超时非零退出码和失败／成功摘要。
+
+以上真实 GitHub 运行属于修复前的已有标签；新校验逻辑尚未在新的真实发布工作流中验证。本次没有重跑 TUI smoke，之前的宿主验证记录保留。修复提交进入 `main` 后仅供后续新标签使用；旧标签不移动，重跑已可见的 `v0.4.5` 会由原实现跳过发布并核验现有版本。
+
 ## 2026-10-07 · SDK 2.0.24 升级
 
 环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包仍为 0.4.4。`@opencode/plugin`、`@opencode/client`、`@opencode/schema` 和 `@opencode/theme` 从 2.0.11 同步精确升级到 2.0.24；锁文件中的全部七个 OpenCode 包均为 2.0.24。OpenTUI 从 0.5.10 同步到 SDK 与 theme 配套的 0.5.14，没有追随独立发布的 0.5.15。未修改价格快照、未升插件包版本、未提交或推送、未实际发布 npm。

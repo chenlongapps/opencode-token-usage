@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（本轮为 0.4.4），使用 `@opencode/plugin@2.0.24` 与 OpenTUI `0.5.14`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 已验证，不代表独立 Node 22 原生 TUI 渲染受支持。
+- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（当前为 0.4.5），使用 `@opencode/plugin@2.0.24` 与 OpenTUI `0.5.14`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 已验证，不代表独立 Node 22 原生 TUI 渲染受支持。
 - `src/usage.ts` 负责统计、上下文、定价与格式化；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏、子代理浮窗和 `/usage` 弹窗。
 - 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 默认使用 PATH 中的稳定版 OpenCode 2（最低 2.0.9）、Python 3 终端、本地模拟提供商与隔离配置验证打包产物；未验证版本只警告并继续实际检查。可用 `OPENCODE_BIN` 指定独立基准二进制，统一用于版本探测、服务端与 TUI。
 - `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。
@@ -10,6 +10,7 @@
 - 2026-10-02 已通过类型检查、85 项自动化测试、构建及 SDK 2.0.11 + 真实 OpenCode 2.0.11 / 2.0.22 打包集成验证，包含真实分叉、压缩与消息排序检查，记录见 `docs/verification.md`。
 - 2026-10-05 自动价格 patch 链路已通过类型检查、101 项测试、构建、打包／发布 dry-run 和工作流静态检查；真实 GitHub 调度与 npm OIDC 写入尚未触发，不得将本地验证写成已实际自动发布，记录见 `docs/verification.md`。
 - 2026-10-07 SDK 2.0.24 升级已通过 Node 22 干净安装、类型检查、103 项测试、构建及真实 OpenCode 2.0.11 / 2.0.22 / 2.0.24 打包集成验证；媒体分类兼容新 SDK 的 `part.media.mediaType` 与旧宿主的 `part.mediaType`，仍不计媒体负载。包版本与价格快照未变，未发布，记录见 `docs/verification.md`。
+- 2026-10-07 npm 发布校验修复已通过类型检查、113 项测试、构建、打包／发布 dry-run 与 actionlint 检查。已只读确认真实定时价格任务发布了 0.4.5，旧发布工作流因约 2 分钟的可见性校验超时而报“假失败”；registry 的版本与 `latest` 均已可见。新校验默认共用 10 分钟总预算，可配置并输出进度，超时保留真实错误、不掩盖故障；新实现尚未推送或在真实发布中验证，不移动旧标签，记录见 `docs/verification.md`。
 
 ## 产品约定
 

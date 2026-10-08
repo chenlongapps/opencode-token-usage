@@ -39,6 +39,7 @@ GitHub Actions 的发布任务需要 `id-token: write`，并使用 GitHub 托管
 - 标签／npm 版本已被占用、registry 故障或新版本不高于 npm `latest`：停止，不猜测版本或倒退 `latest`。
 - 自动价格标签已推送，但创建 Release、dispatch 或 npm 发布失败：下一次更新任务先重试该标签，不再升 patch。未发布的手动版本不会被每日任务擅自发布，需先完成手动发布。
 - npm 已收到版本：重跑发布任务会跳过 `npm publish`，不修改已有版本或其 dist-tag。
+- `npm publish` 成功但可见性校验超时：不另升版本或移动标签。先查询目标版本与 `latest`；版本已出现时重跑原标签，版本尚未出现时等待 npm 处理。持续的 registry 查询故障也会使校验失败，不会被当作版本不存在或成功发布。
 
 也可直接重试指定标签（不要选择 `main`）：
 
@@ -113,11 +114,25 @@ npm view @chenlongapps/opencode-token-usage version dist-tags --json
 
 npm 接受发布后可能需要几分钟才能完成处理和更新 `latest`。确认新版本和 `latest` 均已出现在 registry 后，发布才算完成。
 
+可见性校验默认每 10 秒轮询，网络请求和等待共用 **10 分钟总时限**；单次请求最多 30 秒，也不能超出剩余预算。日志区分目标版本尚未可见、版本可见但 `latest` 仍旧、HTTP／网络错误，并显示尝试次数和已用时间。超时仍返回非零退出码，在日志与 Actions 摘要中保留最后原因和原标签重试提示，但不会将“未完成校验”断言为“npm 发布失败”。
+
+`scripts/release.mjs verify-published` 的时间配置可通过环境变量调整，单位为毫秒，必须为 `1` 至 `2147483647` 的整数：
+
+| 变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `NPM_VERIFY_TIMEOUT_MS` | `600000` | registry 校验总时限 |
+| `NPM_VERIFY_INTERVAL_MS` | `10000` | 两次失败轮询之间的等待时间，最后一次按剩余预算缩短 |
+
+`publish.yml` 显式使用上述默认值，校验步骤上限为 11 分钟，整个发布任务上限仍为 20 分钟；调大校验时限时须同步检查这两个 Actions 上限。新发布要求目标版本及 `latest` 均匹配；重跑已发布版本仅核验该版本，不要求较新的 `latest` 倒退。
+
+工作流与脚本固定在版本标签的提交上。修复提交合并到 `main` 后仅供后续新标签使用；重跑旧标签仍使用旧实现，但已可见的版本会直接跳过发布并通过核验。不要为了更新发布脚本移动已发布标签。
+
 ## 常见问题
 
 - `Git working directory not clean`：仍有已暂存或未暂存的改动，先提交后再执行版本升级。
 - GitHub 没有新标签：本地标签尚未推送，执行 `git push origin main --follow-tags` 或单独推送对应标签。
 - 标签存在但没有发布到 npm：确认手动 Release 已触发发布，或执行 `gh workflow run publish.yml --ref vX.Y.Z`，并检查 `publish.yml` 的运行结果；自动价格 Release 通过独立 dispatch 触发。
 - npm 暂时返回旧版本或 404：发布可能仍在处理，等待几分钟后使用 `npm view` 重新查询。
+- Actions 显示失败但 `npm publish` 已输出成功：检查失败步骤是否为 registry 可见性校验。可分别查询 `npm view @chenlongapps/opencode-token-usage@X.Y.Z version` 和 `npm view @chenlongapps/opencode-token-usage dist-tags --json`，确认后重跑原标签，不要为消除这个超时另发一个版本。
 
 若 Release 标签与 `package.json` 版本不一致，工作流会在发布前失败。

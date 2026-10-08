@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 export const PRICE_RELEASE_FILES = ["package-lock.json", "package.json", "src/prices.generated.ts"];
 const registry = "https://registry.npmjs.org";
 const commitMessage = tag => `chore: update first-party model prices (${tag})`;
+const verificationTimeoutMs = 600_000, verificationIntervalMs = 10_000;
 
 function versionParts(version) {
   if (typeof version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
@@ -37,9 +38,9 @@ export function verifyReleaseTag(tag, version, refType) {
 }
 
 /** Only an explicit registry 404 means absent; outages must never authorize a release. */
-export async function registryVersion(name, version, fetcher = fetch) {
+export async function registryVersion(name, version, fetcher = fetch, { timeoutMs = 30_000 } = {}) {
   const response = await fetcher(`${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status === 404 && version !== "latest") return undefined;
   if (!response.ok) throw new Error(`npm registry lookup failed for ${name}@${version}: HTTP ${response.status}`);
@@ -114,20 +115,54 @@ export async function publishState({ cwd = process.cwd(), fetcher = fetch } = {}
   return { published };
 }
 
-export async function verifyPublished({ cwd = process.cwd(), fetcher = fetch, expectLatest = true, attempts = 12, wait = setTimeout } = {}) {
-  const pkg = await packageInfo(cwd);
-  let error;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      if (!await registryVersion(pkg.name, pkg.version, fetcher)) throw new Error(`${pkg.name}@${pkg.version} is not visible on npm yet`);
-      if (expectLatest && await registryVersion(pkg.name, "latest", fetcher) !== pkg.version) {
-        throw new Error(`npm latest does not point to ${pkg.version} yet`);
-      }
-      return;
-    } catch (cause) { error = cause; }
-    if (attempt + 1 < attempts) await wait(10_000);
+function verifyDuration(value, name) {
+  if (!Number.isInteger(value) || value < 1 || value > 2_147_483_647) {
+    throw new Error(`${name} must be an integer between 1 and 2147483647 milliseconds`);
   }
-  throw error ?? new Error("npm publication verification failed");
+}
+
+/** npm can accept a publication minutes before its version and latest become visible. */
+export async function verifyPublished({
+  cwd = process.cwd(), fetcher = fetch, expectLatest = true,
+  timeoutMs = verificationTimeoutMs, intervalMs = verificationIntervalMs,
+  wait = setTimeout, now = () => performance.now(), log = console.log,
+} = {}) {
+  verifyDuration(timeoutMs, "timeoutMs");
+  verifyDuration(intervalMs, "intervalMs");
+  const pkg = await packageInfo(cwd);
+  const started = now(), remaining = () => timeoutMs - (now() - started);
+  const lookup = version => {
+    const budget = remaining();
+    if (budget <= 0) throw new Error(`Verification deadline reached before looking up ${pkg.name}@${version}`);
+    return registryVersion(pkg.name, version, fetcher, { timeoutMs: Math.ceil(Math.min(30_000, budget)) });
+  };
+  log(`Waiting up to ${timeoutMs / 1000}s for ${pkg.name}@${pkg.version} on npm${expectLatest ? " and latest" : " (already published)"}; polling every ${intervalMs / 1000}s.`);
+  let error;
+  for (let attempt = 1; remaining() > 0; attempt++) {
+    try {
+      if (!await lookup(pkg.version)) throw new Error(`${pkg.name}@${pkg.version} is not visible on npm yet`);
+      if (expectLatest) {
+        const latest = await lookup("latest");
+        if (latest !== pkg.version) {
+          throw new Error(`npm latest does not point to ${pkg.version} yet (currently ${latest}; target version is visible)`);
+        }
+      }
+      if (remaining() <= 0) throw new Error("Verification deadline reached during the registry lookup");
+      return;
+    } catch (cause) {
+      error = cause;
+      log(`[npm verification ${attempt}; ${Math.round((now() - started) / 1000)}/${timeoutMs / 1000}s] ${cause.message}`);
+    }
+    const delay = Math.min(intervalMs, remaining());
+    if (delay > 0) await wait(delay);
+  }
+  throw new Error(
+    `npm registry verification timed out after ${timeoutMs / 1000}s for ${pkg.name}@${pkg.version}${expectLatest ? " and latest" : ""}. ` +
+    `Last observation: ${error?.message ?? "verification deadline reached"}. ` +
+    "A publication may have been accepted and still be processing; this timeout does not prove npm publish failed. " +
+    "Check the registry and rerun the same tag without bumping the version.",
+    { cause: error },
+  );
 }
 
 async function output(values) {
@@ -147,7 +182,16 @@ async function main() {
     }
     case "publish-state": await output(await publishState()); break;
     case "verify-published": {
-      await verifyPublished({ expectLatest: process.env.EXPECT_LATEST !== "false" });
+      try {
+        await verifyPublished({
+          expectLatest: process.env.EXPECT_LATEST !== "false",
+          timeoutMs: Number(process.env.NPM_VERIFY_TIMEOUT_MS ?? verificationTimeoutMs),
+          intervalMs: Number(process.env.NPM_VERIFY_INTERVAL_MS ?? verificationIntervalMs),
+        });
+      } catch (error) {
+        if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `npm registry verification failed: ${error.message}\n`);
+        throw error;
+      }
       const pkg = await packageInfo(process.cwd());
       const message = `Verified ${pkg.name}@${pkg.version} on npm${process.env.EXPECT_LATEST !== "false" ? " (latest)" : " (already published)"}.`;
       console.log(message);
