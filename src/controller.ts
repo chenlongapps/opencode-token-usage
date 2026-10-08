@@ -3,14 +3,14 @@ import type { Snapshot, UsageSource } from "./source.js";
 import { PerformanceMonitor, preparePerformance } from "./performance.js";
 import type { PerformanceSummary, PreparedPerformance } from "./performance.js";
 import type { ContextSources } from "./context-sources.js";
-import { contextDetails, summarize, summarizeModels } from "./usage.js";
-import type { ContextDetails, ContextUsage, ModelCost, Summary } from "./usage.js";
+import { contextUsage, requestDetails, summarize, summarizeModels } from "./usage.js";
+import type { ContextUsage, ModelCost, RequestDetails, Summary } from "./usage.js";
 
 export interface UsageState {
   status: "loading" | "ready" | "stale" | "unavailable";
   summary?: Summary;
   context?: ContextUsage | undefined;
-  details?: { context?: ContextDetails | undefined; models: readonly ModelCost[]; sources?: ContextSources | undefined; sessionTitle?: string | undefined };
+  details?: { request?: RequestDetails | undefined; models: readonly ModelCost[]; sources?: ContextSources | undefined; sessionTitle?: string | undefined };
   performance?: PerformanceSummary;
   model?: string;
 }
@@ -166,19 +166,20 @@ export class UsageController {
       this.prepared = preparePerformance(messages);
       clearTimeout(this.performanceTimer);
       this.performanceTimer = undefined;
-      const context = contextDetails(viewedMessages(snapshot), snapshot.model.context,
-        snapshot.sessions.get(snapshot.viewedID)?.revert?.messageID);
+      const history = viewedMessages(snapshot);
+      const session = snapshot.sessions.get(snapshot.viewedID)!;
+      const revertMessageID = session.revert?.messageID;
       this.update({
         status: "ready",
         summary: summarize(messages, snapshot.model.catalog),
-        context: context?.usage,
-        ...(this.detailed ? { details: { context, models: summarizeModels(messages, snapshot.model.catalog), sessionTitle: snapshot.sessions.get(snapshot.viewedID)?.title } } : {}),
+        context: contextUsage(history, snapshot.model.context, revertMessageID),
+        ...(this.detailed ? { details: { request: requestDetails(history, revertMessageID), models: summarizeModels(messages, snapshot.model.catalog), sessionTitle: session.title } } : {}),
         performance: this.performance.summaryPrepared(this.prepared, this.sessions),
         model: snapshot.model.label,
       });
       // The server plugin may be absent. An optional RPC must not delay measured usage.
       if (this.detailed && this.source.composition) {
-        void this.source.composition(snapshot.sessions.get(snapshot.viewedID)!, AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]))
+        void this.source.composition(session, AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]))
           .then(sources => {
             if (this.disposed || generation !== this.generation || this.snapshot !== snapshot || this.state.status !== "ready" || !this.state.details) return;
             this.update({ ...this.state, details: { ...this.state.details, sources } });

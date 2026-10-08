@@ -171,7 +171,12 @@ function UsageDialog(props: {
   }));
 
   const theme = () => props.context.theme.text;
-  const context = createMemo(() => state().details?.context);
+  const context = createMemo(() => state().context);
+  const request = createMemo(() => state().details?.request);
+  const requestTime = createMemo(() => {
+    const time = request()?.time;
+    return time === undefined ? undefined : new Date(time).toLocaleTimeString();
+  });
   const models = createMemo(() => state().details?.models ?? []);
   const sources = createMemo(() => state().details?.sources);
   // The host gives this dialog a fixed width; keep every row inside that content box.
@@ -241,10 +246,10 @@ function UsageDialog(props: {
                     <box flexDirection="row" justifyContent="space-between" gap={2}>
                       <text fg={theme().muted} flexShrink={0}>Used / Limit</text>
                       <text fg={theme().base} wrapMode="word" minWidth={0}>
-                        {number(details().usage.used)} / {number(details().usage.limit)} ({details().usage.percent.toFixed(1)}%)
+                        {number(details().used)} / {number(details().limit)} ({details().percent.toFixed(1)}%)
                       </text>
                     </box>
-                    {barRow(details().usage.percent, windowBar())}
+                    {barRow(details().percent, windowBar())}
                   </box>
                 )}
               </Show>
@@ -252,16 +257,21 @@ function UsageDialog(props: {
             <box>
               <box flexDirection="row" justifyContent="space-between" gap={2}>
                 <text fg={theme().base}><b>Last Request</b></text>
-                <Show when={sources()}>{(captured) => (
-                  <text fg={theme().muted}>{new Date(captured().capturedAt).toLocaleTimeString()}</text>
+                <Show when={requestTime()}>{(time) => (
+                  <text fg={theme().muted}>{time()}</text>
                 )}</Show>
               </box>
-              <Show when={context()} fallback={<text fg={theme().muted}>Request composition unavailable</text>}>
+              <Show when={request()} fallback={<text fg={theme().muted}>Request usage unavailable</text>}>
                 {(details) => <box>{requestRowsList(requestRows(details(), compact()))}</box>}
               </Show>
             </box>
             <box>
-              <text fg={theme().base}><b>Context Breakdown</b></text>
+              <box flexDirection="row" justifyContent="space-between" gap={2}>
+                <text fg={theme().base}><b>Context Breakdown</b></text>
+                <Show when={sources()}>{(captured) => (
+                  <text fg={theme().muted}>{new Date(captured().capturedAt).toLocaleTimeString()}</text>
+                )}</Show>
+              </box>
               <Show when={sources()} fallback={<text fg={theme().muted}>Source estimates unavailable (no request snapshot or RPC)</text>}>
                 {(captured) => <For each={breakdownRows(captured(), detailed())}>{(row) => (
                   <box flexDirection="row" gap={1}>

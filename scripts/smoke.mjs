@@ -246,6 +246,9 @@ try {
   tui.send("\r");
   await wait(() => /By Model/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty /usage dialog");
   assert.doesNotMatch(tui.screen(), /Used \/ Limit/, "empty context does not show a fabricated zero");
+  assert.match(tui.screen(), /Request usage unavailable/);
+  assert.doesNotMatch(tui.screen().split("\n").find(line => line.includes("Last Request")) ?? "", /\d+:\d+/,
+    "an empty request has no timestamp");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()), "close empty usage dialog");
   console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows and shows Steps 0");
@@ -329,6 +332,15 @@ try {
   await new Promise(resolve => setTimeout(resolve, 250));
   tui.send("\r");
   await wait(() => /Context Breakdown/.test(tui.screen()) && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "root /usage dialog");
+  const reported = viewedMessages(snapshot).findLast(message => message.type === "assistant" && message.tokens);
+  assert.ok(reported.time.streamed, "host records the reported request's stream end");
+  const requestTime = new Date(reported.time.streamed).toLocaleTimeString();
+  const sourceTime = new Date(captured.estimate.capturedAt).toLocaleTimeString();
+  assert.notEqual(requestTime, sourceTime, "the streamed smoke request has distinct measured and capture times");
+  await wait(() => tui.screen().split("\n").some(line => line.includes("Context Breakdown") && line.includes(sourceTime)),
+    "source capture time belongs to Context Breakdown");
+  assert.ok(tui.screen().split("\n").some(line => line.includes("Last Request") && line.includes(requestTime)),
+    "Last Request uses the reported assistant's time, not the estimate's capture time");
   assert.match(tui.screen(), /Tools?\s+█*░*\s?[\d.]+K? \(?\d+\.\d%\)?/, "breakdown ranks sources with bars");
   assert.match(tui.screen(), /Cache Read\s+1\.0K/, "last request lists the current call");
   assert.match(tui.screen(), /Session\b/, "dialog shows the session summary");
@@ -440,6 +452,25 @@ try {
   await wait(() => !/By Model/.test(tui.screen()), "close switched usage dialog");
   await tui.save("08-model-switch");
   console.log("PASS: active model switch preserves per-message pricing and refreshes the context window");
+
+  await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "unknown-context" } });
+  await wait(() => !/Context\s+1,270 \/ 32,000/.test(tui.screen()), "unknown context limit hides sidebar context");
+  tui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  tui.send("\r");
+  await wait(() => /Token Usage Smoke · usage-test\/unknown-context/.test(tui.screen())
+    && /Context usage unavailable/.test(tui.screen()) && /Cache Read\s+1\.0K/.test(tui.screen()),
+  "last request is available without a valid model context limit");
+  assert.doesNotMatch(tui.screen(), /Used \/ Limit|Request usage unavailable/);
+  assert.match(tui.screen(), /Cache Rate\s+83\.3%/);
+  tui.send("d");
+  await wait(() => /Cache Read\s+1,000 \(78\.7%\)/.test(tui.screen()), "request percentages do not depend on the model limit");
+  await tui.save("08-unknown-context-limit");
+  tui.send("\x1b");
+  await wait(() => !/Context Window/.test(tui.screen()), "close unknown context usage dialog");
+  await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
+  await wait(() => /Context\s+1,270 \/ 32,000/.test(tui.screen()), "context returns with a valid limit");
+  console.log("PASS: unknown context limit preserves last-request tokens, percentages and cache rate");
 
   const officialTarget = await client.session.create({ location: { directory: project }, title: "Official Price Fallback", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   await client.session.switchModel({ sessionID: officialTarget.id, model: { providerID: "usage-test", id: "gpt-5.6-luna" } });

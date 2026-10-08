@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { officialPrice } from "../src/pricing.js";
-import { bar, contextDetails, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatRate, formatRateTier, formatTokens, modelKey, normalize, rateRows, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
+import { bar, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatRate, formatRateTier, formatTokens, modelKey, normalize, rateRows, requestDetails, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
 import type { ModelRef, Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
@@ -453,7 +453,7 @@ test("revert bounds current context across regeneration and completed compaction
     "staging a revert does not remove historical costs from the tree");
 });
 
-test("context composition uses the viewed call's five categories, not the tree or pre-compaction history", () => {
+test("request composition uses the viewed call's five categories without a context limit", () => {
   const history: UsageMessage[] = [
     { id: "old", type: "assistant", tokens: { input: 900 } },
     { id: "compact", type: "compaction", status: "completed", tokens: { input: 1_000 } },
@@ -462,21 +462,64 @@ test("context composition uses the viewed call's five categories, not the tree o
     } },
     { id: "pending", type: "assistant" },
   ];
-  const details = contextDetails(history, 100)!;
-  assert.deepEqual(details.usage, { used: 200, limit: 100, percent: 200 });
+  const details = requestDetails(history)!;
+  assert.equal(details.total, 200);
   assert.deepEqual(requestRows(details, false), [
     ["Input", "100 (50.0%)"], ["Output", "20 (10.0%)"], ["Reasoning", "10 (5.0%)"],
     ["Cache Read", "60 (30.0%)"], ["Cache Write", "10 (5.0%)"], ["Cache Rate", "35.3%"],
   ]);
   // Compact mode drops empty categories and percentages; the cache rate stays.
-  assert.deepEqual(requestRows(contextDetails([
+  assert.deepEqual(requestRows(requestDetails([
     { id: "a", type: "assistant", tokens: { input: 812, cache: { read: 138_542 } } },
-  ], 200_000)!, true), [
+  ])!, true), [
     ["Input", "812"], ["Cache Read", "138.5K"], ["Cache Rate", "99.4%"],
   ]);
-  assert.deepEqual(contextUsage(history, 100), details.usage);
-  assert.equal(contextDetails(history, undefined), undefined);
-  assert.equal(contextDetails([...history, { id: "last", type: "assistant", tokens: { input: 0 } }], 100), undefined);
+  assert.deepEqual(contextUsage(history, 100), { used: 200, limit: 100, percent: 200 });
+  assert.equal(contextUsage(history, undefined), undefined);
+  assert.equal(requestDetails([...history, { id: "last", type: "assistant", tokens: { input: 0 } }]), undefined);
+});
+
+test("request time belongs to the reported assistant and falls back only to its valid timestamps", () => {
+  const reported: UsageMessage = {
+    id: "a", type: "assistant", tokens: { input: 100 }, time: { created: 1_000, streamed: 2_000, completed: 3_000 },
+  };
+  const pending: UsageMessage = { id: "b", type: "assistant", time: { created: 4_000 } };
+  assert.equal(requestDetails([reported, pending])?.time, 2_000, "stream end precedes any tool execution completion");
+  assert.equal(requestDetails([{ ...reported, time: { created: 1_000, completed: 3_000 } }])?.time, 3_000);
+  assert.equal(requestDetails([{ ...reported, time: { created: 1_000 } }])?.time, 1_000);
+  for (const invalid of [NaN, Infinity, -Infinity, -1, Number.MAX_VALUE]) {
+    assert.equal(requestDetails([{ ...reported, time: { created: 1_000, streamed: invalid, completed: 3_000 } }])?.time, 3_000);
+    assert.equal(requestDetails([{ ...reported, time: { created: 1_000, streamed: invalid, completed: invalid } }])?.time, 1_000);
+    const request = requestDetails([{ ...reported, time: { created: invalid } }]);
+    assert.equal(request?.time, undefined);
+    assert.equal(request?.total, 100, "invalid time does not hide reported usage");
+  }
+  assert.equal(requestDetails([{ ...reported, time: { created: 0 } }])?.time, 0);
+  const withoutTime = requestDetails([{ id: "a", type: "assistant", tokens: { input: 100 } }]);
+  assert.equal(withoutTime?.time, undefined);
+  assert.equal(withoutTime?.total, 100);
+});
+
+test("request details apply compaction and revert boundaries independently of the context limit", () => {
+  const history: UsageMessage[] = [
+    { id: "a", type: "assistant", tokens: { input: 100 }, time: { created: 1_000 } },
+    { id: "b", type: "compaction", status: "completed", tokens: { input: 900 }, time: { created: 2_000 } },
+    { id: "c", type: "user" },
+    { id: "d", type: "assistant", tokens: { input: 200 }, time: { created: 3_000 } },
+    { id: "e", type: "assistant", time: { created: 4_000 } },
+  ];
+  assert.equal(requestDetails(history)?.total, 200);
+  assert.equal(requestDetails(history)?.time, 3_000);
+  assert.equal(requestDetails(history, "d"), undefined, "no reported call after the completed compaction");
+  assert.equal(requestDetails(history, "c"), undefined);
+  assert.equal(requestDetails(history, "b")?.time, 1_000, "a reverted compaction is excluded");
+  assert.equal(requestDetails(history, "bb"), undefined, "an absent revert marker still cuts off later IDs");
+  assert.equal(requestDetails(history, "a"), undefined);
+  assert.equal(requestDetails([]), undefined);
+  assert.equal(requestDetails([{ id: "u", type: "user", tokens: { input: 100 } }]), undefined);
+  for (const status of ["running", "failed"]) {
+    assert.equal(requestDetails([history[0]!, { ...history[1]!, status }])?.time, 1_000);
+  }
 });
 
 test("unusable context limits and missing usage hide the context rows", () => {

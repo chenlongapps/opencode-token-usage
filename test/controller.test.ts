@@ -33,6 +33,35 @@ test("repeated events coalesce and updated messages replace old totals; model sw
   assert.equal(state.summary?.total, 20);
 });
 
+test("last request stays available through unknown and unusable model context limits", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.context = undefined;
+  const reported = {
+    ...message("a"),
+    tokens: { input: 100, output: 20, reasoning: 10, cache: { read: 60, write: 10 } },
+    time: { created: 1_000, streamed: 2_000, completed: 3_000 },
+  };
+  source.history.set("root", [reported]);
+  let state: UsageState = { status: "loading" };
+  const latest = () => state;
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready");
+  const expected = { tokens: reported.tokens, total: 200, time: 2_000 };
+  assert.deepEqual(state.details?.request, expected);
+  assert.equal(state.context, undefined);
+  for (const limit of [128_000, 0, -1, NaN, Infinity, -Infinity, undefined, 64_000]) {
+    source.context = limit;
+    source.label = `test/context-${limit}`;
+    events.emit("session.model.selected");
+    await until(() => state.model === source.label);
+    assert.deepEqual(state.details?.request, expected, `request survives context limit ${limit}`);
+    assert.equal(latest().context?.limit, limit && Number.isFinite(limit) && limit > 0 ? limit : undefined);
+    assert.equal(state.summary?.total, 200);
+  }
+});
+
 test("new unopened children trigger discovery; token text deltas and unrelated sessions do not", async t => {
   const source = new FakeSource(), events = new Events();
   let state: UsageState = { status: "loading" };
@@ -87,20 +116,23 @@ test("staged revert changes viewed context without subtracting historical tree c
     { ...message("c", 40), id: "c" },
   ]);
   let state: UsageState = { status: "loading" };
-  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
   t.after(() => controller.dispose());
   controller.select("root");
   await until(() => state.status === "ready");
   assert.equal(state.context?.used, 40);
+  assert.equal(state.details?.request?.total, 40);
   const total = state.summary?.total, cost = state.summary?.cost;
   source.sessions.set("root", { ...session("root"), revert: { messageID: "b" } as NonNullable<ReturnType<typeof session>["revert"]> });
   events.emit("session.revert.staged");
   await until(() => state.context?.used === 20);
+  assert.equal(state.details?.request?.total, 20);
   assert.equal(state.summary?.total, total);
   assert.equal(state.summary?.cost, cost);
   source.sessions.set("root", session("root"));
   events.emit("session.revert.cleared");
   await until(() => state.context?.used === 40);
+  assert.equal(state.details?.request?.total, 40);
 });
 
 test("failed refresh retains last complete data and automatically recovers; first failure is unavailable", async t => {
@@ -124,7 +156,7 @@ test("failed refresh retains last complete data and automatically recovers; firs
 test("detailed view shares tree totals with the sidebar and retains a complete report on refresh failure", async t => {
   const source = new FakeSource(), events = new Events();
   source.sessions.set("child", session("child", "root"));
-  source.history.set("child", [message("child-a", 30)]);
+  source.history.set("child", [{ ...message("child-a", 30), time: { created: 1_000, streamed: 2_000 } }]);
   let state: UsageState = { status: "loading" };
   const latest = () => state;
   const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
@@ -136,7 +168,8 @@ test("detailed view shares tree totals with the sidebar and retains a complete r
   assert.equal(state.details?.models[0]?.cost, state.summary?.cost);
   assert.equal(state.details?.models[0]?.appliedRates[0]?.source, "OpenCode");
   assert.equal(state.details?.models[0]?.appliedRates[0]?.calls, 2);
-  assert.equal(state.details?.context?.usage.used, 30);
+  assert.equal(state.details?.request?.total, 30);
+  assert.equal(state.details?.request?.time, 2_000);
   assert.equal(state.context?.used, 30);
 
   source.fail = true;
@@ -144,6 +177,8 @@ test("detailed view shares tree totals with the sidebar and retains a complete r
   await until(() => state.status === "stale");
   assert.equal(state.details?.models[0]?.tokens, 40);
   assert.equal(state.details?.models[0]?.appliedRates[0]?.calls, 2);
+  assert.equal(state.details?.request?.total, 30);
+  assert.equal(state.details?.request?.time, 2_000);
   source.fail = false;
   source.history.set("child", [message("child-a", 50)]);
   await until(() => state.status === "ready" && state.summary?.total === 60);
@@ -152,33 +187,44 @@ test("detailed view shares tree totals with the sidebar and retains a complete r
   assert.equal(state.status, "loading");
   assert.equal(state.details, undefined);
   await until(() => state.status === "ready");
-  assert.equal(latest().details?.context?.usage.used, 10);
+  assert.equal(latest().details?.request?.total, 10);
+  assert.equal(latest().details?.request?.time, undefined);
 });
 
 test("missing or failed request-source estimation does not turn measured usage into a read failure", async t => {
   const source = new FakeSource(), events = new Events();
+  source.context = undefined;
+  source.history.set("root", [
+    { ...message("a"), time: { created: 1_000, streamed: 2_000 } },
+    { id: "pending", type: "assistant", time: { created: 4_000 } },
+  ]);
   source.composition = async () => ({
-    capturedAt: 1_000, model: "test/model",
+    capturedAt: 4_000, model: "test/model",
     tokens: { Messages: 20, "System Tools": 10, "System Prompt": 10, Skills: 0, "MCP Tools": 0, Other: 0 },
   });
   let state: UsageState = { status: "loading" };
   const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 100, 2, undefined, true);
   t.after(() => controller.dispose());
   controller.select("root");
-  await until(() => state.details?.sources?.capturedAt === 1_000);
+  await until(() => state.details?.sources?.capturedAt === 4_000);
   assert.equal(state.summary?.total, 10);
+  assert.equal(state.details?.request?.time, 2_000, "a newer assembled request does not date older reported tokens");
+  assert.equal(state.details?.request?.total, 10);
   source.composition = async () => { throw new Error("RPC unavailable"); };
   events.emit();
   await until(() => state.status === "ready" && state.details?.sources === undefined);
   assert.equal(state.summary?.total, 10);
-  assert.equal(state.context?.used, 10);
+  assert.equal(state.context, undefined);
+  assert.equal(state.details?.request?.time, 2_000);
+  assert.equal(state.details?.request?.total, 10);
 });
 
 test("slow source RPC does not block measured usage or overwrite a different session", async t => {
   const source = new FakeSource(), events = new Events();
+  source.history.set("root", [{ ...message("a"), time: { created: 100 } }]);
   const slow = deferred<NonNullable<UsageState["details"]>["sources"]>();
   source.sessions.set("other", session("other"));
-  source.history.set("other", [message("other-a", 7)]);
+  source.history.set("other", [{ ...message("other-a", 7), time: { created: 200 } }]);
   source.composition = async selected => selected.id === "root" ? slow.promise : {
     capturedAt: 2_000, model: "test/other",
     tokens: { Messages: 7, "System Tools": 0, "System Prompt": 0, Skills: 0, "MCP Tools": 0, Other: 0 },
@@ -190,6 +236,7 @@ test("slow source RPC does not block measured usage or overwrite a different ses
   controller.select("root");
   await until(() => state.status === "ready" && state.summary?.total === 10);
   assert.equal(state.details?.sources, undefined);
+  assert.equal(state.details?.request?.time, 100);
   controller.select("other");
   await until(() => state.details?.sources?.capturedAt === 2_000);
   slow.resolve({
@@ -199,6 +246,8 @@ test("slow source RPC does not block measured usage or overwrite a different ses
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(state.summary?.total, 7);
   assert.equal(latest().details?.sources?.capturedAt, 2_000);
+  assert.equal(latest().details?.request?.time, 200);
+  assert.equal(latest().details?.request?.total, 7);
 });
 
 test("switching sessions discards old responses even if the source ignores cancellation; dispose unsubscribes", async () => {

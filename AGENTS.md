@@ -11,6 +11,7 @@
 - 2026-10-05 自动价格 patch 链路已通过类型检查、101 项测试、构建、打包／发布 dry-run 和工作流静态检查；真实 GitHub 调度与 npm OIDC 写入尚未触发，不得将本地验证写成已实际自动发布，记录见 `docs/verification.md`。
 - 2026-10-07 SDK 2.0.24 升级已通过 Node 22 干净安装、类型检查、103 项测试、构建及真实 OpenCode 2.0.11 / 2.0.22 / 2.0.24 打包集成验证；媒体分类兼容新 SDK 的 `part.media.mediaType` 与旧宿主的 `part.mediaType`，仍不计媒体负载。包版本与价格快照未变，未发布，记录见 `docs/verification.md`。
 - 2026-10-07 npm 发布校验修复已通过类型检查、113 项测试、构建、打包／发布 dry-run 与 actionlint 检查。已只读确认真实定时价格任务发布了 0.4.5，旧发布工作流因约 2 分钟的可见性校验超时而报“假失败”；registry 的版本与 `latest` 均已可见。新校验默认共用 10 分钟总预算，可配置并输出进度，超时保留真实错误、不掩盖故障；新实现尚未推送或在真实发布中验证，不移动旧标签，记录见 `docs/verification.md`。
+- 2026-10-09 Last Request 与模型上下文上限解耦已通过类型检查、116 项测试、构建及真实 OpenCode 2.0.25 打包集成验证，包含未知上限下的请求明细和实测／估算时间分别显示，记录见 `docs/verification.md`。
 
 ## 产品约定
 
@@ -25,9 +26,9 @@
 - 上下文用量取当前查看会话中最后一条带 `tokens` 的 assistant 消息（只搜索最后一次 `status === "completed"` 的 compaction 之后）的五类 token 之和；分母为当前查看会话活动模型的 `limit.context`，缺失、为零或非有限值时隐藏该行。它只反映被查看会话本身，不随子树累计；分叉继承副本仍计入被查看会话的上下文。宿主实现参照 OpenCode 2.0.10 侧边栏的 `Ws`/`S6`，SDK 锁定 2.0.24，已在 2.0.11 / 2.0.22 / 2.0.24 复核；升级 OpenCode 或 SDK 时必须重新核对 compaction 的 `status` 与消息排序语义。
 - 上下文行是面板第一行（状态提示之后），行内为 `已用 / 上限 (百分比%)`，百分比保留一位小数、允许超过 100%。
 - `/usage` 使用 CLI 插件斜杠命令打开原生弹窗，并以宿主 `centered` 选项垂直居中；窗口宽度取宿主 `large` 档（88 列，方向随终端收窄），条形图与两列布局按该内容宽度收敛。
-- `/usage` 分为 Context Window、Last Request、Context Breakdown、Session、By Model 五个区域，口径互相独立：Context Window 只回答上下文占用（分母为活动模型 `limit.context`）；Last Request 是被查看会话最近一次已上报调用的五类 token 与缓存率；Session 为全树汇总；By Model 为逐模型 tokens/calls/费用，按费用降序。标题下方一行显示会话与活动模型（多模型时显示模型数量），正文不重复模型名。
+- `/usage` 分为 Context Window、Last Request、Context Breakdown、Session、By Model 五个区域，口径互相独立：Context Window 只回答上下文占用（分母为活动模型 `limit.context`）；Last Request 是被查看会话最近一次已上报调用的五类 token 与缓存率，不依赖模型上限，请求选择遵循回退截断和已完成压缩边界，时间依次取所选 assistant 有效的 `time.streamed`、`time.completed`、`time.created`，缺失时隐藏；Session 为全树汇总；By Model 为逐模型 tokens/calls/费用，按费用降序。标题下方一行显示会话与活动模型（多模型时显示模型数量），正文不重复模型名。
 - 弹窗默认紧凑模式：数字用 `K`/`M` 缩写（`812`、`139.4K`、`3.70M`），隐藏零值行，Context Breakdown 中 `System Tools` 与 `MCP Tools` 合并为 `Tools` 并按占比降序；按 `d` 切换详细模式，显示精确数字、零值行、两类工具拆分与 Session 逐类明细。侧边栏始终使用精确数字和原有行序。
-- `/usage` 的六类来源占比是最近一次已组装模型请求的文本与工具定义估算值，占比以六类估算和为分母；不得将其当作实测 Context 或与之强行加总。服务端 `context` 钩子仅保存分类数值，RPC 不可用或未捕获请求时显示不可用，不影响实测用量。
+- `/usage` 的六类来源占比是最近一次已组装模型请求的文本与工具定义估算值，占比以六类估算和为分母；不得将其当作实测 Context 或与之强行加总。服务端 `context` 钩子仅保存分类数值，RPC 不可用或未捕获请求时显示不可用，不影响实测用量。估算的 `capturedAt` 仅显示在 Context Breakdown，不能用作 Last Request 的实测请求时间。
 - 2.0.9–2.0.11、2.0.22 与 2.0.24 在子代理视图中不挂载侧边栏；`session.composer.top` 仅显示 Context、Total、Cost、TPS 单行实时摘要，不显示快捷键；点击摘要打开居中原生弹窗，弹窗复用摘要的同一控制器及侧边栏完整面板并可用 Esc 关闭，保持子代理中的全树统计可按需查看且不挤占会话高度。
 
 ## 官方文档

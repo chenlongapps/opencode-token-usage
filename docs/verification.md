@@ -1,5 +1,24 @@
 # 验证记录
 
+## 2026-10-09 · Last Request 与上下文上限解耦
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.6、SDK 2.0.24，真实宿主为 PATH 中的 OpenCode 2.0.25。
+
+`requestDetails` 独立提取所选 assistant 的五类 token、总量和消息时间，`contextUsage` 单独校验模型上限。Last Request 的分类占比以请求总量为分母；上限缺失、为零、负值或非有限值时，实测请求仍可显示。时间依次取同一条消息有效的 `streamed`、`completed`、`created`，缺失时隐藏；来源估算的 `capturedAt` 仅显示在 Context Breakdown。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 116 项通过，新增 3 项请求明细、时间与边界回归测试，并扩展控制器生命周期断言 |
+| `npm run build` | 通过 |
+| `npm run test:smoke` | 完整通过，打包／隔离安装 + 真实 OpenCode 2.0.25 + 本地模拟提供商 |
+
+自动化测试覆盖有效／无效上限切换、请求分类与缓存率、时间优先级及无效日期、压缩与回退边界、子会话本地请求、刷新失败保留快照、跨会话清理，以及来源 RPC 缓慢／失败／返回另一轮请求的估算时间。
+
+真实终端验证新增上限为 0 的活动模型：Context Window 显示不可用，Last Request 在紧凑／详细模式下仍显示 `Cache Read 1.0K`／`1,000 (78.7%)` 与 `Cache Rate 83.3%`，切回有效上限后恢复 Context。另核对两个标题各自显示实测 assistant 的流式结束时间和来源估算采样时间，并验证空请求不显示时间。完整 smoke 同时通过 100／48 列布局、子代理全树汇总、TPS／TTFT、定价、真实分叉及已完成压缩与消息排序检查。启动时按既有版本策略提示 2.0.25 未验证，随后实际完成全部检查。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-12xAKR`，其中 `08-unknown-context-limit.txt` 保存未知上限下的详细弹窗。
+
 ## 2026-10-07 · npm 发布可见性校验“假失败”修复
 
 环境：macOS、Node.js v22.23.2、npm 10.9.8，本地包版本为 0.4.5、SDK 为 2.0.24。本轮仅修改发布校验、工作流、测试与文档，未修改价格快照或插件运行时代码，未升级版本、移动标签、提交、推送、重跑 GitHub 工作流或实际发布 npm。

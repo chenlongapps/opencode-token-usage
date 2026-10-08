@@ -240,21 +240,23 @@ export interface ContextUsage {
   percent: number;
 }
 
-export interface ContextDetails {
-  usage: ContextUsage;
+export interface RequestDetails {
   tokens: Tokens;
+  total: number;
+  /** The selected assistant's stream end, completion, or creation time, in that order. */
+  time?: number | undefined;
 }
 
 const usableLimit = (value: number | undefined): value is number => value !== undefined && Number.isFinite(value) && value > 0;
+const usableTime = (value: number | undefined): value is number => value !== undefined && value >= 0 && Number.isFinite(new Date(value).getTime());
 
 // Matches the OpenCode 2.0.10 sidebar: the last assistant message with tokens that follows
 // the last completed compaction carries the current context size. Running or failed
-// compactions do not reset it, and a last message without usage hides the row entirely
-// instead of falling back to pre-compaction history.
-export function contextDetails(
-  messages: readonly UsageMessage[], limit?: number, revertMessageID?: string,
-): ContextDetails | undefined {
-  if (!usableLimit(limit)) return undefined;
+// compactions do not reset it. Missing token reports are skipped, while an explicit
+// zero report is not replaced by older usage. Request details need no model limit.
+export function requestDetails(
+  messages: readonly UsageMessage[], revertMessageID?: string,
+): RequestDetails | undefined {
   // The staged revert excludes its boundary message and every later message.
   // Session.message.list is ascending; an absent marker can occur during a
   // concurrent commit, in which case the ordered ID still gives the cutoff.
@@ -272,13 +274,16 @@ export function contextDetails(
     if (message.type !== "assistant" || !message.tokens) continue;
     const tokens = normalize(message.tokens);
     const used = total(tokens);
-    return used > 0 ? { usage: { used, limit, percent: used / limit * 100 }, tokens } : undefined;
+    const time = [message.time?.streamed, message.time?.completed, message.time?.created].find(usableTime);
+    return used > 0 ? { tokens, total: used, time } : undefined;
   }
   return undefined;
 }
 
 export function contextUsage(messages: readonly UsageMessage[], limit?: number, revertMessageID?: string): ContextUsage | undefined {
-  return contextDetails(messages, limit, revertMessageID)?.usage;
+  if (!usableLimit(limit)) return undefined;
+  const request = requestDetails(messages, revertMessageID);
+  return request ? { used: request.total, limit, percent: request.total / limit * 100 } : undefined;
 }
 
 export function formatTokens(value: number): string {
@@ -337,7 +342,7 @@ export function bar(percent: number, width: number): { filled: number; empty: nu
  * One model request: the five categories of the last assistant call plus its cache rate.
  * Compact mode hides zero rows and drops percentages; detailed mode keeps both.
  */
-export function requestRows(details: ContextDetails, compact: boolean): readonly (readonly [string, string])[] {
+export function requestRows(details: RequestDetails, compact: boolean): readonly (readonly [string, string])[] {
   const t = details.tokens;
   const rows = ([
     ["Input", t.input], ["Output", t.output], ["Reasoning", t.reasoning],
@@ -347,7 +352,7 @@ export function requestRows(details: ContextDetails, compact: boolean): readonly
   return [
     ...rows.map(([label, count]) => [
       label,
-      compact ? formatCompact(count) : `${formatTokens(count)} (${(count / details.usage.used * 100).toFixed(1)}%)`,
+      compact ? formatCompact(count) : `${formatTokens(count)} (${(count / details.total * 100).toFixed(1)}%)`,
     ] as const),
     ["Cache Rate", `${(incomingTokens ? t.cache.read / incomingTokens * 100 : 0).toFixed(1)}%`] as const,
   ];

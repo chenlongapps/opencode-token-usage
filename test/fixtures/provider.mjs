@@ -8,6 +8,7 @@ export default Plugin.define({
     const models = [
       { name: "small", context: 128000, cost: [{ input: 2, output: 8, cache: { read: 0.2, write: 3 } }] },
       { name: "large", context: 32000, cost: [{ input: 4, output: 16, cache: { read: 0.4, write: 3 } }] },
+      { name: "unknown-context", context: 0, cost: [{ input: 2, output: 8, cache: { read: 0.2, write: 3 } }] },
       // Intentionally absent from OpenCode's price data. The usage plugin must
       // match this manufacturer ID against its packaged official snapshot.
       { name: "gpt-5.6-luna", context: 1050000, cost: [] },
