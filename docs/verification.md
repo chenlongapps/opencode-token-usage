@@ -1,5 +1,23 @@
 # 验证记录
 
+## 2026-10-09 · 统计钩子的 MCP 等待上限
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包仍为 0.4.6、SDK 2.0.24，真实宿主为 PATH 中的 OpenCode 2.0.25。未升级版本、提交、推送或发布。
+
+MCP 元数据缓存缺失或失效时，共享读取默认最多等待 100 ms，构造参数可注入测试预算。独立定时器结束等待，同时通过 SDK 的 `AbortSignal` 请求中止读取；忽略取消的迟到成功／失败不会更新缓存或清除后续读取。超时或错误时复用旧元数据，不延长缓存 TTL，后续请求可重试；无缓存则跳过本次估算，保留已有估算与时间戳，不写入伪造零值。成功读取的空列表仍是有效缓存。持久化继续按会话顺序异步执行。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `node --import tsx --test test/context-capture.test.ts` | 专项 14 项通过，新增 11 项回归测试 |
+| `npm test` | 129 项通过 |
+| `npm run build` | 通过 |
+| `npm run test:smoke` | 完整通过，打包／隔离安装 + 真实 OpenCode 2.0.25 + 本地模拟提供商 |
+
+新增测试覆盖永久挂起、100 ms 默认预算与可注入预算、并发共享读取、TTL／事件失效后的旧缓存回退、空缓存、超时后重试、迟到成功／失败与新读取的竞争、同步／异步错误、定时器清理，以及会话删除、flush 和服务端钩子的有界 MCP 等待。挂起与迟到竞态使用可控 Promise 和模拟时钟验证；真实 smoke 验证正常宿主链路，未在真实宿主中注入 MCP 挂起。Node 22 的 MockTimers 实验性警告和 OpenTUI 安装引擎警告未隐藏。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-Syw70N`。
+
 ## 2026-10-09 · Last Request 与上下文上限解耦
 
 环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.6、SDK 2.0.24，真实宿主为 PATH 中的 OpenCode 2.0.25。

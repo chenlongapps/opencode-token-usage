@@ -4,14 +4,16 @@ import { estimateContextSources, parseContextSources } from "./context-sources.j
 import type { ContextSources } from "./context-sources.js";
 
 type Request = Pick<SessionContext, "sessionID" | "model" | "system" | "messages" | "tools">;
-type Mcp = { list(): Promise<{ data: readonly { name: string }[] }> };
+type Mcp = {
+  list(...args: Parameters<Plugin.Context["mcp"]["list"]>): Promise<{ data: readonly { name: string }[] }>;
+};
 type Storage = Pick<Plugin.Context["storage"], "get" | "set" | "remove">;
 
-/** The hook awaits MCP metadata only on a cache miss; persistence follows the request. */
+/** MCP metadata waits are bounded; persistence never delays the model request. */
 export class ContextCapture {
   private names: readonly string[] | undefined;
   private expiresAt = 0;
-  private listing: Promise<readonly string[]> | undefined;
+  private listing: Promise<readonly string[] | undefined> | undefined;
   private writes = new Map<string, Promise<void>>();
   private inflight = new Map<string, Set<Promise<void>>>();
   private latestEstimate = new Map<string, ContextSources>();
@@ -24,25 +26,40 @@ export class ContextCapture {
     private readonly ttl = 30_000,
     private readonly now = Date.now,
     private readonly elapsed = () => performance.now(),
+    private readonly mcpTimeoutMs = 100,
   ) {}
 
-  private async servers(): Promise<readonly string[]> {
+  private async servers(): Promise<readonly string[] | undefined> {
     if (this.names && this.now() < this.expiresAt) return this.names;
     if (!this.listing) {
       this.timings.mcpReads++;
-      this.listing = this.mcp.list().then(result => {
-        this.names = result.data.map(server => server.name);
-        this.expiresAt = this.now() + this.ttl;
-        return this.names;
-      }).catch(error => {
-        if (this.names) {
-          this.expiresAt = this.now() + this.ttl;
-          return this.names;
-        }
-        throw error;
-      }).finally(() => { this.listing = undefined; });
+      this.listing = this.readServers().finally(() => { this.listing = undefined; });
     }
     return this.listing;
+  }
+
+  private async readServers(): Promise<readonly string[] | undefined> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new DOMException("MCP metadata read timed out", "TimeoutError");
+          reject(error);
+          controller.abort(error);
+        }, this.mcpTimeoutMs);
+      });
+      const result = await Promise.race([this.mcp.list(undefined, { signal: controller.signal }), timeout]);
+      // Only the bounded read may update the cache, even if cancellation is ignored.
+      this.names = result.data.map(server => server.name);
+      this.expiresAt = this.now() + this.ttl;
+      return this.names;
+    } catch {
+      // Reuse stale metadata without renewing it, so the next request can retry.
+      return this.names;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   invalidateMcp() { this.expiresAt = 0; }
@@ -61,13 +78,13 @@ export class ContextCapture {
   private async record(request: Request): Promise<void> {
     if (this.deleted.has(request.sessionID)) return;
     const start = this.elapsed();
-    let names: readonly string[];
+    let names: readonly string[] | undefined;
     try { names = await this.servers(); }
     finally {
       this.timings.requests++;
       this.timings.mcpWaitMs += this.elapsed() - start;
     }
-    if (this.deleted.has(request.sessionID)) return;
+    if (!names || this.deleted.has(request.sessionID)) return;
     const value = estimateContextSources(request, names);
     this.latestEstimate.set(request.sessionID, value);
     const previous = this.writes.get(request.sessionID) ?? Promise.resolve();
