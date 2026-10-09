@@ -5,6 +5,8 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { UsageController } from "./controller.js";
 import type { UsageState } from "./controller.js";
 import { PerformanceMonitor } from "./performance.js";
+import { RuntimeMonitor } from "./runtime-monitor.js";
+import { ContextSourceRpc } from "./context-rpc.js";
 import { breakdownRows } from "./context-sources.js";
 import { createSource } from "./source.js";
 import { animateRunning, withRunningIndicator } from "./running.js";
@@ -54,6 +56,7 @@ function UsagePanel(props: {
   context: Plugin.Context;
   sessionID: string;
   performance: PerformanceMonitor;
+  runtime: RuntimeMonitor;
   register: (controller: UsageController) => () => void;
 }) {
   const [state, setState] = createSignal<UsageState>({ status: "loading" });
@@ -65,9 +68,14 @@ function UsagePanel(props: {
     3_000,
     100,
     props.performance,
+    false,
+    props.runtime,
   );
   const unregister = props.register(controller);
-  createEffect(() => controller.select(props.sessionID));
+  createEffect(() => {
+    controller.select(props.sessionID);
+    controller.setRunning(props.context.data.session.status(props.sessionID) === "running");
+  });
   onCleanup(() => { controller.dispose(); unregister(); });
 
   return <UsageView context={props.context} sessionID={props.sessionID} state={state} />;
@@ -113,6 +121,7 @@ function ChildUsageLauncher(props: {
   context: Plugin.Context;
   sessionID: string;
   performance: PerformanceMonitor;
+  runtime: RuntimeMonitor;
   register: (controller: UsageController) => () => void;
   open: (sessionID: string, state: () => UsageState) => void;
 }) {
@@ -125,9 +134,14 @@ function ChildUsageLauncher(props: {
     3_000,
     100,
     props.performance,
+    false,
+    props.runtime,
   );
   const unregister = props.register(controller);
-  createEffect(() => controller.select(props.sessionID));
+  createEffect(() => {
+    controller.select(props.sessionID);
+    controller.setRunning(props.context.data.session.status(props.sessionID) === "running");
+  });
   onCleanup(() => { controller.dispose(); unregister(); });
   const dimensions = useTerminalDimensions();
   const runtime = createMemo(() => formatRunTime(state().runtime, true));
@@ -161,6 +175,7 @@ function UsageDialog(props: {
   context: Plugin.Context;
   sessionID: string;
   performance: PerformanceMonitor;
+  runtime: RuntimeMonitor;
   register: (controller: UsageController) => () => void;
 }) {
   const [state, setState] = createSignal<UsageState>({ status: "loading" });
@@ -169,10 +184,11 @@ function UsageDialog(props: {
   const controller = new UsageController(
     createSource(props.context.client),
     listener => props.context.data.listen(({ details }) => listener(details)),
-    setState, 80, 3_000, 100, props.performance, true,
+    setState, 80, 3_000, 100, props.performance, true, props.runtime,
   );
   const unregister = props.register(controller);
   controller.select(props.sessionID);
+  createEffect(() => controller.setRunning(props.context.data.session.status(props.sessionID) === "running"));
   onCleanup(() => { controller.dispose(); unregister(); });
 
   let scroll: ScrollBoxRenderable | undefined;
@@ -378,6 +394,12 @@ export default Plugin.define({
     const performance = new PerformanceMonitor(
       listener => context.data.listen(({ details }) => listener(details)),
     );
+    const runtime = new RuntimeMonitor(listener => context.data.listen(({ details }) => listener(details)));
+    const synchronizeRuntime = () => void runtime.synchronize(signal => context.client.rpc(ContextSourceRpc).clock({}, {
+      location: context.location ?? context.data.location.default(), signal,
+    }));
+    synchronizeRuntime();
+    const stopClockSync = context.data.on("server.connected", synchronizeRuntime);
     const controllers = new Set<UsageController>();
     const register = (controller: UsageController) => {
       controllers.add(controller);
@@ -385,7 +407,7 @@ export default Plugin.define({
     };
     const remove = context.ui.slot({
       append: "sidebar.content",
-      render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} register={register} />,
+      render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} runtime={runtime} register={register} />,
     });
     const openChildUsage = (sessionID: string, state: () => UsageState) => {
       context.ui.dialog.show(() => <ChildUsageDialog context={context} sessionID={sessionID} state={state} />);
@@ -400,6 +422,7 @@ export default Plugin.define({
             context={context}
             sessionID={props.sessionID}
             performance={performance}
+            runtime={runtime}
             register={register}
             open={openChildUsage}
           />
@@ -421,7 +444,7 @@ export default Plugin.define({
             run: () => {
               const route = context.ui.router.current();
               if (route.type !== "session") return;
-              context.ui.dialog.show(() => <UsageDialog context={context} sessionID={route.sessionID} performance={performance} register={register} />);
+              context.ui.dialog.show(() => <UsageDialog context={context} sessionID={route.sessionID} performance={performance} runtime={runtime} register={register} />);
               context.ui.dialog.set({ size: "large", centered: true });
             },
           }],
@@ -436,6 +459,8 @@ export default Plugin.define({
       removeChild();
       removeCommand();
       performance.dispose();
+      runtime.dispose();
+      stopClockSync();
     };
   },
 });

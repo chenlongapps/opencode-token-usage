@@ -42,6 +42,7 @@ assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts
 assert.ok(["aliases", "overrides", "prices.generated"].every(name => files.includes(`dist/${name}.js`)));
 assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-sources.js"));
 assert.ok(files.includes("dist/runtime.js") && files.includes("dist/runtime.d.ts"));
+assert.ok(files.includes("dist/runtime-monitor.js") && files.includes("dist/runtime-monitor.d.ts"));
 assert.ok(files.includes("dist/running.js") && files.includes("dist/running.d.ts"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
@@ -219,22 +220,32 @@ const ownRuntime = async sessionID => {
   return milliseconds;
 };
 const runtimeRow = (screen, milliseconds) => screen.split("\n").some(line => line.includes("Run Time") && line.includes(formatDuration(milliseconds)) && !line.includes("~"));
-const checkRunningDots = async (tui, label, value, artifact) => {
+const liveRuntime = (screen, label = "Run Time") => {
+  const lines = screen.split("\n");
+  const row = lines.findIndex(line => line.includes(label) && /Running\./.test(line));
+  if (row < 0) return;
+  const line = lines[row];
+  const value = line.match(/~((?:\d+h\s*)?(?:\d+m\s*)?\d+(?:\.\d+)?s|\d+ms)/)?.[1];
+  if (!value) return;
+  const units = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
+  const milliseconds = [...value.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)]
+    .reduce((total, match) => total + Number(match[1]) * units[match[2]], 0);
+  return { row, value, milliseconds, dots: line.match(/Running(\.{1,3})(?!\.)/)?.[1] };
+};
+const checkRunningDots = async (tui, label, baseline, artifact) => {
   const frames = new Map();
   await wait(async () => {
-    const lines = tui.screen().split("\n");
-    const row = lines.findIndex(line => line.includes(label) && /Running\./.test(line));
-    if (row < 0) return false;
-    const line = lines[row], dots = line.match(/Running(\.{1,3})(?!\.)/)?.[1];
-    if (!dots || !line.includes(value)) return false;
-    if (!frames.has(dots)) {
-      frames.set(dots, { row, value: line.indexOf(value), running: line.indexOf("Running") });
-      await tui.save(`${artifact}-${dots.length}-dot`);
+    const live = liveRuntime(tui.screen(), label);
+    if (!live?.dots || live.milliseconds <= baseline) return false;
+    if (!frames.has(live.dots)) {
+      frames.set(live.dots, live);
+      await tui.save(`${artifact}-${live.dots.length}-dot`);
     }
     return frames.size === 3;
   }, `${artifact} cycles all three running frames`);
-  assert.equal(new Set([...frames.values()].map(frame => JSON.stringify(frame))).size, 1,
-    "fixed-width dots do not move the row, cumulative value or running label");
+  assert.equal(new Set([...frames.values()].map(frame => frame.row)).size, 1, "live time stays on the same row");
+  const first = [...frames.values()][0].milliseconds;
+  await wait(() => liveRuntime(tui.screen(), label)?.milliseconds >= first + 500, `${artifact} elapsed estimate advances without stream deltas`);
 };
 const terminals = [];
 const lineNumber = (screen, pattern) => screen.split("\n").findIndex(line => pattern.test(line));
@@ -353,9 +364,11 @@ try {
   tui.send("\r");
   await wait(() => !/Sessions for project/.test(tui.screen()) && /TPS\s+~[\d.]+ tok\/s/.test(tui.screen())
     && /TTFT\s+[\d.]+s/.test(tui.screen()), "live performance restored after session switch");
-  assert.doesNotMatch(tui.screen(), /Run Time/, "unfinished response hides the zero runtime row");
+  await wait(() => liveRuntime(tui.screen())?.milliseconds > 0, "unfinished first turn reveals projected runtime after a session switch");
+  const switchedLiveTime = liveRuntime(tui.screen()).milliseconds;
+  assert.equal(await ownRuntime(switchTarget.id), 0, "live time never enters the native historical subtotal");
   await new Promise(resolve => setTimeout(resolve, 1_200));
-  assert.doesNotMatch(tui.screen(), /Run Time/, "runtime counts completed responses, not client wall time");
+  assert.ok(liveRuntime(tui.screen()).milliseconds > switchedLiveTime, "quiet streaming wait continues to advance elapsed time");
   await tui.save("02-switched-streaming");
   streamGates.get("SWITCH_SMOKE").resolve();
   await switchPrompt;
@@ -383,6 +396,7 @@ try {
 
   const firstPrompt = client.session.prompt({ sessionID: root.id, text: "FIRST_SMOKE Return SMOKE_OK." });
   await wait(() => /TPS\s+~[\d.]+ tok\/s/.test(tui.screen()) && /TTFT\s+[\d.]+s/.test(tui.screen()), "live TPS and TTFT");
+  await wait(() => liveRuntime(tui.screen())?.milliseconds > 0, "first root turn displays nonzero estimated elapsed time");
   await tui.save("04-streaming");
   streamGates.get("FIRST_SMOKE").resolve();
   await firstPrompt;
@@ -626,16 +640,16 @@ try {
   await client.session.wait({ sessionID: longTtftTarget.id });
   const beforeInterrupt = await ownRuntime(longTtftTarget.id);
   await client.session.prompt({ sessionID: longTtftTarget.id, text: "RUNTIME_INTERRUPT_SMOKE" });
-  await wait(() => streamGates.get("RUNTIME_INTERRUPT_SMOKE").started && runtimeRow(longTtftTui.screen(), beforeInterrupt), "unfinished interrupted response retains earlier cumulative time");
-  await checkRunningDots(longTtftTui, "Run Time", formatDuration(beforeInterrupt), "10-running-sidebar");
+  await wait(() => streamGates.get("RUNTIME_INTERRUPT_SMOKE").started && liveRuntime(longTtftTui.screen())?.milliseconds > beforeInterrupt, "unfinished interrupted response projects beyond earlier cumulative time");
+  await checkRunningDots(longTtftTui, "Run Time", beforeInterrupt, "10-running-sidebar");
   longTtftTui.send("/usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   longTtftTui.send("\r");
   await wait(() => /Run Time \(this session\)/.test(longTtftTui.screen()), "running usage dialog");
-  await checkRunningDots(longTtftTui, "Run Time (this session)", formatDuration(beforeInterrupt), "10-running-usage-compact");
+  await checkRunningDots(longTtftTui, "Run Time (this session)", beforeInterrupt, "10-running-usage-compact");
   longTtftTui.send("d");
   await wait(() => /Calls\s+1\b/.test(longTtftTui.screen()), "running usage detailed mode");
-  await checkRunningDots(longTtftTui, "Run Time (this session)", formatDuration(beforeInterrupt), "10-running-usage-detailed");
+  await checkRunningDots(longTtftTui, "Run Time (this session)", beforeInterrupt, "10-running-usage-detailed");
   longTtftTui.send("\x1b");
   await wait(() => !/Context Window/.test(longTtftTui.screen()), "close running usage dialog");
   await client.session.interrupt({ sessionID: longTtftTarget.id });
@@ -659,14 +673,14 @@ try {
   await wait(() => streamGates.get("CHILD_RUNNING_SMOKE").started, "child starts running independently of idle parent");
   const runningChildTui = openTui(runningChild.id);
   const runningNarrowChild = openTui(runningChild.id, { cols: 48, rows: 28 });
-  await checkRunningDots(runningChildTui, "Time", formatDuration(beforeChildRunning, true), "10-running-child-summary");
-  await checkRunningDots(runningNarrowChild, "Time", formatDuration(beforeChildRunning, true), "10-running-child-narrow");
+  await checkRunningDots(runningChildTui, "Time", beforeChildRunning, "10-running-child-summary");
+  await checkRunningDots(runningNarrowChild, "Time", beforeChildRunning, "10-running-child-narrow");
   assert.ok(runtimeRow(longTtftTui.screen(), afterInterrupt), "active children do not add parent runtime");
   assert.doesNotMatch(longTtftTui.screen().split("\n").find(line => line.includes("Run Time")) ?? "", /Running\./,
     "an idle parent does not inherit a child's running status");
   runningChildTui.click("Token Usage ·");
   await wait(() => /Run Time\s+/.test(runningChildTui.screen()), "running child usage dialog");
-  await checkRunningDots(runningChildTui, "Run Time", formatDuration(beforeChildRunning), "10-running-child-dialog");
+  await checkRunningDots(runningChildTui, "Run Time", beforeChildRunning, "10-running-child-dialog");
   runningChildTui.send("\x1b");
   await wait(() => !/Run Time\s+/.test(runningChildTui.screen()), "close running child usage dialog");
   streamGates.get("CHILD_RUNNING_SMOKE").resolve();
@@ -677,7 +691,7 @@ try {
     await wait(() => childView.screen().split("\n").some(line => line.includes(`Time ${formatDuration(afterChildRunning, true)}`)
       && !/Running\./.test(line)), "completed child removes animation and updates native runtime");
   }
-  console.log("PASS: native running status animates sidebar, both /usage modes and child summary/dialog/narrow view without estimating time or marking idle parents active");
+  console.log("PASS: elapsed runtime advances with ~ in sidebar, both /usage modes and child summary/dialog/narrow view, then settles to native timing without marking idle parents active");
   const reasoningTarget = await client.session.create({ location: { directory: project }, title: "Reasoning Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const reasoningTui = openTui(reasoningTarget.id);
   await wait(() => /Token Usage/.test(reasoningTui.screen()), "reasoning sidebar");

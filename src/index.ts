@@ -7,6 +7,7 @@ export default Plugin.define({
   async setup(context) {
     const capture = new ContextCapture(context.mcp, context.storage);
     const rpc = await context.rpc.register(ContextSourceRpc, {
+      clock: async () => Date.now(),
       latest: async input => {
         const sessionID = (input as { sessionID: string }).sessionID;
         return { estimate: await capture.latest(sessionID) ?? null };

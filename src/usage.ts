@@ -310,8 +310,11 @@ export function formatDuration(milliseconds: number, compact = false): string {
 /** Hide confirmed zero totals, but preserve unavailable and stale timing. */
 export function formatRunTime(runtime?: RuntimeSummary, compact = false): string | undefined {
   if (runtime?.milliseconds === undefined) return "—";
-  if (runtime.status === "ready" && runtime.milliseconds === 0) return undefined;
-  const time = formatDuration(runtime.milliseconds, compact);
+  const estimated = runtime.estimatedMilliseconds !== undefined;
+  const milliseconds = runtime.estimatedMilliseconds ?? runtime.milliseconds;
+  if (runtime.status === "ready" && milliseconds === 0) return undefined;
+  const duration = formatDuration(milliseconds, compact);
+  const time = estimated && duration !== "—" ? `~${duration}` : duration;
   return runtime.status === "stale" ? `${time} · ${compact ? "stale" : "Not updated"}` : time;
 }
 

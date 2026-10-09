@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { summarizeRuntime } from "../src/runtime.js";
+import { prepareRuntime, projectRuntime, summarizeRuntime } from "../src/runtime.js";
 import type { UsageMessage } from "../src/usage.js";
 
 const input = (id: string, created: number, type = "user"): UsageMessage => ({ id, type, time: { created } });
@@ -99,7 +99,7 @@ test("failed and interrupted native responses use their own completed timestamps
   ]), ready(6_000));
 });
 
-test("unfinished responses are not estimated with a live clock; completion adds their native duration", () => {
+test("unfinished responses never enter the native subtotal; completion adds their native duration", () => {
   const history = [input("u1", 1_000), response("a1", 2_000, 4_000), idle("idle1", 5_000),
     input("u2", 10_000), response("a2", 11_000)];
   assert.deepEqual(summarizeRuntime(history), ready(3_000));
@@ -168,4 +168,66 @@ test("native durations are summed before formatting instead of rounding each tur
     input("u1", 1_000), response("a1", 1_100, 1_800), idle("idle1", 1_900),
     input("u2", 3_000), response("a2", 3_100, 3_800), idle("idle2", 3_900),
   ]), ready(1_600));
+});
+
+test("live runtime projects the first turn without changing its zero native subtotal", () => {
+  const prepared = prepareRuntime([input("u", 1_000), response("a", 1_500)]);
+  assert.deepEqual(prepared.summary, ready(0));
+  assert.deepEqual(projectRuntime(prepared, 2_500), { ...ready(0), estimatedMilliseconds: 1_500 });
+  assert.deepEqual(projectRuntime(prepared, 3_000), { ...ready(0), estimatedMilliseconds: 2_000 });
+  assert.deepEqual(prepared.summary, ready(0), "projection does not mutate historical timing");
+});
+
+test("live runtime includes tool/foreground waits but not earlier idle gaps", () => {
+  const history = [input("first-u", 1_000), response("first-a", 2_000, 4_000), idle("idle", 5_000),
+    input("u", 100_000), response("tool", 101_000, 102_000, "tool-calls")];
+  const prepared = prepareRuntime(history);
+  assert.deepEqual(projectRuntime(prepared, 110_000), { ...ready(3_000), estimatedMilliseconds: 13_000 });
+  history.push(response("next", 111_000));
+  assert.deepEqual(projectRuntime(prepareRuntime(history), 115_000), { ...ready(3_000), estimatedMilliseconds: 18_000 });
+  history.push(response("final", 116_000, 119_000));
+  assert.deepEqual(projectRuntime(prepareRuntime(history), 120_000), ready(22_000));
+});
+
+test("a live steer or retry replaces the current turn's already-counted duration", () => {
+  const history = [input("first-u", 0), response("first-a", 100, 500), idle("idle", 600),
+    input("u", 1_000), response("a1", 2_000, 4_000), input("steer", 5_000), response("a2", 6_000)];
+  const prepared = prepareRuntime(history);
+  assert.deepEqual(prepared.summary, ready(3_500));
+  assert.deepEqual(prepared.turn, { messageID: "a2", started: 1_000, milliseconds: 3_000 });
+  assert.deepEqual(projectRuntime(prepared, 8_000), { ...ready(3_500), estimatedMilliseconds: 7_500 });
+  history.push({ ...response("retry", 8_000, 9_000, "unknown"), retry: { attempt: 1 } });
+  assert.deepEqual(projectRuntime(prepareRuntime(history), 10_000), { ...ready(8_500), estimatedMilliseconds: 9_500 });
+});
+
+test("terminal, idle, imported completed, queued-only and standalone compaction tails are not projected", () => {
+  for (const history of [
+    [], [input("queued", 1_000)], [input("compact", 1_000, "compaction")],
+    [input("u", 1_000), response("a", 2_000, 3_000)],
+    [input("u", 1_000), { id: "a", type: "assistant", time: { created: 2_000, completed: 3_000 } }],
+    [input("u", 1_000), { ...response("a", 2_000, 3_000, "unknown"), error: "interrupted" }],
+    [input("u", 1_000), response("a", 2_000), idle("idle", 3_000)],
+  ]) {
+    const prepared = prepareRuntime(history);
+    assert.equal(prepared.turn, undefined);
+    assert.deepEqual(projectRuntime(prepared, 100_000), prepared.summary);
+  }
+});
+
+test("live starts retain native legacy/no-input/fork semantics", () => {
+  assert.equal(prepareRuntime([input("u", 1_000), input("steer", 5_000), response("a", 6_000)]).turn?.started, 5_000);
+  assert.equal(prepareRuntime([response("a", 6_000)]).turn?.started, 6_000);
+  const inherited = [input("u_1", 1_000), response("a_2", 2_000), idle("idle_3", 3_000)];
+  assert.equal(prepareRuntime(inherited, true).turn, undefined);
+  const history = [...inherited, input("own-u", 10_000), response("own-a", 11_000, 12_000),
+    input("own-steer", 13_000), response("own-next", 14_000)];
+  assert.deepEqual(projectRuntime(prepareRuntime(history, true), 15_000), { ...ready(2_000), estimatedMilliseconds: 5_000 });
+});
+
+test("live projection never turns missing timing into zero and clamps clock skew below known timing", () => {
+  const prepared = prepareRuntime([idle("idle", 0), input("u", 1_000), response("a1", 2_000, 4_000), response("a2", 5_000)]);
+  for (const now of [undefined, NaN, Infinity, -1, 9e15]) assert.deepEqual(projectRuntime(prepared, now), prepared.summary);
+  assert.equal(projectRuntime(prepared, 500).estimatedMilliseconds, 3_000);
+  const missing = prepareRuntime([{ id: "u", type: "user" }, response("a", 5_000)]);
+  assert.deepEqual(projectRuntime(missing, 10_000), { status: "unavailable" });
 });

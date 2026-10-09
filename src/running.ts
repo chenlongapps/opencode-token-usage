@@ -17,7 +17,7 @@ export function animateRunning(publish: (label: string | undefined) => void): ()
   };
 }
 
-/** Activity never replaces unavailable/stale timing or reveals a hidden zero total. */
+/** Activity preserves unavailable/stale markers; zero hiding belongs to the projected time value. */
 export function withRunningIndicator(value: string | undefined, indicator?: string): string | undefined {
   return value === undefined || !indicator ? value : `${value} · ${indicator}`;
 }

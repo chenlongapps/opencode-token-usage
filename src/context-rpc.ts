@@ -5,6 +5,12 @@ const numbers = ["Messages", "System Tools", "System Prompt", "Skills", "MCP Too
 export const ContextSourceRpc = Rpc.define({
   id: "opencode-token-usage.context",
   methods: {
+    // A read-only bootstrap for a quiet, already-running session. OpenCode
+    // 2.0.26's synthetic server.connected envelope has no created timestamp.
+    clock: {
+      input: { type: "object", properties: {}, additionalProperties: false },
+      output: { type: "number", minimum: 0 },
+    },
     latest: {
       input: {
         type: "object", properties: { sessionID: { type: "string" } }, required: ["sessionID"], additionalProperties: false,

@@ -593,6 +593,21 @@ test("runtime display hides only confirmed zero totals in both formats", () => {
   }
 });
 
+test("runtime projections use ~, reveal the first nonzero turn and keep frozen freshness markers", () => {
+  for (const compact of [false, true]) {
+    const runtime = { status: "ready" as const, milliseconds: 0, estimatedMilliseconds: 1_500 };
+    assert.equal(formatRunTime(runtime, compact), "~1.5s");
+    assert.equal(formatRunTime({ ...runtime, estimatedMilliseconds: 0 }, compact), undefined);
+    assert.equal(formatRunTime({ ...runtime, status: "stale" }, compact), `~1.5s · ${compact ? "stale" : "Not updated"}`);
+    assert.equal(formatRunTime({ status: "unavailable", estimatedMilliseconds: 1_500 }, compact), "—");
+    assert.equal(formatRunTime({ ...runtime, estimatedMilliseconds: NaN }, compact), "—");
+    assert.deepEqual(runtime, { status: "ready", milliseconds: 0, estimatedMilliseconds: 1_500 });
+  }
+  assert.deepEqual(usageRows(summarize([]), undefined, { tps: 10 }, {
+    status: "ready", milliseconds: 0, estimatedMilliseconds: 1_500,
+  }).slice(-2), [["TPS", "10.0 tok/s"], ["Run Time", "~1.5s"]]);
+});
+
 test("runtime is the last panel row without changing token or performance rows", () => {
   const summary = summarize([]);
   const context = { used: 50, limit: 100, percent: 50 };

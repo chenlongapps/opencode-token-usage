@@ -1,5 +1,25 @@
 # 验证记录
 
+## 2026-10-10 · 当前已耗时实时估算（未发布）
+
+运行中 `Run Time`／`Time` 用 `~` 显示截至当前的累计耗时估算，首轮非零估算也可见，不预测最终或剩余时间。`src/runtime.ts` 从同一次完整历史扫描准备当前轮起点及已计入的重叠时长；显示值用当前轮估算替换同轮已有时长，`milliseconds` 仍只保存原生已完成累计。工具、重试及前台等待继续计时；terminal 回答／执行结束先冻结显示，刷新后以原生完成时间结算并移除 `~`，允许向下校正。读取失败保留冻结的估算及未更新标记，未知历史时间仍显示不可用。
+
+新增 `src/runtime-monitor.ts`，以服务端时间锚点和本地单调时钟推进共享的 500ms ticker；时钟 tick 不扫描历史、不读取 API。启动／重连通过现有 `opencode-token-usage.context` RPC 的只读 `clock` 方法取得时间，不保存数据、不读 MCP、不进入模型调用链路；RPC 不可用或慢响应时，可用带时间戳的实时事件建立锚点，不阻塞实测统计。无可信锚点时保留原生累计值，不用客户端 epoch 时间猜测远程时间。各入口使用同一监视器，关闭最后一个估算视图后取消 ticker；会话切换隔离旧结果，空闲父会话不继承子代理的活动。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包仍为 0.4.8、SDK 2.0.24、OpenTUI 0.5.14，真实宿主 OpenCode 2.0.26。已复核 V2 插件／CLI／RPC 文档及已安装 SDK；实际 2.0.26 的 synthetic `server.connected` 握手缺少 `created`。首轮集成因此暴露了新开安静子代理视图没有锚点的问题，已用可选只读 RPC 修复，并加入实际握手形状的回归夹具。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 192 项通过，新增 24 项估算、时钟、控制器及显示回归测试 |
+| `npm run build` | 通过，包含 runtime monitor 与类型声明 |
+| `node --check scripts/smoke.mjs`、`git diff --check` | 通过 |
+| `npm run test:smoke` | 真实 2.0.26 打包／隔离安装的完整检查通过 |
+
+自动化测试覆盖首轮、同轮 steer／retry 重叠替换、工具等待、历史空闲、legacy／无输入／分叉起点、terminal 完成后的迟到快照、失败冻结与恢复、无锚点降级、远程时间与客户端 epoch 偏差、共享 ticker 清理、可选 RPC 的慢响应／失败／取消／迟到结果及只读性。时钟偏差与读取失败由固定夹具验证，没有宣称在真实远程宿主注入这些故障。真实 TUI 在侧边栏、两种 `/usage`、子代理摘要／完整浮窗及 48 列视图分别捕获三个 Running 动画帧并确认无新流式增量时估算仍增长；验证首轮显示、切换／新开正在运行的会话、正常完成和中断后的精确结算、空闲父会话不随子代理增长，以及原有分叉、压缩、定价、上下文和 TPS／TTFT 检查。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-FxP0I5`，其中 `02-switched-streaming.txt` 与 `04-streaming.txt` 保存首轮实时值，`10-running-*` 保存各入口实时值及三帧动画，`result.json` 保存最终原生累计值。Node 22 的既有 OpenTUI 引擎警告与 MockTimers 实验警告保留。本次未升级版本、提交、推送或发布。
+
 ## 2026-10-10 · Run Time 运行状态动画
 
 可见的 `Run Time`／`Time` 值按当前查看会话的原生 `context.data.session.status(sessionID)` 附加运行状态。新增 `src/running.ts`，每 500ms 循环 `Running.`／`Running..`／`Running...`，用空格补齐三个点的位置，避免右对齐数值及摘要后续字段移动。动画只更新显示信号，不读取消息历史、不估算未完成耗时，不把子代理活动状态归给空闲的父会话。零值隐藏、不可用／未更新标记以及 Run Time 末行顺序保持不变；进入空闲、隐藏时间项、关闭视图或切换会话时清理原计时器。
