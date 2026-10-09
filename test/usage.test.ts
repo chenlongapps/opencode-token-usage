@@ -109,7 +109,7 @@ test("cache write stays conditional while confirmed free cost displays as zero",
     priced({ id: "paid", type: "assistant", tokens: { input: 100 } }),
   ], catalog());
   assert.ok(!usageRows(paidWithoutCache).some(([label]) => label === "Cache Write"));
-  assert.equal(usageRows(paidWithoutCache).find(([label]) => label === "Est. Cost")?.[1], "<$0.01");
+  assert.equal(usageRows(paidWithoutCache).find(([label]) => label === "Est. Cost")?.[1], "<$0.001");
 
   const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
   const freeWithCache = summarize([
@@ -388,8 +388,12 @@ test("comma grouping, rounding boundaries and dollar display", () => {
     [1200.4, "1,200"], [1200.5, "1,201"],
   ] as const) assert.equal(formatTokens(number), expected);
   assert.equal(formatCost(0), "$0.00");
-  assert.equal(formatCost(0.00001), "<$0.01");
-  assert.equal(formatCost(0.01), "$0.01");
+  assert.equal(formatCost(0.00001), "<$0.001");
+  assert.equal(formatCost(0.000999), "<$0.001");
+  assert.equal(formatCost(0.001), "$0.001");
+  assert.equal(formatCost(0.00504), "$0.005");
+  assert.equal(formatCost(0.01), "$0.010");
+  assert.equal(formatCost(0.0101), "$0.01");
   assert.equal(formatCost(1.234), "$1.23");
 });
 

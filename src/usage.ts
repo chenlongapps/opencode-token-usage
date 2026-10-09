@@ -290,7 +290,12 @@ export function formatTokens(value: number): string {
   return Math.round(safe(value)).toLocaleString("en-US");
 }
 
-export const formatCost = (value: number) => value > 0 && value < 0.01 ? "<$0.01" : `$${safe(value).toFixed(2)}`;
+export const formatCost = (value: number) => {
+  const amount = safe(value);
+  if (amount === 0) return "$0.00";
+  if (amount < 0.001) return "<$0.001";
+  return `$${amount.toFixed(amount > 0.01 ? 2 : 3)}`;
+};
 
 export function formatEstimatedCost(cost: number, status: CostStatus): string | undefined {
   if (status === "empty") return undefined;

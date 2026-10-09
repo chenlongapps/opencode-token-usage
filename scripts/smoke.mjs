@@ -373,7 +373,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 250));
   narrowTui.send("\r");
   await wait(() => /Used \/ Limit/.test(narrowTui.screen()), "narrow usage dialog");
-  await scrollToEnd(narrowTui, screen => /usage-test\/small\s+<\$0\.01/.test(screen), "scroll narrow usage to model cost");
+  await scrollToEnd(narrowTui, screen => /usage-test\/small\s+\$0\.001\b/.test(screen), "scroll narrow usage to model cost");
   narrowTui.send("d");
   await wait(() => /Calls\s+1\b/.test(narrowTui.screen()), "narrow detailed mode rendered");
   await scrollToEnd(narrowTui, screen => /OpenCode · all incoming sizes · 1 call/.test(screen)
@@ -404,7 +404,7 @@ try {
   await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
   await tui.save("06-subagent");
   const childTui = openTui(child.id);
-  await wait(() => /Token Usage · Context 1,270 \/ 128,000 \(1\.0%\) · Total 5,080 · Cost <\$0\.01 · TPS ~?[\d.]+ tok\/s/.test(childTui.screen()), "subagent usage summary");
+  await wait(() => /Token Usage · Context 1,270 \/ 128,000 \(1\.0%\) · Total 5,080 · Cost \$0\.005 · TPS ~?[\d.]+ tok\/s/.test(childTui.screen()), "subagent usage summary");
   const childSummary = childTui.screen().split("\n").find(line => line.includes("Token Usage ·")) ?? "";
   assert.doesNotMatch(childSummary, /ctrl\+x/i, "subagent summary does not advertise a shortcut");
   assert.doesNotMatch(childTui.screen(), /Input\s+400/, "subagent metrics do not take up composer space while closed");
@@ -447,7 +447,7 @@ try {
   tui.send("\r");
   await wait(() => /Used \/ Limit\s+1\.3K \/ 32\.0K \(4\.0%\)/.test(tui.screen()), "usage after model switch");
   assert.match(tui.screen(), /Token Usage Smoke · usage-test\/large/);
-  await scrollToEnd(tui, screen => /usage-test\/small\s+<\$0\.01/.test(screen), "historical costs stay on the recorded model");
+  await scrollToEnd(tui, screen => /usage-test\/small\s+\$0\.005\b/.test(screen), "historical costs stay on the recorded model");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()), "close switched usage dialog");
   await tui.save("08-model-switch");
@@ -482,7 +482,7 @@ try {
   assert.ok(Math.abs(officialSummary.cost - 0.000149) < 1e-12);
   assert.equal(officialSummary.costStatus, "complete");
   const officialTui = openTui(officialTarget.id);
-  await wait(() => /Est\. Cost\s+<\$0\.01/.test(officialTui.screen()), "official fallback cost in sidebar");
+  await wait(() => /Est\. Cost\s+<\$0\.001/.test(officialTui.screen()), "official fallback cost in sidebar");
   officialTui.send("/usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   officialTui.send("\r");
