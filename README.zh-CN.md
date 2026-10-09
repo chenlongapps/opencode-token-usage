@@ -34,9 +34,9 @@ opencode plugin add @chenlongapps/opencode-token-usage
 ```
 
 > [!NOTE]
-> 需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。此前发布已验证 OpenCode 2.0.9 和 2.0.10；当前 SDK 2.0.24 构建已在 OpenCode 2.0.11、2.0.22 和 2.0.24 上验证。
+> 需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。此前发布已验证 OpenCode 2.0.9 和 2.0.10；SDK 2.0.24 集成检查已在 OpenCode 2.0.11、2.0.22、2.0.24 和 2.0.26 上通过。原生对话耗时的集成验证使用 2.0.26，其余列出的宿主检查早于该功能加入。
 
-安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方保留一行实时摘要，显示 Context、Total、Cost 和 TPS。点击摘要可在居中弹窗中查看完整统计；按 Escape 或点击 **esc** 即可关闭，关闭弹窗不会中断子代理。
+安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方保留一行实时摘要，显示 Context、Total、Cost、Time 和 TPS。点击摘要可在居中弹窗中查看完整统计；按 Escape 或点击 **esc** 即可关闭，关闭弹窗不会中断子代理。
 
 连接远程服务器时，可将包名加入本机 `~/.config/opencode/cli.json` 的 `plugins`，仅加载终端入口；配置路径遵循 `XDG_CONFIG_HOME`。
 
@@ -44,7 +44,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 
 在会话中输入 `/usage`，可打开原生弹窗查看当前会话树的 token 总量，以及按消息实际模型汇总的估算费用。使用 ↑/↓、Page Up/Down、Home/End 滚动，按 `d` 切换紧凑／详细数字并查看模型费率，Escape 关闭。该命令不会向模型发送消息。
 
-子代理视图中的摘要格式为 `Token Usage · Context … · Total … · Cost … · TPS …`。缺失数据仍显示不可用，不会被当作零，摘要也不提示快捷键。点击后打开较小的弹窗，按侧边栏原有行序展示精确数值（包括 Steps、TPS 和 TTFT）；关闭时不会为完整面板预留高度。
+子代理视图中的摘要格式为 `Token Usage · Context … · Total … · Cost … · Time … · TPS …`。Time 仅累计被查看子代理自身每轮原生显示的对话耗时，token 总量和费用仍统计整棵树。窄终端会省略优先级较低的字段，保留 Time 且不增加第二行。缺失数据仍显示不可用，不会被当作零，摘要也不提示快捷键。点击后打开较小的弹窗，按侧边栏原有行序展示精确数值（包括 Steps、TPS、TTFT 和 Run Time）；关闭时不会为完整面板预留高度。Run Time 在侧边栏及该弹窗中均为最后一行。
 
 弹窗分为五个区域，统计口径互相独立：
 
@@ -53,7 +53,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | Context Window | 已用 / 上限、占活动模型上下文上限的百分比，并带占用条 |
 | Last Request | 被查看会话最近一次已上报调用的五类 token 与缓存命中率 |
 | Context Breakdown | 提示词构成估算，按占比降序排列并带条形图 |
-| Session | 全树汇总：steps、calls、tokens、缓存率与费用（紧凑模式为单行，详细模式逐类展开） |
+| Session | 全树汇总：steps、calls、tokens、缓存率与费用（紧凑模式为单行，详细模式逐类展开）；独立的 `Run Time (this session)` 行仅累计被查看会话每轮原生显示的对话耗时 |
 | By Model | 各模型的 tokens、calls 与费用，按费用降序；详细模式显示用于估算各模型费用的费率 |
 
 标题下方一行注明会话与当前活动模型，正文不再重复模型名。紧凑模式使用 `K`/`M` 缩写（`812`、`139.4K`、`3.70M`），隐藏零值行，并把 Context Breakdown 中的两类工具合并为一行 `Tools`；详细模式显示精确数字、零值行及 `System Tools` / `MCP Tools` 拆分。侧边栏仍使用精确数字和原有布局。
@@ -76,6 +76,7 @@ opencode plugin add @chenlongapps/opencode-token-usage
 | `Context` | 当前会话最后一次已完成压缩后的最新上下文用量，不随子树累计 |
 | `Steps` | 全树（含子代理）的 assistant 消息数，口径与 OpenCode 自带统计一致，compaction 与用户消息不计为 step |
 | `Est. Cost` | 按每条 assistant 与 compaction 消息实际模型估算的全树费用 |
+| `Run Time` | 仅被查看会话自身的保留历史中，OpenCode 每轮原生显示的对话耗时之和，每轮只取最终已完成回答；不额外叠加子会话耗时 |
 | `TPS` | 全树 `Output + Reasoning` 的生成吞吐。请求进行中时，插件根据首个流式增量之后最近的可观察文本、reasoning summary 和工具输入流（UTF-8 字节数 / 4）按短时间滑动窗口估算输出速度，不包含首 token 前等待时间，并以 `~` 标记。OpenAI Responses 等 API 不会实时暴露完整的隐藏 reasoning token，因此实时值不能表示隐藏推理吞吐。请求完成后，插件使用服务端上报的 Output 与 Reasoning token 及时间信息计算精确 TPS，并移除 `~` 标记 |
 | `TTFT` | 全树中可测 assistant step 的平均首 token 时间 |
 
@@ -85,6 +86,9 @@ opencode plugin add @chenlongapps/opencode-token-usage
 - 分叉会话是独立会话树。继承消息副本只归原始来源，避免重复计费。
 - `Context` 仅搜索最后一次 `status === "completed"` 的 compaction 之后；没有可靠用量或模型上限时隐藏。
 - `Steps` 统计树中全部 assistant 消息，无论是否已上报用量；复用分叉副本去重，继承历史不会重复计数。
+- `Run Time` 沿用 OpenCode 2.0.26 的原生回答页脚口径：assistant 完成时间减去上一条 idle 标记之后首个 user／synthetic 输入的创建时间。没有 idle 标记的旧历史使用最近一条输入；没有输入则回退到 assistant 自身的创建时间。每轮只计最终已完成回答的耗时，不把各条 assistant step 的重叠时长重复相加。包含跨度内的模型调用、工具、重试和前台等待，不含轮次之间的空闲；父会话等待子代理的时间已在父会话跨度内，不再额外叠加子代理耗时。
+- `Run Time` 在已完成回答上报后更新，不用实时计时器估算未完成回答。失败／中断回答有原生完成时间戳时同样累计。先累加未取整的毫秒值，再格式化（不足一秒显示毫秒，不足一分钟的秒值保留一位小数，其后显示分／小时），因此不一定等于相加各轮已取整的页脚标签。复用现有消息历史读取，重启后可恢复，也适用于安装之前的会话；不依赖实验性执行日志 API 或服务端插件。历史计时数据缺失时显示 `—`，不会显示伪零。读取失败保留上次完整值并标注 `Not updated`（短摘要中为 `stale`）。
+- 耗时随保留历史变化：切换 agent／模型与压缩保留过去轮次；分叉继承副本不计入分叉自身耗时。暂存回退不会删除轮次，但已提交回退删除消息后，也会移除这些消息对应的耗时；已删除的历史计时无法恢复。
 - `Est. Cost` 按每条消息记录的实际模型分别计算。OpenCode 当前解析出的完整非零价格优先；若 OpenCode 给出完整零价，且内置价格快照可以完整计价，则采用快照价格。价格不完整时整条消息回退，不混用两套费率。
 - 内置回退快照从 [models.dev](https://models.dev/api.json) 生成，只采用审核过的原厂 Provider 与自家模型系列；少量经原厂核实的例外单独维护。快照覆盖有价格的文本模型，插件运行时不下载价格。网关模型通过精确原厂 ID、明确别名和已知包装格式匹配；只有终尾 `-free` 或 `:free` 会在再次精确查找前移除。
 - 确认免费时显示 `$0.00`；正费用低于 `$0.001` 时显示 `<$0.001`，不超过 `$0.01` 的费用保留三位小数，更高费用保留两位。价格不可用时显示 `—`；只有部分消息可计算时在已知小计后标注 `partial`。快照不含网关加价、区域溢价、未列明的折扣、非文本计费、工具费和税费；Est. Cost 是估算而非账单。覆盖范围、来源和限制见[价格来源与限制](docs/pricing.md)。
@@ -109,7 +113,7 @@ OpenCode SDK 包精确锁定为 `2.0.24`，OpenTUI 为 `0.5.14`。Node.js 22 下
 
 手动更新时，在联网的维护环境运行 `npm run prices:update`，审阅生成文件及例外差异，再执行上述检查。构建和插件刷新不会请求 models.dev。
 
-`test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、`/usage`、子代理累计、逐消息计价、原厂价格补全、模型切换、TPS 和 TTFT。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
+`test:smoke` 会打包真实产物，并在隔离的 OpenCode 与本地模拟提供商中验证加载、刷新、`/usage`、子代理累计、逐消息计价、原厂价格补全、模型切换、TPS、TTFT，以及会话自身的原生对话耗时（未完成回答、空闲、中断、消息历史恢复、分叉和窄终端子代理视图）。它需要 Python 3、可用的本地端口和 npm 网络访问，不会修改现有 OpenCode 配置或调用付费模型。
 
 默认使用 `PATH` 中的 `opencode`。OpenCode 2.0.9 及之后的稳定版 2.x 可以运行；尚未与当前 SDK 验证的宿主会输出警告，然后继续实际兼容性检查。仅通过版本检查不代表兼容性已验证。SDK 依赖仍独立锁定，不随本机 CLI 更新而自动升级。
 

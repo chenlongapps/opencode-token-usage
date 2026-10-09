@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 
 // Hosts verified with the current SDK, not an allowlist for running smoke.
-export const verifiedOpenCodeVersions = ["2.0.11", "2.0.22", "2.0.24"];
+export const verifiedOpenCodeVersions = ["2.0.11", "2.0.22", "2.0.24", "2.0.26"];
 
 export function checkOpenCodeVersion(output) {
   const match = /^opencode v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/.exec(output.trim());

@@ -41,19 +41,21 @@ assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && fi
 assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts") && files.includes("docs/pricing.md"));
 assert.ok(["aliases", "overrides", "prices.generated"].every(name => files.includes(`dist/${name}.js`)));
 assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-sources.js"));
+assert.ok(files.includes("dist/runtime.js") && files.includes("dist/runtime.d.ts"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
 const plugin = path.join(installation, "node_modules", ...packageName.split("/"));
 const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
-const { contextUsage, summarize } = await import(path.join(plugin, "dist/usage.js"));
+const { contextUsage, formatDuration, summarize } = await import(path.join(plugin, "dist/usage.js"));
 const { ContextSourceRpc } = await import(path.join(plugin, "dist/context-rpc.js"));
 const { historicalPerformance } = await import(path.join(plugin, "dist/performance.js"));
+const { summarizeRuntime } = await import(path.join(plugin, "dist/runtime.js"));
 
 let childAgent = "general";
 const requests = [];
 // Keep live checks observable until the TUI has rendered them, rather than racing a fixed delay.
-const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE"]
+const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE"]
   .map(marker => [marker, { started: false, ...Promise.withResolvers() }]));
 const compactionSummary = `## Objective
 - Return SMOKE_OK.
@@ -175,6 +177,47 @@ const scrollToEnd = (tui, check, label) => wait(() => {
   tui.send("\x1b[F");
   return false;
 }, label);
+const runtimeResults = {};
+// Independent oracle: the host's native footer backward scan, once per final turn.
+// This uses only projected messages, never experimental session execution logs.
+const ownRuntime = async sessionID => {
+  const session = await client.session.get({ sessionID });
+  let messages = [], cursor;
+  do {
+    const page = await client.message.list(cursor ? { sessionID, cursor } : { sessionID, order: "asc", limit: 100 });
+    messages.push(...page.data);
+    cursor = page.cursor.next;
+  } while (cursor);
+  const retained = messages;
+  const legacy = !messages.some(message => message.type === "idle");
+  if (session.fork) messages = messages.filter(message => !/_\d+$/.test(message.id));
+  const final = new Map();
+  let turn = 0;
+  for (const [index, message] of messages.entries()) {
+    if (message.type === "idle" || (legacy && (message.type === "user" || message.type === "synthetic"))) turn++;
+    if (message.type === "assistant" && ((message.finish && !["tool-calls", "unknown"].includes(message.finish)) || message.error || message.retry)) {
+      assert.ok(message.time.completed !== undefined, "settled response has a native duration");
+      final.set(turn, index);
+    }
+  }
+  let milliseconds = 0;
+  for (const index of final.values()) {
+    const response = messages[index];
+    let input;
+    for (let before = index - 1; before >= 0; before--) {
+      const message = messages[before];
+      if (message.type === "idle") break;
+      if (message.type !== "user" && message.type !== "synthetic") continue;
+      input = message;
+      if (legacy) break;
+    }
+    milliseconds += Math.max(0, response.time.completed - (input?.time.created ?? response.time.created));
+  }
+  assert.deepEqual(summarizeRuntime(retained, !!session.fork), { status: "ready", milliseconds });
+  runtimeResults[sessionID] = milliseconds;
+  return milliseconds;
+};
+const runtimeRow = (screen, milliseconds) => screen.split("\n").some(line => line.includes("Run Time") && line.includes(formatDuration(milliseconds)) && !line.includes("~"));
 const terminals = [];
 const lineNumber = (screen, pattern) => screen.split("\n").findIndex(line => pattern.test(line));
 const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
@@ -215,7 +258,7 @@ try {
   await wait(() => client.server.info(), "server startup");
   eventCapture = (async () => {
     for await (const event of client.event.subscribe({ signal: eventController.signal })) {
-      if (/^session\.(?:step\.|text\.delta|reasoning\.delta|tool\.input\.delta)/.test(event.type)) streamEvents.push(event);
+      if (/^session\.(?:execution\.|step\.|text\.delta|reasoning\.delta|tool\.input\.delta)/.test(event.type)) streamEvents.push(event);
     }
   })().catch(error => {
     if (!eventController.signal.aborted) streamEvents.push({ error: String(error) });
@@ -236,6 +279,7 @@ try {
   const tui = openTui(root.id);
   await wait(() => /Token Usage/.test(tui.screen()) && /Cache Rate\s+0\.0%/.test(tui.screen()), "empty sidebar");
   assert.match(tui.screen(), /Steps\s+0\b/, "empty session shows zero steps");
+  await wait(() => /Run Time\s+0s/.test(tui.screen()), "empty session has genuine zero run time");
   assert.doesNotMatch(tui.screen(), /Cache Write/);
   assert.doesNotMatch(tui.screen(), /Est\. Cost\b/);
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
@@ -247,6 +291,7 @@ try {
   await wait(() => /By Model/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty /usage dialog");
   assert.doesNotMatch(tui.screen(), /Used \/ Limit/, "empty context does not show a fabricated zero");
   assert.match(tui.screen(), /Request usage unavailable/);
+  assert.match(tui.screen(), /Run Time \(this session\)\s+0s/);
   assert.doesNotMatch(tui.screen().split("\n").find(line => line.includes("Last Request")) ?? "", /\d+:\d+/,
     "an empty request has no timestamp");
   tui.send("\x1b");
@@ -266,6 +311,9 @@ try {
   tui.send("\r");
   await wait(() => !/Sessions for project/.test(tui.screen()) && /TPS\s+~[\d.]+ tok\/s/.test(tui.screen())
     && /TTFT\s+[\d.]+s/.test(tui.screen()), "live performance restored after session switch");
+  await wait(() => /Run Time\s+0s/.test(tui.screen()), "unfinished response doesn't fabricate live runtime");
+  await new Promise(resolve => setTimeout(resolve, 1_200));
+  assert.match(tui.screen(), /Run Time\s+0s/, "runtime counts completed responses, not client wall time");
   await tui.save("02-switched-streaming");
   streamGates.get("SWITCH_SMOKE").resolve();
   await switchPrompt;
@@ -276,6 +324,9 @@ try {
   await wait(() => new RegExp(`TPS\\s+${switchPerformance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(tui.screen()), "switched stream exact TPS");
   assert.doesNotMatch(tui.screen(), /TPS\s+~/, "switched stream converges to exact TPS");
   await tui.save("03-switched-complete");
+  await client.session.wait({ sessionID: switchTarget.id });
+  const switchRunTime = await ownRuntime(switchTarget.id);
+  await wait(() => runtimeRow(tui.screen(), switchRunTime), "switched runtime settles exactly");
   console.log("PASS: switching to an in-flight session restores live TPS/TTFT and converges to exact TPS");
 
   tui.send("\x18");
@@ -321,12 +372,21 @@ try {
   assert.doesNotMatch(tui.screen(), /TPS\s+~/, "completed TPS replaces the live estimate");
   assert.match(tui.screen(), /TTFT\s+[\d.]+s/);
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "context row leads the panel");
-  assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /Est\. Cost\s+/) + 2, "one blank line separates usage and performance");
+  assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /Est\. Cost\s+/) + 2, "one blank line separates usage and performance/runtime");
+  assert.equal(lineNumber(tui.screen(), /\bTTFT\s+/), lineNumber(tui.screen(), /\bTPS\s+/) + 1);
+  assert.equal(lineNumber(tui.screen(), /\bRun Time\s+/), lineNumber(tui.screen(), /\bTTFT\s+/) + 1, "Run Time is the last metric row");
   assert.ok(lineNumber(tui.screen(), /\bTPS\s+/) < lineNumber(tui.screen(), /\bTTFT\s+/));
   assert.ok(lineNumber(tui.screen(), /Est\. Cost\s+/) < lineNumber(tui.screen(), /\bTPS\s+/));
   await tui.save("05-message");
   console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });
+  const firstRunTime = await ownRuntime(root.id);
+  assert.ok(firstRunTime > 0);
+  await wait(() => runtimeRow(tui.screen(), firstRunTime), "first native turn runtime settles");
+  assert.ok(tui.screen().split("\n").some(line => line.includes(`· ${formatDuration(firstRunTime)} ·`)),
+    "the first turn's cumulative value matches the host's visible native footer");
+  await new Promise(resolve => setTimeout(resolve, 1_200));
+  assert.ok(runtimeRow(tui.screen(), firstRunTime), "idle time does not increase runtime");
   const messagesBeforeUsage = (await client.message.list({ sessionID: root.id })).data.length;
   tui.send("/usage");
   await new Promise(resolve => setTimeout(resolve, 250));
@@ -344,6 +404,8 @@ try {
   assert.match(tui.screen(), /Tools?\s+█*░*\s?[\d.]+K? \(?\d+\.\d%\)?/, "breakdown ranks sources with bars");
   assert.match(tui.screen(), /Cache Read\s+1\.0K/, "last request lists the current call");
   assert.match(tui.screen(), /Session\b/, "dialog shows the session summary");
+  assert.ok(tui.screen().split("\n").some(line => line.includes("Run Time (this session)") && line.includes(formatDuration(firstRunTime))),
+    "usage dialog explicitly labels session-local runtime");
   tui.send("d");
   await wait(() => /Calls/.test(tui.screen()) && /Cache Read\s+1,000 \(78\.7%\)/.test(tui.screen()), "detailed mode keeps exact numbers");
   tui.click("d details");
@@ -401,10 +463,14 @@ try {
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
   const child = (await client.session.list({ parentID: root.id })).data[0];
   await client.session.wait({ sessionID: root.id });
+  const rootRunTime = await ownRuntime(root.id), childRunTime = await ownRuntime(child.id);
+  assert.ok(rootRunTime > firstRunTime && childRunTime > 0);
+  await wait(() => runtimeRow(tui.screen(), rootRunTime), "root runtime excludes separately adding child runtime");
   await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
   await tui.save("06-subagent");
   const childTui = openTui(child.id);
-  await wait(() => /Token Usage · Context 1,270 \/ 128,000 \(1\.0%\) · Total 5,080 · Cost \$0\.005 · TPS ~?[\d.]+ tok\/s/.test(childTui.screen()), "subagent usage summary");
+  await wait(() => /Token Usage · Context 1,270 \/ 128,000 \(1\.0%\) · Total 5,080 · Cost \$0\.005 · Time [^·]+ · TPS ~?[\d.]+ tok\/s/.test(childTui.screen())
+    && childTui.screen().includes(`Time ${formatDuration(childRunTime, true)}`), "subagent usage summary with its own runtime");
   const childSummary = childTui.screen().split("\n").find(line => line.includes("Token Usage ·")) ?? "";
   assert.doesNotMatch(childSummary, /ctrl\+x/i, "subagent summary does not advertise a shortcut");
   assert.doesNotMatch(childTui.screen(), /Input\s+400/, "subagent metrics do not take up composer space while closed");
@@ -415,6 +481,10 @@ try {
   assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
   assert.match(childTui.screen(), /Steps\s+4\b/);
   assert.match(childTui.screen(), /Total\s+5,080\b/);
+  assert.ok(runtimeRow(childTui.screen(), childRunTime), "child dialog restores only the child's own time");
+  assert.ok(lineNumber(childTui.screen(), /\bRun Time\s+/) > Math.max(
+    lineNumber(childTui.screen(), /\bTPS\s+/), lineNumber(childTui.screen(), /\bTTFT\s+/),
+  ), "Run Time follows performance metrics in the child dialog too");
   const childDialogScreen = childTui.screen();
   await childTui.save("07-child-usage-dialog");
   childTui.send("\x1b");
@@ -436,6 +506,10 @@ try {
   assert.match(childDialogScreen, new RegExp(`Steps\\s+${tree.steps}\\b`), "tree-wide steps in child dialog");
   assert.equal(summarize(viewedMessages(snapshot), snapshot.model.catalog).steps, 1, "viewed session counts only its own step");
   console.log("PASS: real subagent usage is counted from parent and child views; context stays session-local; steps accumulate tree-wide");
+  const narrowChild = openTui(child.id, { cols: 48, rows: 28 });
+  await wait(() => narrowChild.screen().includes(`Time ${formatDuration(childRunTime, true)}`), "narrow child summary retains runtime");
+  await narrowChild.save("07-child-narrow-runtime");
+  console.log("PASS: native turn runtime excludes idle gaps and child aggregation, restores from messages and fits narrow child views");
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "large" } });
   await wait(async () => (await loadSnapshot(source, root.id, new AbortController().signal)).model.label === "usage-test/large", "active model switch");
   await wait(() => /Context\s+1,270 \/ 32,000 \(4\.0%\)/.test(tui.screen()), "context window follows model switch");
@@ -507,6 +581,17 @@ try {
   await wait(() => /TPS\s+[\d.]+ tok\/s/.test(longTtftTui.screen()) && !/TPS\s+~/.test(longTtftTui.screen()), "long TTFT converges to exact TPS");
   await longTtftTui.save("10-long-ttft");
   console.log("PASS: a 2s TTFT followed by fast output shows responsive live TPS and converges to exact TPS");
+  await client.session.wait({ sessionID: longTtftTarget.id });
+  const beforeInterrupt = await ownRuntime(longTtftTarget.id);
+  await client.session.prompt({ sessionID: longTtftTarget.id, text: "RUNTIME_INTERRUPT_SMOKE" });
+  await wait(() => streamGates.get("RUNTIME_INTERRUPT_SMOKE").started && runtimeRow(longTtftTui.screen(), beforeInterrupt), "unfinished interrupted response retains earlier cumulative time");
+  await client.session.interrupt({ sessionID: longTtftTarget.id });
+  streamGates.get("RUNTIME_INTERRUPT_SMOKE").resolve();
+  await client.session.wait({ sessionID: longTtftTarget.id });
+  const afterInterrupt = await ownRuntime(longTtftTarget.id);
+  assert.ok(afterInterrupt > beforeInterrupt, "interrupted native response contributes its reported duration");
+  await wait(() => runtimeRow(longTtftTui.screen(), afterInterrupt), "interrupted runtime matches the native response duration");
+  console.log("PASS: interruption retains earlier cumulative runtime and adds the interrupted native response duration");
   const reasoningTarget = await client.session.create({ location: { directory: project }, title: "Reasoning Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const reasoningTui = openTui(reasoningTarget.id);
   await wait(() => /Token Usage/.test(reasoningTui.screen()), "reasoning sidebar");
@@ -542,6 +627,7 @@ try {
   assert.equal(forkSnapshot.rootID, fork.id, "a fork is a separate root, not a subagent");
   assert.equal(forkSnapshot.sessions.get(fork.id).fork?.sessionID, semanticsTarget.id);
   const inherited = viewedMessages(forkSnapshot).filter(message => message.type === "assistant");
+  assert.equal(await ownRuntime(fork.id), 0, "a new fork never inherits the source session's run time");
   assert.equal(inherited.length, 1, "fork projects the source assistant");
   assert.match(inherited[0].id, /_\d+$/, "inherited copy IDs retain the source-sequence suffix");
   assert.equal(summarize(uniqueMessages(forkSnapshot), forkSnapshot.model.catalog).total, 0, "inherited usage stays with its original source");
@@ -554,6 +640,7 @@ try {
   assert.equal(forkSummary.total, 1270, "only the fork's own call is charged");
   assert.equal(forkSummary.steps, 1);
   assert.equal(forkSummary.cost, 0.00126);
+  assert.ok(await ownRuntime(fork.id) > 0, "the fork counts its own later execution");
   console.log("PASS: real forks retain copy IDs, independent roots, inherited context and source-only billing");
 
   await client.session.compact({ sessionID: semanticsTarget.id });
@@ -575,7 +662,8 @@ try {
   assert.equal(summarize(uniqueMessages(afterCompaction)).steps, 2, "compaction is not an assistant step");
   console.log("PASS: real completed compaction resets viewed context and preserves ascending full history");
 
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+  await ownRuntime(semanticsTarget.id);
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, runtime: runtimeResults, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
 } finally {
   for (const gate of streamGates.values()) gate.resolve();
   eventController.abort();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { officialPrice } from "../src/pricing.js";
-import { bar, contextUsage, countLabel, estimate, formatCompact, formatCost, formatEstimatedCost, formatRate, formatRateTier, formatTokens, modelKey, normalize, rateRows, requestDetails, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
+import { bar, contextUsage, countLabel, estimate, fitUsageSummary, formatCompact, formatCost, formatDuration, formatEstimatedCost, formatRate, formatRateTier, formatRunTime, formatTokens, modelKey, normalize, rateRows, requestDetails, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
 import type { ModelRef, Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
@@ -558,4 +558,51 @@ test("performance rows follow usage, mark live TPS estimates and hide unavailabl
     ["Total", "0"], ["TTFT", "1.3s"],
   ]);
   assert.ok(!usageRows(summary, undefined, {}).some(([label]) => label === "TPS" || label === "TTFT"));
+});
+
+test("runtime keeps native millisecond/second precision and readable minutes/hours; unknown and stale are not zero", () => {
+  for (const [milliseconds, expected, compact] of [
+    [0, "0s", "0s"], [999, "999ms", "999ms"], [1_600, "1.6s", "1.6s"], [59_999, "60.0s", "60.0s"],
+    [60_000, "1m 00s", "1m0s"], [318_999, "5m 18s", "5m18s"],
+    [3_723_000, "1h 02m 03s", "1h2m3s"], [90_061_000, "25h 01m 01s", "25h1m1s"],
+  ] as const) {
+    assert.equal(formatDuration(milliseconds), expected);
+    assert.equal(formatDuration(milliseconds, true), compact);
+  }
+  for (const invalid of [NaN, Infinity, -1]) assert.equal(formatDuration(invalid), "—");
+  assert.equal(formatRunTime(), "—");
+  assert.equal(formatRunTime({ status: "unavailable" }), "—");
+  assert.equal(formatRunTime({ status: "ready", milliseconds: 60_000 }), "1m 00s");
+  assert.equal(formatRunTime({ status: "stale", milliseconds: 60_000 }), "1m 00s · Not updated");
+  assert.equal(formatRunTime({ status: "stale", milliseconds: 60_000 }, true), "1m0s · stale");
+});
+
+test("runtime is the last panel row without changing token or performance rows", () => {
+  const summary = summarize([]);
+  const context = { used: 50, limit: 100, percent: 50 };
+  const rows = usageRows(summary, context, { tps: 10, ttft: 2_000 }, { status: "ready", milliseconds: 318_000 });
+  assert.deepEqual(rows[0], ["Context", "50 / 100 (50.0%)"]);
+  assert.deepEqual(rows.slice(-4), [["Total", "0"], ["TPS", "10.0 tok/s"], ["TTFT", "2.0s"], ["Run Time", "5m 18s"]]);
+  for (const performance of [{ tps: 10 }, { ttft: 2_000 }, {}, { tps: NaN, ttft: Infinity }]) {
+    const withRuntime = usageRows(summary, context, performance, { status: "ready", milliseconds: 318_000 });
+    assert.deepEqual(withRuntime.slice(0, -1), usageRows(summary, context, performance));
+    assert.deepEqual(withRuntime.at(-1), ["Run Time", "5m 18s"]);
+  }
+  assert.deepEqual(usageRows(summary, undefined, undefined, { status: "unavailable" }).at(-1), ["Run Time", "—"]);
+  assert.deepEqual(usageRows(summary, undefined, undefined, { status: "ready", milliseconds: 0 }).at(-1), ["Run Time", "0s"]);
+});
+
+test("child summary retains session-local time on narrow terminals without extra lines", () => {
+  const fields = [
+    ["Context", "1,270 / 128,000 (1.0%)"], ["Total", "5,080"], ["Cost", "$0.005"],
+    ["Time", "5m18s"], ["TPS", "48.7 tok/s"],
+  ] as const;
+  assert.equal(fitUsageSummary(fields, 160), "Token Usage · Context 1,270 / 128,000 (1.0%) · Total 5,080 · Cost $0.005 · Time 5m18s · TPS 48.7 tok/s");
+  for (const width of [100, 80, 48, 32, 20]) {
+    const line = fitUsageSummary(fields, width);
+    assert.ok(line.length <= width, `summary fits ${width} columns`);
+    assert.match(line, /Time 5m18s/);
+    assert.doesNotMatch(line, /\n/);
+  }
+  assert.match(fitUsageSummary(fields, 160, true), /Not updated$/);
 });

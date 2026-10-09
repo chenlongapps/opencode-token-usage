@@ -7,15 +7,15 @@ import type { UsageState } from "./controller.js";
 import { PerformanceMonitor } from "./performance.js";
 import { breakdownRows } from "./context-sources.js";
 import { createSource } from "./source.js";
-import { bar, countLabel, formatCompact, formatEstimatedCost, formatRateTier, formatTokens, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
+import { bar, countLabel, fitUsageSummary, formatCompact, formatEstimatedCost, formatRateTier, formatRunTime, formatTokens, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
 
 function UsageView(props: {
   context: Plugin.Context;
   state: () => UsageState;
   hideTitle?: boolean;
 }) {
-  const rows = createMemo(() => usageRows(props.state().summary, props.state().context, props.state().performance));
-  const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "TPS" || label === "TTFT"));
+  const rows = createMemo(() => usageRows(props.state().summary, props.state().context, props.state().performance, props.state().runtime));
+  const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "Run Time" || label === "TPS" || label === "TTFT"));
   const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[props.state().status];
 
   return (
@@ -114,6 +114,7 @@ function ChildUsageLauncher(props: {
   const unregister = props.register(controller);
   createEffect(() => controller.select(props.sessionID));
   onCleanup(() => { controller.dispose(); unregister(); });
+  const dimensions = useTerminalDimensions();
   const summary = createMemo(() => {
     const current = state();
     if (!current.summary) return `Token Usage · ${({ loading: "Loading…", ready: "Loading…", stale: "Unavailable", unavailable: "Unavailable · retrying…" })[current.status]}`;
@@ -124,8 +125,10 @@ function ChildUsageLauncher(props: {
     const tps = current.performance?.tps !== undefined && Number.isFinite(current.performance.tps)
       ? `${current.performance.tpsEstimated ? "~" : ""}${Math.max(0, current.performance.tps).toFixed(1)} tok/s`
       : "—";
-    const stale = current.status === "stale" ? " · Not updated" : "";
-    return `Token Usage · Context ${context} · Total ${formatTokens(current.summary.total)} · Cost ${cost} · TPS ${tps}${stale}`;
+    return fitUsageSummary([
+      ["Context", context], ["Total", formatTokens(current.summary.total)], ["Cost", cost],
+      ["Time", formatRunTime(current.runtime, true)], ["TPS", tps],
+    ], Math.max(20, dimensions().width - 8), current.status === "stale");
   });
 
   return (
@@ -301,6 +304,12 @@ function UsageDialog(props: {
                   </Show>
                 )}
               </Show>
+              <box flexDirection="row" justifyContent="space-between" gap={2}>
+                <text fg={theme().muted} wrapMode="word" minWidth={0}>Run Time (this session)</text>
+                <text fg={theme().base} wrapMode="word" minWidth={0}>
+                  {formatRunTime(state().runtime)}
+                </text>
+              </box>
             </box>
             <box>
               <text fg={theme().base}><b>By Model</b></text>

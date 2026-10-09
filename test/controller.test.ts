@@ -452,3 +452,128 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   // Root: 8 bytes / 0.25 s = 8; child: 16 bytes / 0.25 s = 16; duration-weighted average = 12.
   assert.deepEqual(state.performance, { tps: 12, tpsEstimated: true, ttft: 375 });
 });
+
+const turn = (id: string, created: number, completed: number, tokens = 10): UsageMessage[] => [
+  { id: `${id}-u`, type: "user", time: { created } },
+  { ...message(`${id}-a`, tokens), finish: "stop", time: { created: created + 100, completed } },
+  { id: `${id}-idle`, type: "idle", time: { created: completed + 100 } },
+];
+
+test("native runtime stays local to the viewed session while tokens stay tree-wide and sidebar/dialog agree", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", turn("root", 1_000, 11_000));
+  source.sessions.set("child", session("child", "root"));
+  source.history.set("child", turn("child", 2_000, 5_000, 30));
+  let state: UsageState = { status: "loading" }, dialogState: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  const dialog = new UsageController(source, events.subscribe, value => { dialogState = value; }, 2, 3_000, 2, undefined, true);
+  t.after(() => { controller.dispose(); dialog.dispose(); });
+  controller.select("root");
+  dialog.select("root");
+  await until(() => state.status === "ready" && dialogState.status === "ready" && state.runtime?.milliseconds === 10_000);
+  assert.equal(state.summary?.total, 40);
+  assert.deepEqual(dialogState.runtime, state.runtime);
+  controller.select("child");
+  assert.equal(state.runtime?.milliseconds, undefined, "the old session's time is cleared immediately");
+  await until(() => state.status === "ready" && state.runtime?.milliseconds === 3_000);
+  assert.equal(state.summary?.total, 40);
+  assert.equal(dialogState.runtime?.milliseconds, 10_000);
+  controller.select("root");
+  await until(() => state.status === "ready" && state.runtime?.milliseconds === 10_000);
+  source.history.set("child", [...turn("child", 2_000, 5_000, 30), ...turn("child-next", 20_000, 25_000, 20)]);
+  events.emit("session.execution.succeeded", "child");
+  await until(() => state.summary?.total === 60 && dialogState.summary?.total === 60);
+  assert.equal(state.runtime?.milliseconds, 10_000, "a child's later response doesn't add to the parent's time");
+  assert.deepEqual(dialogState.runtime, state.runtime);
+});
+
+test("native runtime refreshes with completed responses, without per-second reads, and survives a rebuilt controller", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", turn("first", 1_000, 4_000));
+  source.composition = async () => ({
+    capturedAt: 1234, model: "test/model",
+    tokens: { Messages: 10, "System Tools": 0, "System Prompt": 0, Skills: 0, "MCP Tools": 0, Other: 0 },
+  });
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 3_000, 2, undefined, true);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.runtime?.milliseconds === 3_000 && state.details?.sources?.capturedAt === 1234);
+  const reads = source.reads;
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(source.reads, reads);
+  assert.equal(state.runtime?.milliseconds, 3_000);
+  assert.equal(state.details?.sources?.capturedAt, 1234);
+  source.history.set("root", [...turn("first", 1_000, 4_000), ...turn("second", 10_000, 15_000, 20)]);
+  events.emit();
+  await until(() => state.summary?.total === 30 && state.runtime?.milliseconds === 8_000);
+  controller.dispose();
+  const rebuilt = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  t.after(() => rebuilt.dispose());
+  rebuilt.select("root");
+  await until(() => state.runtime?.milliseconds === 8_000);
+});
+
+test("missing historical timestamps don't fabricate zero or block measured tokens; failures retain runtime as stale", async t => {
+  const source = new FakeSource(), events = new Events();
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 10);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready");
+  assert.equal(state.summary?.total, 10);
+  assert.deepEqual(state.runtime, { status: "unavailable" });
+  source.history.set("root", turn("first", 1_000, 4_000));
+  events.emit();
+  await until(() => state.runtime?.milliseconds === 3_000);
+  source.fail = true;
+  events.emit();
+  await until(() => state.status === "stale");
+  assert.deepEqual(state.runtime, { status: "stale", milliseconds: 3_000 });
+  source.fail = false;
+  await until(() => state.status === "ready");
+  assert.deepEqual(state.runtime, { status: "ready", milliseconds: 3_000 });
+});
+
+test("late snapshot results cannot leak another session's native runtime after switching", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", turn("first", 1_000, 4_000));
+  source.sessions.set("other", session("other"));
+  source.history.set("other", turn("other", 10_000, 18_000, 7));
+  const gate = deferred<void>(), original = source.messages.bind(source);
+  let rootReadStarted = false;
+  source.messages = async (sessionID, cursor) => {
+    if (sessionID === "root") { rootReadStarted = true; await gate.promise; }
+    return original(sessionID, cursor);
+  };
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => rootReadStarted);
+  controller.select("other");
+  await until(() => state.status === "ready" && state.runtime?.milliseconds === 8_000);
+  gate.resolve();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.summary?.total, 7);
+  assert.equal(state.runtime?.milliseconds, 8_000);
+});
+
+test("fork and staged/committed revert runtime follows own retained history, independently of context cutoff", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.sessions.set("root", { ...session("root"), fork: { sessionID: "original", boundary: { type: "through", messageID: "original-a" } } });
+  const inherited = turn("copy", 1_000, 9_000).map((message, index) => ({ ...message, id: `${message.id}_${index}` }));
+  source.history.set("root", [...inherited, ...turn("own1", 10_000, 13_000), ...turn("own2", 20_000, 24_000, 20)]);
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.runtime?.milliseconds === 7_000);
+  source.sessions.set("root", { ...source.sessions.get("root")!, revert: { messageID: "own2-u", files: [] } });
+  events.emit("session.revert.staged");
+  await until(() => state.context?.used === 10);
+  assert.equal(state.runtime?.milliseconds, 7_000, "a staged context cutoff doesn't delete retained turns");
+  source.history.set("root", [...inherited, ...turn("own1", 10_000, 13_000)]);
+  events.emit("session.revert.committed");
+  await until(() => state.runtime?.milliseconds === 3_000);
+});

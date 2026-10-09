@@ -34,9 +34,9 @@ Alternatively, add the package to your project's `opencode.json` or `opencode.js
 ```
 
 > [!NOTE]
-> Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. The current SDK 2.0.24 build has been verified on OpenCode 2.0.11, 2.0.22, and 2.0.24.
+> Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, and 2.0.26. Native turn durations were integration-tested on 2.0.26; the other listed host checks predate this addition.
 
-Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
+Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, Time, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
 
 For remote sessions, add the package name to `plugins` in your local `~/.config/opencode/cli.json` to load only the terminal entry point. The configuration path follows `XDG_CONFIG_HOME`.
 
@@ -44,7 +44,7 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 
 Enter `/usage` in a session to open a native dialog with the session tree's token totals and estimated cost by recorded model. Scroll with ↑/↓, Page Up/Down, Home/End, press `d` to switch between compact and detailed numbers and reveal model rates, and close with Escape. The command does not send a prompt to the model.
 
-The subagent picker keeps the summary in the form `Token Usage · Context … · Total … · Cost … · TPS …`. Missing values remain unavailable rather than becoming zero, and the line does not advertise a keyboard shortcut. Clicking it opens a smaller dialog with the sidebar's exact rows (including Steps, TPS and TTFT) without reserving space for the full panel while closed.
+The subagent picker keeps the summary in the form `Token Usage · Context … · Total … · Cost … · Time … · TPS …`. Time sums the viewed subagent's own native per-turn response durations; token totals and cost still cover the whole tree. Narrow terminals omit lower-priority fields, keeping Time visible without adding a second line. Missing values remain unavailable rather than becoming zero, and the line does not advertise a keyboard shortcut. Clicking it opens a smaller dialog with the sidebar's exact rows (including Steps, TPS, TTFT and Run Time) without reserving space for the full panel while closed. Run Time is the last row in both the sidebar and this dialog.
 
 The dialog is split into five sections with separate statistics:
 
@@ -53,7 +53,7 @@ The dialog is split into five sections with separate statistics:
 | Context Window | Used / limit and a percentage of the active model's context limit, with a usage bar |
 | Last Request | The five token categories and cache rate of the viewed session's most recent reported call |
 | Context Breakdown | Estimated prompt composition, largest first, with bars |
-| Session | Tree totals: steps, calls, tokens, cache rate, cost (single line, or per-category rows in detailed mode) |
+| Session | Tree totals: steps, calls, tokens, cache rate, cost (single line, or per-category rows in detailed mode); a separate `Run Time (this session)` row sums only the viewed session's native per-turn response durations |
 | By Model | Tokens, calls and cost per recorded model, highest cost first; detailed mode shows the rates used for each model's cost estimate |
 
 One line under the title names the session and its active model, and the body never repeats the model name. Compact mode uses `K`/`M` abbreviations (`812`, `139.4K`, `3.70M`), hides empty rows and merges the two tool families in Context Breakdown into a single `Tools` row. Detailed mode shows exact numbers, empty rows, and the `System Tools` / `MCP Tools` split. The sidebar keeps exact numbers and its own layout.
@@ -76,6 +76,7 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. I
 | `Context` | Latest context usage after the most recent completed compaction in the viewed session; not aggregated across the subtree |
 | `Steps` | Assistant message count across the session tree, including subagents; follows OpenCode's own stats definition, so compaction and user messages are not steps |
 | `Est. Cost` | Estimated cost across the tree, pricing each assistant and compaction call with its actual model |
+| `Run Time` | Sum of the native response duration shown by OpenCode for each turn in the viewed session's retained history, taking only the final completed response per turn; never adds child-session durations |
 | `TPS` | Generation throughput for `Output + Reasoning` across the tree. While streaming, it estimates recent observable text, reasoning-summary and tool-input deltas (UTF-8 bytes / 4) over a short sliding window after the first delta, excluding pre-first-token waiting, and marks the value with `~`. APIs such as OpenAI Responses do not expose complete hidden reasoning tokens in real time, so live values cannot represent hidden reasoning throughput. After completion it uses provider-reported Output and Reasoning tokens and removes `~` |
 | `TTFT` | Average time to first token across measurable assistant steps in the tree |
 
@@ -85,6 +86,9 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. I
 - A fork is a separate session tree. Inherited message copies are attributed only to their original source to prevent double counting.
 - `Context` only searches messages after the most recent compaction with `status === "completed"` and is hidden when reliable usage or a model context limit is unavailable.
 - `Steps` counts every assistant message in the tree, whether or not it reported usage, and reuses the fork-copy de-duplication so inherited history is never counted twice.
+- `Run Time` follows OpenCode 2.0.26's native response footer: assistant completion time minus the first user/synthetic input's creation time after the previous idle marker. Older histories without idle markers use the nearest input; without any input, it uses the assistant's creation time. Each turn contributes only its final completed response duration, not the overlapping duration of every assistant step. Model calls, tools, retries and foreground waits within that span are included; idle time between turns is not. Waiting for a subagent is already part of the parent's span and is never added separately.
+- `Run Time` updates when completed responses are reported; unfinished responses are not estimated with a live clock. Failed/interrupted responses count when they have a native completion timestamp. Totals use unrounded milliseconds before formatting (milliseconds below one second, one decimal below one minute, then minutes/hours), so they need not equal the sum of rounded footer labels. The existing message-history read restores totals after restarts, including sessions predating installation; no experimental execution-log API or server plugin is required. Missing historical timing data displays `—`, not zero. Read failures retain the last complete value and mark it `Not updated` (`stale` in the short summary).
+- Runtime follows retained history: agent/model switches and compaction preserve past turns; fork copies never contribute to the fork's own time. A staged revert does not remove turns, but a committed revert deleting messages also removes their durations. Deleted historical timing cannot be reconstructed.
 - `Est. Cost` prices every message with its recorded model. A complete non-zero price resolved by OpenCode takes precedence. If OpenCode reports a complete zero price, a complete first-party snapshot price overrides it; incomplete prices fall back for the whole message without mixing rates.
 - The checked-in fallback snapshot is generated from [models.dev](https://models.dev/api.json) using only reviewed first-party provider/model families; a small set of manufacturer-verified exceptions is kept separately. It covers priced text models, without downloading prices while the plugin runs. Gateway models match exact manufacturer IDs, documented aliases, and known wrappers; only a terminal `-free` or `:free` can be removed for a second exact lookup.
 - Confirmed free usage displays `$0.00`; positive estimates below `$0.001` display `<$0.001`, estimates through and including `$0.01` use three decimal places, and larger estimates use two. Unavailable prices display `—`; known subtotals with unpriced messages are marked `partial`. The snapshot excludes gateway markups, regional premiums, unlisted discounts, non-text billing, tool fees, and taxes, so Est. Cost is not a provider bill. See [price sources and limitations](docs/pricing.md).
@@ -109,7 +113,7 @@ Failed validation never bumps the version. An unfinished tagged price release is
 
 For a manual refresh, run `npm run prices:update` in a networked environment, review the generated diff and exceptions, then run the checks above. Builds and plugin refreshes do not contact models.dev.
 
-`test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, subagent aggregation, per-message pricing, first-party price fallback, model switching, TPS, and TTFT against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
+`test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, subagent aggregation, per-message pricing, first-party price fallback, model switching, TPS, TTFT, and session-local native turn durations (unfinished responses, idle gaps, interruption, message-history restoration, forks and narrow child views) against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
 
 By default, smoke uses `opencode` from `PATH`. Stable OpenCode 2 versions from 2.0.9 onward can run; a host not yet verified with the current SDK prints a warning and continues through the actual compatibility checks. Passing the version check alone does not establish compatibility. The SDK dependencies remain pinned independently of your local CLI updates.
 

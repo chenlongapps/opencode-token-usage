@@ -1,4 +1,5 @@
 import type { PerformanceSummary } from "./performance.js";
+import type { RuntimeSummary } from "./runtime.js";
 import { officialPrice } from "./pricing.js";
 
 export interface Tokens {
@@ -38,6 +39,9 @@ export interface UsageMessage {
   id: string;
   type: string;
   status?: string;
+  finish?: string;
+  error?: unknown;
+  retry?: unknown;
   model?: ModelRef;
   cost?: number;
   tokens?: TokenInput;
@@ -290,6 +294,40 @@ export function formatTokens(value: number): string {
   return Math.round(safe(value)).toLocaleString("en-US");
 }
 
+/** Native sub-minute precision; longer durations keep compact, readable units. */
+export function formatDuration(milliseconds: number, compact = false): string {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "—";
+  if (milliseconds === 0) return "0s";
+  if (milliseconds < 1_000) return `${milliseconds}ms`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)}s`;
+  const seconds = Math.floor(milliseconds / 1_000);
+  const hours = Math.floor(seconds / 3_600), minutes = Math.floor(seconds / 60) % 60, rest = seconds % 60;
+  if (hours > 0) return compact ? `${hours}h${minutes}m${rest}s` : `${hours}h ${String(minutes).padStart(2, "0")}m ${String(rest).padStart(2, "0")}s`;
+  if (minutes > 0) return compact ? `${minutes}m${rest}s` : `${minutes}m ${String(rest).padStart(2, "0")}s`;
+  return `${rest}s`;
+}
+
+export function formatRunTime(runtime?: RuntimeSummary, compact = false): string {
+  if (runtime?.milliseconds === undefined) return "—";
+  const time = formatDuration(runtime.milliseconds, compact);
+  return runtime.status === "stale" ? `${time} · ${compact ? "stale" : "Not updated"}` : time;
+}
+
+/** Preserve session-local time on narrow terminals without adding composer height. */
+export function fitUsageSummary(fields: readonly (readonly [string, string])[], width: number, stale = false): string {
+  let visible = [...fields];
+  const suffix = stale ? " · Not updated" : "";
+  const render = (title: string) => `${title} · ${visible.map(([label, value]) => `${label} ${value}`).join(" · ")}${suffix}`;
+  for (const label of ["TPS", "Context", "Cost", "Total"]) {
+    if (render("Token Usage").length <= width) return render("Token Usage");
+    visible = visible.filter(([name]) => name !== label);
+  }
+  if (render("Token Usage").length <= width) return render("Token Usage");
+  if (render("Usage").length <= width) return render("Usage");
+  // Remove the title before clipping any value; time is the final retained field.
+  return `${visible.map(([label, value]) => `${label} ${value}`).join(" · ")}${stale ? " · stale" : ""}`.slice(0, Math.max(0, width));
+}
+
 export const formatCost = (value: number) => {
   const amount = safe(value);
   if (amount === 0) return "$0.00";
@@ -374,7 +412,7 @@ export function summaryRows(summary: Summary): readonly (readonly [string, strin
 /** `1 step` reads better than `1 steps` in the dialog's single-line summaries. */
 export const countLabel = (value: number, noun: string) => `${formatTokens(value)} ${noun}${value === 1 ? "" : "s"}`;
 
-export function usageRows(summary?: Summary, context?: ContextUsage, performance?: PerformanceSummary): readonly (readonly [string, string])[] {
+export function usageRows(summary?: Summary, context?: ContextUsage, performance?: PerformanceSummary, runtime?: RuntimeSummary): readonly (readonly [string, string])[] {
   const t = summary?.tokens;
   const number = (value?: number) => value === undefined ? "—" : formatTokens(value);
   const rows: Array<readonly [string, string]> = [];
@@ -397,5 +435,6 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
   if (performance?.ttft !== undefined && Number.isFinite(performance.ttft)) {
     rows.push(["TTFT", `${(Math.max(0, performance.ttft) / 1_000).toFixed(1)}s`]);
   }
+  if (runtime) rows.push(["Run Time", formatRunTime(runtime)]);
   return rows;
 }

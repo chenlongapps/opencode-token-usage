@@ -2,6 +2,8 @@ import { loadSnapshot, uniqueMessages, viewedMessages } from "./source.js";
 import type { Snapshot, UsageSource } from "./source.js";
 import { PerformanceMonitor, preparePerformance } from "./performance.js";
 import type { PerformanceSummary, PreparedPerformance } from "./performance.js";
+import { summarizeRuntime } from "./runtime.js";
+import type { RuntimeSummary } from "./runtime.js";
 import type { ContextSources } from "./context-sources.js";
 import { contextUsage, requestDetails, summarize, summarizeModels } from "./usage.js";
 import type { ContextUsage, ModelCost, RequestDetails, Summary } from "./usage.js";
@@ -12,6 +14,7 @@ export interface UsageState {
   context?: ContextUsage | undefined;
   details?: { request?: RequestDetails | undefined; models: readonly ModelCost[]; sources?: ContextSources | undefined; sessionTitle?: string | undefined };
   performance?: PerformanceSummary;
+  runtime?: RuntimeSummary;
   model?: string;
 }
 
@@ -103,7 +106,7 @@ export class UsageController {
     this.changed.clear();
     this.fullScan = true;
     this.sessionID = sessionID;
-    this.update({ status: "loading" });
+    this.update({ status: "loading", runtime: { status: "loading" } });
     void this.run();
   }
 
@@ -175,6 +178,7 @@ export class UsageController {
         context: contextUsage(history, snapshot.model.context, revertMessageID),
         ...(this.detailed ? { details: { request: requestDetails(history, revertMessageID), models: summarizeModels(messages, snapshot.model.catalog), sessionTitle: session.title } } : {}),
         performance: this.performance.summaryPrepared(this.prepared, this.sessions),
+        runtime: summarizeRuntime(history, !!session.fork),
         model: snapshot.model.label,
       });
       // The server plugin may be absent. An optional RPC must not delay measured usage.
@@ -189,7 +193,11 @@ export class UsageController {
     } catch {
       if (this.disposed || generation !== this.generation) return;
       this.fullScan = true;
-      this.update({ ...this.state, status: this.state.summary ? "stale" : "unavailable" });
+      this.update({
+        ...this.state, status: this.state.summary ? "stale" : "unavailable",
+        runtime: this.state.runtime?.milliseconds === undefined
+          ? { status: "unavailable" } : { ...this.state.runtime, status: "stale" },
+      });
       this.retry = setTimeout(() => this.schedule(false), this.retryDelay);
     } finally {
       if (generation === this.generation && !this.disposed) {

@@ -1,5 +1,38 @@
 # 验证记录
 
+## 2026-10-09 · Run Time 移至面板末行
+
+将侧边栏与子代理完整浮窗的行序调整为 TPS → TTFT → Run Time；任一性能指标缺失时，Run Time 仍为最后一行。保留原有分组空行，统计口径与子代理单行摘要不变，`/usage` 继续在 Session 区域末行显示耗时。
+
+已通过 `npm run typecheck`、160 项 `npm test`、`npm run build` 与真实 OpenCode 2.0.26 的完整 `npm run test:smoke`。行序测试覆盖只有 TPS、只有 TTFT、无性能数据及无效性能数值；真实终端分别核对侧边栏与子代理浮窗的末行位置。本次未升级版本、提交、推送或发布。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-8HSjAl`，其中 `05-message.txt` 显示 TPS、TTFT、Run Time 的最终行序。
+
+## 2026-10-09 · 当前会话累计原生对话耗时（未发布）
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包仍为 0.4.7、SDK 2.0.24、OpenTUI 0.5.14，真实宿主为 PATH 中的 OpenCode 2.0.26。本次未升级插件或 SDK 版本、未修改价格快照，未提交、推送或发布。
+
+新增 `src/runtime.ts`，复用 `message.list(order: "asc")` 的完整保留历史。口径核对版本固定的宿主源码 [`turnDuration` / `legacyTurns` / `inputIndex`](https://github.com/anomalyco/opencode/blob/v2.0.26/packages/tui/src/routes/session/rows.ts)：assistant 完成时间减去上一条 idle 之后首个 user／synthetic 输入的创建时间；无 idle 的旧历史取最近输入，无输入时取 assistant 创建时间，负差值按原生算法截为零。每个轮次只保留最终已完成回答的时长，工具调用等中间 step 不重复计入；未完成的 steer 保留同轮上一条已完成回答的值，后续完成时替换而不是叠加。先累加毫秒，再格式化为毫秒／一位小数秒／分时单位。
+
+累计范围仅为当前查看会话，不额外加入子会话耗时；主会话等待子代理的跨度自然包含在主轮次内。轮次之间的空闲不增长，生成中的回答不做实时计时估算。失败／中断回答有原生完成时间戳时累计；历史完成时间缺失或无效时显示 `—`，不冒充完整的零值或小计。普通读取失败保留上次快照并标注未更新。分叉继承副本不继承累计值；压缩保留历史轮次，暂存回退不扣除，但已提交回退删除消息后相应耗时也移除。
+
+侧边栏在用量与费用之后、TPS／TTFT 之前显示 `Run Time`；子代理摘要加入 `Time`，窄终端省略其他字段以保持单行，点击浮窗复用同一控制器；`/usage` 的 Session 区域独立显示 `Run Time (this session)`。原有 token、费用及性能统计仍覆盖会话树。已移除先前尝试的执行日志适配器、监视器与实时估算，不依赖默认未保存正文的实验性 `session.log`，也不需要服务端插件新增持久化。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 160 项通过，新增 23 项时间算法、5 项控制器与 3 项格式／行序／窄终端回归测试 |
+| `npm run build` | 通过，产物包含 `dist/runtime.js` 与类型声明 |
+| `npm run test:smoke` | 完整通过，真实打包／隔离安装 + OpenCode 2.0.26 + 本地模拟提供商 |
+
+自动化测试覆盖多轮空闲、重叠页脚去重、首个／最近输入、synthetic／steer、没有输入时的回退、无用量消息、时间缺失及无效日期、失败／中断、压缩、分叉副本及开放轮次边界、累计值重建、会话切换迟到结果隔离、子代理刷新范围、刷新失败保留快照与暂存／已提交回退。时间计算没有额外请求或每秒读取，沿用原有分页与消息快照。
+
+真实 TUI smoke 直接比对首次回答同屏的原生页脚与插件累计值，并以独立的向后扫描 oracle 核对逐轮毫秒合计；另验证空会话为 `0s`、生成中不伪造时长、空闲不增长、累计父轮次不额外加入子代理、切换和新 TUI 从消息历史恢复、子代理浮窗与 48 列单行摘要、中断增加已上报的原生时长，以及真实分叉不继承时间、已完成 compaction 保留升序完整历史。原有 `/usage`、模型切换、TPS／TTFT、未知上下文上限、逐消息定价等全部断言继续通过。
+
+本轮原生耗时的真实集成仅验证 2.0.26；旧历史语义由固定夹具覆盖，没有据此宣称在所有旧宿主重新完成验证。SDK 的已验证宿主记录加入 2.0.26，保留 2.0.11／2.0.22／2.0.24 的既有记录。Node 22 MockTimers 与 OpenTUI 引擎警告保留，没有隐藏或强制绕过。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-22Efc0`，其中 `05-message.txt` 保存同屏原生页脚与 `Run Time`，`result.json` 保存各会话累计毫秒和宿主版本。
+
 ## 2026-10-09 · 统计钩子的 MCP 等待上限
 
 环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包仍为 0.4.6、SDK 2.0.24，真实宿主为 PATH 中的 OpenCode 2.0.25。未升级版本、提交、推送或发布。
