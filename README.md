@@ -34,15 +34,15 @@ Alternatively, add the package to your project's `opencode.json` or `opencode.js
 ```
 
 > [!NOTE]
-> Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, and 2.0.26. Native turn durations were integration-tested on 2.0.26; the other listed host checks predate this addition.
+> Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, and 2.0.26. Native turn durations and sidebar title clicks were integration-tested on 2.0.26; the other listed host checks predate these additions.
 
-Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, Time, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
+Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. Click its **Token Usage** title to open the detailed usage dialog. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, Time, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
 
 For remote sessions, add the package name to `plugins` in your local `~/.config/opencode/cli.json` to load only the terminal entry point. The configuration path follows `XDG_CONFIG_HOME`.
 
 ### Detailed usage
 
-Enter `/usage` in a session to open a native dialog with the session tree's token totals and estimated cost by recorded model. Scroll with ↑/↓, Page Up/Down, Home/End, press `d` to switch between compact and detailed numbers and reveal model rates, and close with Escape. The command does not send a prompt to the model.
+Enter `/usage` in a session or left-click the sidebar's **Token Usage** title to open the same centered native dialog with the session tree's token totals and estimated cost by recorded model. It opens in compact mode. Scroll with ↑/↓, Page Up/Down, Home/End, press `d` to switch between compact and detailed numbers and reveal model rates, and close with Escape or **esc**. Neither entry sends a prompt to the model. Other sidebar rows remain selectable; dragging to select text does not open the dialog.
 
 The subagent picker keeps the summary in the form `Token Usage · Context … · Total … · Cost … · Time … · TPS …`. Time sums the viewed subagent's own native per-turn response durations; token totals and cost still cover the whole tree. Narrow terminals omit lower-priority fields, keeping Time visible when present without adding a second line. Missing values remain unavailable rather than becoming zero, and the line does not advertise a keyboard shortcut. Clicking it opens a smaller dialog with the sidebar's exact rows (including Steps, TPS, TTFT and Run Time) without reserving space for the full panel while closed. When shown, Run Time is the last row in both the sidebar and this dialog.
 
@@ -116,7 +116,7 @@ Failed validation never bumps the version. An unfinished tagged price release is
 
 For a manual refresh, run `npm run prices:update` in a networked environment, review the generated diff and exceptions, then run the checks above. Builds and plugin refreshes do not contact models.dev.
 
-`test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, subagent aggregation, per-message pricing, first-party price fallback, model switching, TPS, TTFT, and session-local native turn durations (unfinished responses, idle gaps, interruption, message-history restoration, forks and narrow child views) against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
+`test:smoke` packages the real artifact and validates loading, refreshes, `/usage`, sidebar title clicks, subagent aggregation, per-message pricing, first-party price fallback, model switching, TPS, TTFT, and session-local native turn durations (unfinished responses, idle gaps, interruption, message-history restoration, forks and narrow child views) against an isolated OpenCode instance and a local mock provider. It requires Python 3, an available local port, and npm network access. It never modifies your existing OpenCode configuration or calls paid models.
 
 By default, smoke uses `opencode` from `PATH`. Stable OpenCode 2 versions from 2.0.9 onward can run; a host not yet verified with the current SDK prints a warning and continues through the actual compatibility checks. Passing the version check alone does not establish compatibility. The SDK dependencies remain pinned independently of your local CLI updates.
 

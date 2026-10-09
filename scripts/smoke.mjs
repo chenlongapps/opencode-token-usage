@@ -44,6 +44,7 @@ assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-
 assert.ok(files.includes("dist/runtime.js") && files.includes("dist/runtime.d.ts"));
 assert.ok(files.includes("dist/runtime-monitor.js") && files.includes("dist/runtime-monitor.d.ts"));
 assert.ok(files.includes("dist/running.js") && files.includes("dist/running.d.ts"));
+assert.ok(files.includes("dist/click.js") && files.includes("dist/click.d.ts"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
@@ -264,15 +265,25 @@ const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
     await writeFile(path.join(work, `${name}.ansi`), raw);
   };
   const send = data => process.stdin.write(data);
-  const click = text => {
+  const position = text => {
     const lines = Array.from({ length: terminal.rows }, (_, line) => terminal.buffer.active.getLine(line)?.translateToString(true) ?? "");
-    const row = lines.findIndex(line => line.includes(text));
+    const columns = lines.map(line => typeof text === "string" ? line.indexOf(text) : line.search(text));
+    const row = columns.findIndex(column => column >= 0);
     if (row < 0) throw new Error(`Could not find text to click: ${text}`);
-    const column = lines[row].indexOf(text) + 2;
-    process.stdin.write(`\x1b[<0;${column};${row + 1}M`);
-    process.stdin.write(`\x1b[<0;${column};${row + 1}m`);
+    return { column: columns[row] + 2, row: row + 1 };
   };
-  const entry = { process, screen, save, send, click, terminal };
+  const click = (text, button = 0) => {
+    const { column, row } = position(text);
+    send(`\x1b[<${button};${column};${row}M`);
+    send(`\x1b[<${button};${column};${row}m`);
+  };
+  const drag = (text, offset = 4) => {
+    const { column, row } = position(text);
+    send(`\x1b[<0;${column};${row}M`);
+    send(`\x1b[<32;${column + offset};${row}M`);
+    send(`\x1b[<0;${column + offset};${row}m`);
+  };
+  const entry = { process, screen, save, send, click, drag, terminal };
   terminals.push(entry);
   return entry;
 };
@@ -315,6 +326,31 @@ try {
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
   assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
+  // Match only the panel title, not the host's separate "Token Usage Smoke" session title.
+  const sidebarTitle = /Token Usage\s*$/;
+  const requestsBeforeSidebar = requests.length;
+  for (const button of [1, 2]) {
+    tui.click(sidebarTitle, button);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.doesNotMatch(tui.screen(), /Context Window/, "non-left title clicks do not open usage");
+  }
+  tui.drag(sidebarTitle);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.doesNotMatch(tui.screen(), /Context Window/, "drag-selecting the title does not open usage");
+  tui.click("Steps");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.doesNotMatch(tui.screen(), /Context Window/, "statistics rows are not launchers");
+  tui.click(sidebarTitle);
+  await wait(() => /Context Window/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty sidebar title opens full usage");
+  assert.match(tui.screen(), /Token Usage Smoke · usage-test\/small/, "sidebar entry selects the viewed session");
+  assert.doesNotMatch(tui.screen(), /Calls\s+0\b/, "sidebar dialog opens in compact mode");
+  tui.send("d");
+  await wait(() => /Calls\s+0\b/.test(tui.screen()), "sidebar dialog supports detailed mode");
+  await tui.save("01-sidebar-usage-dialog");
+  tui.send("\x1b");
+  await wait(() => !/Context Window/.test(tui.screen()) && /Steps\s+0\b/.test(tui.screen()), "close sidebar dialog with Escape");
+  assert.equal((await client.message.list({ sessionID: root.id })).data.length, 0, "sidebar clicks do not add messages");
+  assert.equal(requests.length, requestsBeforeSidebar, "sidebar clicks do not call the provider");
   tui.send("/usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   tui.send("\r");
@@ -382,6 +418,12 @@ try {
   await client.session.wait({ sessionID: switchTarget.id });
   const switchRunTime = await ownRuntime(switchTarget.id);
   await wait(() => runtimeRow(tui.screen(), switchRunTime), "switched runtime settles exactly");
+  tui.click(sidebarTitle);
+  await wait(() => /Live Switch Target · usage-test\/small/.test(tui.screen()) && /Context Window/.test(tui.screen()),
+    "sidebar title follows the newly viewed session after switching");
+  assert.doesNotMatch(tui.screen(), /Token Usage Smoke · usage-test\/small/, "sidebar dialog does not retain the previous session");
+  tui.send("\x1b");
+  await wait(() => !/Context Window/.test(tui.screen()), "close switched sidebar dialog");
   console.log("PASS: switching to an in-flight session restores live TPS/TTFT and converges to exact TPS");
 
   tui.send("\x18");
@@ -485,6 +527,21 @@ try {
   await wait(() => !/By Model/.test(tui.screen()) && /Context\s+1,270 \/ 128,000/.test(tui.screen()), "close usage dialog");
   assert.equal((await client.message.list({ sessionID: root.id })).data.length, messagesBeforeUsage, "/usage does not prompt the model");
   console.log("PASS: /usage opens a native scrollable dialog with context window, request, sources, session and model costs without a prompt");
+  const requestsBeforeReopen = requests.length;
+  for (const close of [() => tui.click("esc"), () => tui.send("\x1b")]) {
+    tui.click(sidebarTitle);
+    await wait(() => /Token Usage Smoke · usage-test\/small/.test(tui.screen())
+      && /1 step · 1 call · 1\.3K tokens · 83\.3% cached/.test(tui.screen()), "reopen populated usage from the sidebar in compact mode");
+    assert.match(tui.screen(), /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/);
+    tui.send("d");
+    await wait(() => /Cache Read\s+1,000 \(78\.7%\)/.test(tui.screen()), "sidebar details match slash-command details");
+    await tui.save("06-sidebar-usage-dialog");
+    close();
+    await wait(() => !/Context Window/.test(tui.screen()) && /Context\s+1,270 \/ 128,000/.test(tui.screen()), "sidebar dialog closes and restores the panel");
+  }
+  assert.equal((await client.message.list({ sessionID: root.id })).data.length, messagesBeforeUsage, "reopening sidebar usage does not add messages");
+  assert.equal(requests.length, requestsBeforeReopen, "reopening sidebar usage never calls the provider");
+  console.log("PASS: sidebar title opens the same compact/detailed usage dialog; other buttons, rows and drag selection do not; close/reopen preserves the viewed session without prompting");
   const narrowTui = openTui(root.id, { cols: 100, rows: 28 });
   await wait(() => /SMOKE_OK/.test(narrowTui.screen()), "narrow TUI session");
   narrowTui.send("/usage");
@@ -642,10 +699,8 @@ try {
   await client.session.prompt({ sessionID: longTtftTarget.id, text: "RUNTIME_INTERRUPT_SMOKE" });
   await wait(() => streamGates.get("RUNTIME_INTERRUPT_SMOKE").started && liveRuntime(longTtftTui.screen())?.milliseconds > beforeInterrupt, "unfinished interrupted response projects beyond earlier cumulative time");
   await checkRunningDots(longTtftTui, "Run Time", beforeInterrupt, "10-running-sidebar");
-  longTtftTui.send("/usage");
-  await new Promise(resolve => setTimeout(resolve, 250));
-  longTtftTui.send("\r");
-  await wait(() => /Run Time \(this session\)/.test(longTtftTui.screen()), "running usage dialog");
+  longTtftTui.click(sidebarTitle);
+  await wait(() => /Run Time \(this session\)/.test(longTtftTui.screen()), "sidebar opens running usage dialog");
   await checkRunningDots(longTtftTui, "Run Time (this session)", beforeInterrupt, "10-running-usage-compact");
   longTtftTui.send("d");
   await wait(() => /Calls\s+1\b/.test(longTtftTui.screen()), "running usage detailed mode");

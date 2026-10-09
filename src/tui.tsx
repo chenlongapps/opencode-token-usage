@@ -8,6 +8,7 @@ import { PerformanceMonitor } from "./performance.js";
 import { RuntimeMonitor } from "./runtime-monitor.js";
 import { ContextSourceRpc } from "./context-rpc.js";
 import { breakdownRows } from "./context-sources.js";
+import { createClickHandlers } from "./click.js";
 import { createSource } from "./source.js";
 import { animateRunning, withRunningIndicator } from "./running.js";
 import { bar, countLabel, fitUsageSummary, formatCompact, formatEstimatedCost, formatRateTier, formatRunTime, formatTokens, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
@@ -28,7 +29,12 @@ function UsageView(props: {
   sessionID: string;
   state: () => UsageState;
   hideTitle?: boolean;
+  openDetails?: () => void;
 }) {
+  const titleClick = createClickHandlers(
+    () => props.openDetails?.(),
+    () => !!props.context.renderer.getSelection()?.getSelectedText(),
+  );
   const rows = createMemo(() => usageRows(props.state().summary, props.state().context, props.state().performance, props.state().runtime));
   const running = createRunningIndicator(props.context, () => props.sessionID, () => rows().some(([label]) => label === "Run Time"));
   const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "Run Time" || label === "TPS" || label === "TTFT"));
@@ -37,7 +43,7 @@ function UsageView(props: {
   return (
     <box flexDirection="column" marginTop={props.hideTitle ? 0 : 1} flexShrink={0}>
       <Show when={!props.hideTitle}>
-        <text fg={props.context.theme.text.base}><b>Token Usage</b></text>
+        <text fg={props.context.theme.text.base} {...titleClick}><b>Token Usage</b></text>
       </Show>
       <Show when={props.state().status !== "ready"}>
         <text fg={props.context.theme.text.muted}>{status()}</text>
@@ -58,6 +64,7 @@ function UsagePanel(props: {
   performance: PerformanceMonitor;
   runtime: RuntimeMonitor;
   register: (controller: UsageController) => () => void;
+  open: (sessionID: string) => void;
 }) {
   const [state, setState] = createSignal<UsageState>({ status: "loading" });
   const controller = new UsageController(
@@ -78,7 +85,7 @@ function UsagePanel(props: {
   });
   onCleanup(() => { controller.dispose(); unregister(); });
 
-  return <UsageView context={props.context} sessionID={props.sessionID} state={state} />;
+  return <UsageView context={props.context} sessionID={props.sessionID} state={state} openDetails={() => props.open(props.sessionID)} />;
 }
 
 function ChildUsageDialog(props: {
@@ -405,9 +412,13 @@ export default Plugin.define({
       controllers.add(controller);
       return () => { controllers.delete(controller); };
     };
+    const openUsage = (sessionID: string) => {
+      context.ui.dialog.show(() => <UsageDialog context={context} sessionID={sessionID} performance={performance} runtime={runtime} register={register} />);
+      context.ui.dialog.set({ size: "large", centered: true });
+    };
     const remove = context.ui.slot({
       append: "sidebar.content",
-      render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} runtime={runtime} register={register} />,
+      render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} runtime={runtime} register={register} open={openUsage} />,
     });
     const openChildUsage = (sessionID: string, state: () => UsageState) => {
       context.ui.dialog.show(() => <ChildUsageDialog context={context} sessionID={sessionID} state={state} />);
@@ -444,8 +455,7 @@ export default Plugin.define({
             run: () => {
               const route = context.ui.router.current();
               if (route.type !== "session") return;
-              context.ui.dialog.show(() => <UsageDialog context={context} sessionID={route.sessionID} performance={performance} runtime={runtime} register={register} />);
-              context.ui.dialog.set({ size: "large", centered: true });
+              openUsage(route.sessionID);
             },
           }],
         }));

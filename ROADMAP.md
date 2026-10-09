@@ -121,3 +121,5 @@ Steps  1,234
 * [x] 首次 npm 发布：`@chenlongapps/opencode-token-usage@0.2.1`
 
 ## 待解决问题
+
+- [ ] tps 显示机制修改
