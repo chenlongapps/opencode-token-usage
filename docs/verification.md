@@ -1,5 +1,29 @@
 # 验证记录
 
+## 2026-10-10 · Run Time 运行状态动画
+
+可见的 `Run Time`／`Time` 值按当前查看会话的原生 `context.data.session.status(sessionID)` 附加运行状态。新增 `src/running.ts`，每 500ms 循环 `Running.`／`Running..`／`Running...`，用空格补齐三个点的位置，避免右对齐数值及摘要后续字段移动。动画只更新显示信号，不读取消息历史、不估算未完成耗时，不把子代理活动状态归给空闲的父会话。零值隐藏、不可用／未更新标记以及 Run Time 末行顺序保持不变；进入空闲、隐藏时间项、关闭视图或切换会话时清理原计时器。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.8、SDK 2.0.24、OpenTUI 0.5.14，真实宿主 OpenCode 2.0.26。
+
+已通过 `npm run typecheck`、168 项 `npm test`（新增 5 项动画循环、固定宽度、清理／重启与格式兼容回归测试）、`npm run build`、smoke 脚本语法检查、`git diff --check` 和完整 `npm run test:smoke`。真实打包／隔离安装在侧边栏、`/usage` 两种模式、子代理摘要／完整浮窗与 48 列子代理视图中分别捕获三个动画帧，确认行位置、累计数值及 Running 起始列不移动，生成中累计值不增长。中断／完成后移除运行提示并恢复已完成原生耗时；打开已经运行的子代理能恢复状态，空闲父会话不继承子代理的运行标记。零值隐藏及原有全套集成断言均通过。
+
+Node 22 的既有 OpenTUI 引擎警告保留。本次未升级版本、提交、推送或发布。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-4anV5A`，其中 `10-running-*-1-dot.txt`／`2-dot.txt`／`3-dot.txt` 保存各入口的三个帧，`result.json` 保存最终原生耗时及原有集成结果。
+
+## 2026-10-10 · 隐藏零耗时项
+
+正常状态下确认累计原生耗时为零时，侧边栏、子代理摘要／完整浮窗以及 `/usage` 紧凑／详细模式均隐藏整个 `Run Time`／`Time` 项，不留空行或空字段。非零毫秒值、未知值 `—` 与 `Not updated`／`stale` 提示保留。耗时统计与刷新逻辑不变；窄终端没有 Time 时仍保留可用指标，而不是只剩标题。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.8、SDK 2.0.24、OpenTUI 0.5.14，真实宿主 OpenCode 2.0.26。
+
+已通过 `npm run typecheck`、163 项 `npm test`、`npm run build` 和完整 `npm run test:smoke`。新增 3 项显示回归测试，覆盖零值隐藏、非零毫秒、无效／未知时间、未更新的零值仍带提示、其他面板行不变，以及窄终端摘要的字段和分隔符。真实打包／隔离安装检查覆盖空侧边栏、两种 `/usage` 模式、空子代理摘要／浮窗与 48 列视图；生成中继续隐藏零值，完成后恢复非零耗时，原有全套集成断言均通过。
+
+Node 22 的既有 OpenTUI 引擎警告保留。本次未升级版本、提交、推送或发布。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-sC9gcQ`，其中 `01-empty-usage-dialog.txt` 与 `01-empty-child-narrow.txt` 保存零耗时隐藏后的界面。
+
 ## 2026-10-09 · Run Time 移至面板末行
 
 将侧边栏与子代理完整浮窗的行序调整为 TPS → TTFT → Run Time；任一性能指标缺失时，Run Time 仍为最后一行。保留原有分组空行，统计口径与子代理单行摘要不变，`/usage` 继续在 Session 区域末行显示耗时。

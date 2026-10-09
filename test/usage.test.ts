@@ -577,6 +577,22 @@ test("runtime keeps native millisecond/second precision and readable minutes/hou
   assert.equal(formatRunTime({ status: "stale", milliseconds: 60_000 }, true), "1m0s · stale");
 });
 
+test("runtime display hides only confirmed zero totals in both formats", () => {
+  for (const compact of [false, true]) {
+    assert.equal(formatRunTime({ status: "ready", milliseconds: 0 }, compact), undefined);
+    for (const milliseconds of [1, 999, 1_000]) {
+      assert.equal(formatRunTime({ status: "ready", milliseconds }, compact), formatDuration(milliseconds, compact));
+    }
+    for (const milliseconds of [NaN, Infinity, -1]) {
+      assert.equal(formatRunTime({ status: "ready", milliseconds }, compact), "—");
+    }
+    for (const status of ["loading", "ready", "unavailable", "stale"] as const) {
+      assert.equal(formatRunTime({ status }, compact), "—");
+    }
+    assert.equal(formatRunTime({ status: "stale", milliseconds: 0 }, compact), `0s · ${compact ? "stale" : "Not updated"}`);
+  }
+});
+
 test("runtime is the last panel row without changing token or performance rows", () => {
   const summary = summarize([]);
   const context = { used: 50, limit: 100, percent: 50 };
@@ -589,7 +605,17 @@ test("runtime is the last panel row without changing token or performance rows",
     assert.deepEqual(withRuntime.at(-1), ["Run Time", "5m 18s"]);
   }
   assert.deepEqual(usageRows(summary, undefined, undefined, { status: "unavailable" }).at(-1), ["Run Time", "—"]);
-  assert.deepEqual(usageRows(summary, undefined, undefined, { status: "ready", milliseconds: 0 }).at(-1), ["Run Time", "0s"]);
+});
+
+test("panels omit the entire zero runtime row without changing other metrics", () => {
+  const summary = summarize([]);
+  for (const context of [undefined, { used: 50, limit: 100, percent: 50 }]) {
+    for (const performance of [undefined, { tps: 10 }, { ttft: 2_000 }, { tps: 10, ttft: 2_000 }]) {
+      assert.deepEqual(usageRows(summary, context, performance, { status: "ready", milliseconds: 0 }), usageRows(summary, context, performance));
+    }
+  }
+  assert.deepEqual(usageRows(summary, undefined, undefined, { status: "ready", milliseconds: 1 }).at(-1), ["Run Time", "1ms"]);
+  assert.deepEqual(usageRows(summary, undefined, undefined, { status: "stale", milliseconds: 0 }).at(-1), ["Run Time", "0s · Not updated"]);
 });
 
 test("child summary retains session-local time on narrow terminals without extra lines", () => {
@@ -605,4 +631,23 @@ test("child summary retains session-local time on narrow terminals without extra
     assert.doesNotMatch(line, /\n/);
   }
   assert.match(fitUsageSummary(fields, 160, true), /Not updated$/);
+});
+
+test("child summary omits zero runtime without empty separators or losing all metrics on narrow terminals", () => {
+  const fields = [
+    ["Context", "—"], ["Total", "0"], ["Cost", "—"],
+    ["Time", formatRunTime({ status: "ready", milliseconds: 0 }, true)], ["TPS", "—"],
+  ] as const;
+  assert.equal(fitUsageSummary(fields, 160), "Token Usage · Context — · Total 0 · Cost — · TPS —");
+  for (const width of [80, 48, 32, 20]) {
+    const line = fitUsageSummary(fields, width);
+    assert.ok(line.length <= width, `summary fits ${width} columns`);
+    assert.match(line, /Total 0/);
+    assert.doesNotMatch(line, /Time|undefined|\n|·\s*·|·\s*$/);
+  }
+  assert.equal(fitUsageSummary(fields, 20), "Usage · Total 0");
+  assert.equal(fitUsageSummary(fields, 20, true), "Total 0 · stale");
+  assert.equal(fitUsageSummary([["Time", undefined]], 160), "Token Usage");
+  assert.equal(fitUsageSummary([["Time", "—"]], 160), "Token Usage · Time —");
+  assert.equal(fitUsageSummary([["Time", formatRunTime({ status: "stale", milliseconds: 0 }, true)]], 160), "Token Usage · Time 0s · stale");
 });

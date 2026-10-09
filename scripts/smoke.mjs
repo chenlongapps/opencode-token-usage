@@ -42,6 +42,7 @@ assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts
 assert.ok(["aliases", "overrides", "prices.generated"].every(name => files.includes(`dist/${name}.js`)));
 assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-sources.js"));
 assert.ok(files.includes("dist/runtime.js") && files.includes("dist/runtime.d.ts"));
+assert.ok(files.includes("dist/running.js") && files.includes("dist/running.d.ts"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
@@ -55,7 +56,7 @@ const { summarizeRuntime } = await import(path.join(plugin, "dist/runtime.js"));
 let childAgent = "general";
 const requests = [];
 // Keep live checks observable until the TUI has rendered them, rather than racing a fixed delay.
-const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE"]
+const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE"]
   .map(marker => [marker, { started: false, ...Promise.withResolvers() }]));
 const compactionSummary = `## Objective
 - Return SMOKE_OK.
@@ -218,6 +219,23 @@ const ownRuntime = async sessionID => {
   return milliseconds;
 };
 const runtimeRow = (screen, milliseconds) => screen.split("\n").some(line => line.includes("Run Time") && line.includes(formatDuration(milliseconds)) && !line.includes("~"));
+const checkRunningDots = async (tui, label, value, artifact) => {
+  const frames = new Map();
+  await wait(async () => {
+    const lines = tui.screen().split("\n");
+    const row = lines.findIndex(line => line.includes(label) && /Running\./.test(line));
+    if (row < 0) return false;
+    const line = lines[row], dots = line.match(/Running(\.{1,3})(?!\.)/)?.[1];
+    if (!dots || !line.includes(value)) return false;
+    if (!frames.has(dots)) {
+      frames.set(dots, { row, value: line.indexOf(value), running: line.indexOf("Running") });
+      await tui.save(`${artifact}-${dots.length}-dot`);
+    }
+    return frames.size === 3;
+  }, `${artifact} cycles all three running frames`);
+  assert.equal(new Set([...frames.values()].map(frame => JSON.stringify(frame))).size, 1,
+    "fixed-width dots do not move the row, cumulative value or running label");
+};
 const terminals = [];
 const lineNumber = (screen, pattern) => screen.split("\n").findIndex(line => pattern.test(line));
 const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
@@ -279,7 +297,8 @@ try {
   const tui = openTui(root.id);
   await wait(() => /Token Usage/.test(tui.screen()) && /Cache Rate\s+0\.0%/.test(tui.screen()), "empty sidebar");
   assert.match(tui.screen(), /Steps\s+0\b/, "empty session shows zero steps");
-  await wait(() => /Run Time\s+0s/.test(tui.screen()), "empty session has genuine zero run time");
+  assert.equal(await ownRuntime(root.id), 0, "empty session has genuine zero run time");
+  assert.doesNotMatch(tui.screen(), /Run Time/, "empty session hides the zero runtime row");
   assert.doesNotMatch(tui.screen(), /Cache Write/);
   assert.doesNotMatch(tui.screen(), /Est\. Cost\b/);
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
@@ -291,12 +310,35 @@ try {
   await wait(() => /By Model/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty /usage dialog");
   assert.doesNotMatch(tui.screen(), /Used \/ Limit/, "empty context does not show a fabricated zero");
   assert.match(tui.screen(), /Request usage unavailable/);
-  assert.match(tui.screen(), /Run Time \(this session\)\s+0s/);
+  assert.doesNotMatch(tui.screen(), /Run Time/, "compact usage hides zero runtime");
   assert.doesNotMatch(tui.screen().split("\n").find(line => line.includes("Last Request")) ?? "", /\d+:\d+/,
     "an empty request has no timestamp");
+  tui.send("d");
+  await wait(() => /Calls\s+0\b/.test(tui.screen()), "empty detailed usage dialog");
+  assert.doesNotMatch(tui.screen(), /Run Time/, "detailed usage also hides zero runtime");
+  await tui.save("01-empty-usage-dialog");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()), "close empty usage dialog");
   console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows and shows Steps 0");
+
+  const emptyChild = await client.session.create({ parentID: root.id, title: "Empty Child Smoke" });
+  const emptyChildTui = openTui(emptyChild.id);
+  await wait(() => /Token Usage · Context — · Total 0 · Cost —/.test(emptyChildTui.screen()), "empty child summary");
+  assert.doesNotMatch(emptyChildTui.screen().split("\n").find(line => line.includes("Token Usage ·")) ?? "", /\bTime\b/,
+    "empty child summary hides zero runtime");
+  emptyChildTui.click("Token Usage ·");
+  await wait(() => /Steps\s+0\b/.test(emptyChildTui.screen()) && /Cache Rate\s+0\.0%/.test(emptyChildTui.screen()), "empty child usage dialog");
+  assert.doesNotMatch(emptyChildTui.screen(), /Run Time/, "empty child dialog hides zero runtime");
+  await emptyChildTui.save("01-empty-child-usage-dialog");
+  const emptyNarrowChild = openTui(emptyChild.id, { cols: 48, rows: 28 });
+  await wait(() => /Token Usage · .*Total 0/.test(emptyNarrowChild.screen()), "empty narrow child summary");
+  const emptyNarrowSummary = emptyNarrowChild.screen().split("\n").find(line => line.includes("Token Usage ·")) ?? "";
+  assert.doesNotMatch(emptyNarrowSummary, /\bTime\b|·\s*·|·\s*$/, "hidden zero time leaves no empty summary field");
+  await emptyNarrowChild.save("01-empty-child-narrow");
+  emptyChildTui.process.kill("SIGTERM");
+  emptyNarrowChild.process.kill("SIGTERM");
+  await client.session.remove({ sessionID: emptyChild.id });
+  console.log("PASS: zero runtime is hidden in sidebar, both /usage modes, child summary/dialog and narrow child views");
 
   const switchTarget = await client.session.create({ location: { directory: project }, title: "Live Switch Target", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const switchPrompt = client.session.prompt({ sessionID: switchTarget.id, text: "SWITCH_SMOKE" });
@@ -311,9 +353,9 @@ try {
   tui.send("\r");
   await wait(() => !/Sessions for project/.test(tui.screen()) && /TPS\s+~[\d.]+ tok\/s/.test(tui.screen())
     && /TTFT\s+[\d.]+s/.test(tui.screen()), "live performance restored after session switch");
-  await wait(() => /Run Time\s+0s/.test(tui.screen()), "unfinished response doesn't fabricate live runtime");
+  assert.doesNotMatch(tui.screen(), /Run Time/, "unfinished response hides the zero runtime row");
   await new Promise(resolve => setTimeout(resolve, 1_200));
-  assert.match(tui.screen(), /Run Time\s+0s/, "runtime counts completed responses, not client wall time");
+  assert.doesNotMatch(tui.screen(), /Run Time/, "runtime counts completed responses, not client wall time");
   await tui.save("02-switched-streaming");
   streamGates.get("SWITCH_SMOKE").resolve();
   await switchPrompt;
@@ -585,13 +627,57 @@ try {
   const beforeInterrupt = await ownRuntime(longTtftTarget.id);
   await client.session.prompt({ sessionID: longTtftTarget.id, text: "RUNTIME_INTERRUPT_SMOKE" });
   await wait(() => streamGates.get("RUNTIME_INTERRUPT_SMOKE").started && runtimeRow(longTtftTui.screen(), beforeInterrupt), "unfinished interrupted response retains earlier cumulative time");
+  await checkRunningDots(longTtftTui, "Run Time", formatDuration(beforeInterrupt), "10-running-sidebar");
+  longTtftTui.send("/usage");
+  await new Promise(resolve => setTimeout(resolve, 250));
+  longTtftTui.send("\r");
+  await wait(() => /Run Time \(this session\)/.test(longTtftTui.screen()), "running usage dialog");
+  await checkRunningDots(longTtftTui, "Run Time (this session)", formatDuration(beforeInterrupt), "10-running-usage-compact");
+  longTtftTui.send("d");
+  await wait(() => /Calls\s+1\b/.test(longTtftTui.screen()), "running usage detailed mode");
+  await checkRunningDots(longTtftTui, "Run Time (this session)", formatDuration(beforeInterrupt), "10-running-usage-detailed");
+  longTtftTui.send("\x1b");
+  await wait(() => !/Context Window/.test(longTtftTui.screen()), "close running usage dialog");
   await client.session.interrupt({ sessionID: longTtftTarget.id });
   streamGates.get("RUNTIME_INTERRUPT_SMOKE").resolve();
   await client.session.wait({ sessionID: longTtftTarget.id });
   const afterInterrupt = await ownRuntime(longTtftTarget.id);
   assert.ok(afterInterrupt > beforeInterrupt, "interrupted native response contributes its reported duration");
   await wait(() => runtimeRow(longTtftTui.screen(), afterInterrupt), "interrupted runtime matches the native response duration");
+  await wait(() => !longTtftTui.screen().split("\n").some(line => line.includes("Run Time") && /Running\./.test(line)),
+    "interruption removes the running indicator");
+  await new Promise(resolve => setTimeout(resolve, 1_200));
+  assert.ok(runtimeRow(longTtftTui.screen(), afterInterrupt), "idle runtime remains settled after animation cleanup");
   console.log("PASS: interruption retains earlier cumulative runtime and adds the interrupted native response duration");
+
+  const runningChild = await client.session.create({ parentID: longTtftTarget.id, title: "Running Child Smoke" });
+  await client.session.prompt({ sessionID: runningChild.id, text: "Return SMOKE_OK." });
+  await client.session.wait({ sessionID: runningChild.id });
+  const beforeChildRunning = await ownRuntime(runningChild.id);
+  assert.ok(beforeChildRunning > 0);
+  await client.session.prompt({ sessionID: runningChild.id, text: "CHILD_RUNNING_SMOKE" });
+  await wait(() => streamGates.get("CHILD_RUNNING_SMOKE").started, "child starts running independently of idle parent");
+  const runningChildTui = openTui(runningChild.id);
+  const runningNarrowChild = openTui(runningChild.id, { cols: 48, rows: 28 });
+  await checkRunningDots(runningChildTui, "Time", formatDuration(beforeChildRunning, true), "10-running-child-summary");
+  await checkRunningDots(runningNarrowChild, "Time", formatDuration(beforeChildRunning, true), "10-running-child-narrow");
+  assert.ok(runtimeRow(longTtftTui.screen(), afterInterrupt), "active children do not add parent runtime");
+  assert.doesNotMatch(longTtftTui.screen().split("\n").find(line => line.includes("Run Time")) ?? "", /Running\./,
+    "an idle parent does not inherit a child's running status");
+  runningChildTui.click("Token Usage ·");
+  await wait(() => /Run Time\s+/.test(runningChildTui.screen()), "running child usage dialog");
+  await checkRunningDots(runningChildTui, "Run Time", formatDuration(beforeChildRunning), "10-running-child-dialog");
+  runningChildTui.send("\x1b");
+  await wait(() => !/Run Time\s+/.test(runningChildTui.screen()), "close running child usage dialog");
+  streamGates.get("CHILD_RUNNING_SMOKE").resolve();
+  await client.session.wait({ sessionID: runningChild.id });
+  const afterChildRunning = await ownRuntime(runningChild.id);
+  assert.ok(afterChildRunning > beforeChildRunning);
+  for (const childView of [runningChildTui, runningNarrowChild]) {
+    await wait(() => childView.screen().split("\n").some(line => line.includes(`Time ${formatDuration(afterChildRunning, true)}`)
+      && !/Running\./.test(line)), "completed child removes animation and updates native runtime");
+  }
+  console.log("PASS: native running status animates sidebar, both /usage modes and child summary/dialog/narrow view without estimating time or marking idle parents active");
   const reasoningTarget = await client.session.create({ location: { directory: project }, title: "Reasoning Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const reasoningTui = openTui(reasoningTarget.id);
   await wait(() => /Token Usage/.test(reasoningTui.screen()), "reasoning sidebar");

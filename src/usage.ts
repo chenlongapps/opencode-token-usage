@@ -307,24 +307,27 @@ export function formatDuration(milliseconds: number, compact = false): string {
   return `${rest}s`;
 }
 
-export function formatRunTime(runtime?: RuntimeSummary, compact = false): string {
+/** Hide confirmed zero totals, but preserve unavailable and stale timing. */
+export function formatRunTime(runtime?: RuntimeSummary, compact = false): string | undefined {
   if (runtime?.milliseconds === undefined) return "—";
+  if (runtime.status === "ready" && runtime.milliseconds === 0) return undefined;
   const time = formatDuration(runtime.milliseconds, compact);
   return runtime.status === "stale" ? `${time} · ${compact ? "stale" : "Not updated"}` : time;
 }
 
 /** Preserve session-local time on narrow terminals without adding composer height. */
-export function fitUsageSummary(fields: readonly (readonly [string, string])[], width: number, stale = false): string {
-  let visible = [...fields];
+export function fitUsageSummary(fields: readonly (readonly [string, string | undefined])[], width: number, stale = false): string {
+  let visible = fields.filter((field): field is readonly [string, string] => field[1] !== undefined);
   const suffix = stale ? " · Not updated" : "";
-  const render = (title: string) => `${title} · ${visible.map(([label, value]) => `${label} ${value}`).join(" · ")}${suffix}`;
+  const render = (title: string) => `${[title, ...visible.map(([label, value]) => `${label} ${value}`)].join(" · ")}${suffix}`;
   for (const label of ["TPS", "Context", "Cost", "Total"]) {
     if (render("Token Usage").length <= width) return render("Token Usage");
-    visible = visible.filter(([name]) => name !== label);
+    // Keep a useful metric even when the zero-time field is hidden.
+    if (visible.length > 1) visible = visible.filter(([name]) => name !== label);
   }
   if (render("Token Usage").length <= width) return render("Token Usage");
   if (render("Usage").length <= width) return render("Usage");
-  // Remove the title before clipping any value; time is the final retained field.
+  // Remove the title before clipping any value; retain time when it is present.
   return `${visible.map(([label, value]) => `${label} ${value}`).join(" · ")}${stale ? " · stale" : ""}`.slice(0, Math.max(0, width));
 }
 
@@ -435,6 +438,7 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
   if (performance?.ttft !== undefined && Number.isFinite(performance.ttft)) {
     rows.push(["TTFT", `${(Math.max(0, performance.ttft) / 1_000).toFixed(1)}s`]);
   }
-  if (runtime) rows.push(["Run Time", formatRunTime(runtime)]);
+  const time = runtime && formatRunTime(runtime);
+  if (time !== undefined) rows.push(["Run Time", time]);
   return rows;
 }
