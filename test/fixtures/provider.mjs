@@ -28,5 +28,22 @@ export default Plugin.define({
       },
       models,
     }));
+    // Exercise the real Responses adapter with the same local-only HTTP server.
+    const responsesID = Provider.ID.make("usage-responses-test");
+    await context.provider.transform(editor => editor.add({
+      info: {
+        ...Provider.Info.empty(responsesID),
+        name: "Token Usage Responses Test",
+        activation: "enabled",
+        package: "@opencode/ai/providers/openai",
+        settings: { baseURL: context.options.baseURL, apiKey: "local-smoke-only" },
+      },
+      models: [{
+        ...Model.Info.default(responsesID, Model.ID.make("responses")),
+        name: "Usage Test Responses",
+        limit: { context: 128000, output: 4096 },
+        cost: [{ input: 2, output: 8, cache: { read: 0.2, write: 3 } }],
+      }],
+    }));
   },
 });

@@ -28,28 +28,35 @@ export interface StreamSample {
 }
 
 export const LIVE_WINDOW_MS = 2_000;
+export const LIVE_MIN_SPAN_MS = 500;
+export const LIVE_SAMPLE_MS = 100;
 export const LIVE_EWMA_ALPHA = 0.35;
 export const LIVE_BYTES_PER_TOKEN = 4;
 
-/** Raw live throughput from one step's recent observable deltas. */
+/** The first batch is a counter baseline, not bytes generated after its timestamp. */
 export function estimatedLiveTps(samples: readonly StreamSample[]): number | undefined {
   if (samples.length < 2) return undefined;
   const first = samples[0]!;
   const last = samples[samples.length - 1]!;
   const duration = last.time - first.time;
-  if (!Number.isFinite(duration) || duration <= 0) return undefined;
+  if (!Number.isFinite(duration) || duration < LIVE_MIN_SPAN_MS) return undefined;
   let bytes = 0;
+  let time = first.time;
   for (const sample of samples) {
-    if (!Number.isFinite(sample.time) || !Number.isFinite(sample.bytes) || sample.bytes < 0) return undefined;
-    bytes += sample.bytes;
+    if (!Number.isFinite(sample.time) || sample.time < time || !Number.isFinite(sample.bytes) || sample.bytes < 0) return undefined;
+    if (sample.time > first.time) bytes += sample.bytes;
+    time = sample.time;
   }
-  if (bytes <= 0) return undefined;
+  if (!Number.isFinite(bytes) || bytes <= 0) return undefined;
   return (bytes / LIVE_BYTES_PER_TOKEN) / (duration / 1_000);
 }
 
-export function smoothLiveTps(previous: number | undefined, raw: number): number {
+/** Time-based EWMA: elapsed time determines the weight, never delta count. */
+export function smoothLiveTps(previous: number | undefined, raw: number, elapsed = LIVE_MIN_SPAN_MS): number {
   if (previous === undefined || !Number.isFinite(previous)) return raw;
-  return previous * (1 - LIVE_EWMA_ALPHA) + raw * LIVE_EWMA_ALPHA;
+  if (!Number.isFinite(elapsed) || elapsed <= 0) return previous;
+  const alpha = 1 - (1 - LIVE_EWMA_ALPHA) ** (elapsed / LIVE_MIN_SPAN_MS);
+  return previous * (1 - alpha) + raw * alpha;
 }
 
 interface ActiveStep {
@@ -63,7 +70,11 @@ interface ActiveStep {
   reconciledAt?: number;
   bytes: number;
   samples: StreamSample[];
+  bucketStarted?: number;
+  observedAt?: number;
   liveTps?: number;
+  liveDuration?: number;
+  smoothedAt?: number;
   events: Set<string>;
 }
 
@@ -173,6 +184,7 @@ export class PerformanceMonitor {
     subscribe?: PerformanceSubscribe,
     private readonly retention = 60_000,
     private readonly now = Date.now,
+    private readonly monotonic = () => performance.now(),
   ) {
     this.unsubscribe = subscribe?.(event => this.handle(event));
   }
@@ -203,15 +215,29 @@ export class PerformanceMonitor {
   private deleteSession(sessionID: string) {
     for (const [key, step] of this.active) if (step.sessionID === sessionID) this.active.delete(key);
     for (const [key, sample] of this.observed) if (sample.sessionID === sessionID) this.observed.delete(key);
+    this.scheduleCleanup();
+  }
+
+  private resetLive(step: ActiveStep) {
+    step.samples = [];
+    delete step.bucketStarted;
+    delete step.observedAt;
+    delete step.liveTps;
+    delete step.liveDuration;
+    delete step.smoothedAt;
   }
 
   private prune() {
     const now = this.now();
+    const monotonic = this.monotonic();
     const changed = new Set<string>();
     for (const [key, step] of this.active) {
       if ((step.finishedAt ?? step.reconciledAt) !== undefined
         && (step.finishedAt ?? step.reconciledAt)! + this.retention <= now) {
         this.active.delete(key);
+        changed.add(step.sessionID);
+      } else if (step.observedAt !== undefined && monotonic - step.observedAt >= LIVE_WINDOW_MS) {
+        this.resetLive(step);
         changed.add(step.sessionID);
       }
     }
@@ -226,21 +252,27 @@ export class PerformanceMonitor {
 
   private scheduleCleanup() {
     clearTimeout(this.cleanupTimer);
-    if (this.disposed || !Number.isFinite(this.retention) || this.retention < 0) return;
+    this.cleanupTimer = undefined;
+    if (this.disposed) return;
     let next = Infinity;
+    const now = this.now();
+    const monotonic = this.monotonic();
+    const retain = Number.isFinite(this.retention) && this.retention >= 0;
     for (const step of this.active.values()) {
       const settled = step.finishedAt ?? step.reconciledAt;
-      if (settled !== undefined) next = Math.min(next, settled + this.retention);
+      if (retain && settled !== undefined) next = Math.min(next, settled + this.retention - now);
+      // Local monotonic age, never client epoch minus a remote event timestamp.
+      if (step.observedAt !== undefined) next = Math.min(next, step.observedAt + LIVE_WINDOW_MS - monotonic);
     }
     for (const sample of this.observed.values()) {
-      if (sample.expiresAt !== undefined) next = Math.min(next, sample.expiresAt);
+      if (retain && sample.expiresAt !== undefined) next = Math.min(next, sample.expiresAt - now);
     }
     if (!Number.isFinite(next)) return;
     this.cleanupTimer = setTimeout(() => {
       this.cleanupTimer = undefined;
       for (const sessionID of this.prune()) this.publish(sessionID);
       this.scheduleCleanup();
-    }, Math.max(0, next - this.now()));
+    }, Math.max(0, Math.ceil(next)));
     this.cleanupTimer.unref?.();
   }
 
@@ -290,6 +322,7 @@ export class PerformanceMonitor {
     if (event.type !== "session.text.delta" && event.type !== "session.reasoning.delta"
       && event.type !== "session.tool.input.delta") return false;
     if (typeof data.delta !== "string" || data.delta.length === 0 || !finite(event.created) || event.created < step.started) return false;
+    if (step.last !== undefined && event.created < step.last) return false;
     if (event.id && step.events.has(event.id)) return false;
     if (event.id) step.events.add(event.id);
     if (step.reconciledAt !== undefined) {
@@ -301,17 +334,35 @@ export class PerformanceMonitor {
     }
     const sampleBytes = new TextEncoder().encode(data.delta).byteLength;
     step.bytes += sampleBytes;
-    step.samples.push({ time: event.created, bytes: sampleBytes });
+    if (step.last !== undefined && event.created - step.last >= LIVE_WINDOW_MS) this.resetLive(step);
+    const last = step.samples.at(-1);
+    if (last && step.bucketStarted !== undefined && event.created - step.bucketStarted < LIVE_SAMPLE_MS) {
+      // Include a whole delivery burst in one batch, including the initial baseline.
+      last.time = event.created;
+      last.bytes += sampleBytes;
+    } else {
+      step.bucketStarted = event.created;
+      step.samples.push({ time: event.created, bytes: sampleBytes });
+    }
     const cutoff = event.created - LIVE_WINDOW_MS;
     while (step.samples.length > 0 && step.samples[0]!.time < cutoff) step.samples.shift();
-    // Advance smoothing once per accepted delta, independently of summary readers.
     const raw = estimatedLiveTps(step.samples);
-    if (raw !== undefined) step.liveTps = smoothLiveTps(step.liveTps, raw);
+    if (raw === undefined) {
+      delete step.liveTps;
+      delete step.liveDuration;
+      delete step.smoothedAt;
+    } else if (step.smoothedAt === undefined || event.created - step.smoothedAt >= LIVE_SAMPLE_MS) {
+      step.liveTps = smoothLiveTps(step.liveTps, raw, event.created - (step.smoothedAt ?? event.created));
+      step.liveDuration = event.created - step.samples[0]!.time;
+      step.smoothedAt = event.created;
+    }
+    step.observedAt = this.monotonic();
     step.last = Math.max(step.last ?? event.created, event.created);
     if (step.first === undefined) {
       step.first = event.created;
       this.observed.set(key, { messageID, sessionID, started: step.started, first: event.created });
     }
+    this.scheduleCleanup();
     this.publish(sessionID);
     return true;
   }
@@ -351,13 +402,13 @@ export class PerformanceMonitor {
     // completed provider usage still replaces this estimate via reconcile().
     let weighted = 0;
     let durationTotal = 0;
+    const monotonic = this.monotonic();
     for (const step of this.active.values()) {
       if (!sessions.has(step.sessionID) || step.reconciledAt !== undefined) continue;
-      if (step.liveTps === undefined || step.samples.length < 2) continue;
-      const first = step.samples[0]!;
-      const last = step.samples[step.samples.length - 1]!;
-      const duration = last.time - first.time;
-      if (!finite(duration) || duration <= 0) continue;
+      if (step.liveTps === undefined || step.observedAt === undefined
+        || monotonic - step.observedAt >= LIVE_WINDOW_MS) continue;
+      const duration = step.liveDuration;
+      if (!finite(duration) || duration < LIVE_MIN_SPAN_MS) continue;
       weighted += step.liveTps * duration;
       durationTotal += duration;
     }

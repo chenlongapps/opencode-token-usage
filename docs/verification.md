@@ -1,5 +1,51 @@
 # 验证记录
 
+## 2026-10-10 · 移除 Run Time 运行状态动画（未发布）
+
+侧边栏、子代理摘要／完整浮窗以及 `/usage` 紧凑／详细模式直接显示耗时，不再附加 `Running.`／`Running..`／`Running...`。移除 `src/running.ts`、动画专用计时器及其 5 项测试，清理仅供动画使用的会话 ID 传递；各入口的原生状态仍用于控制 `~` 实时估算，共享 500ms 耗时 ticker 与原生累计算法未改动。零值隐藏、不可用／未更新标记及面板末行顺序保持不变。
+
+新增子代理摘要回归测试覆盖实时估算、未更新／不可用值与窄终端；smoke 改为检查耗时行不含运行提示、没有新增量时估算仍推进、完成／中断后恢复原生值，并断言打包产物不包含旧动画模块。中英文 README 与产品约定已同步，旧动画验证记录保留为历史记录。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.8、SDK 2.0.24、OpenTUI 0.5.14，真实宿主 OpenCode 2.0.26；沿用 V2 CLI 插件 API。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 205 项通过：移除 5 项动画测试，新增 1 项摘要回归测试 |
+| `npm run build` | 通过；已清理本地旧动画构建产物 |
+| `node --check scripts/smoke.mjs`、`git diff --check` | 通过 |
+| `npm run test:smoke` | 真实 OpenCode 2.0.26 打包／隔离安装的完整检查通过 |
+
+真实 TUI 在侧边栏、两种 `/usage`、子代理摘要／完整浮窗及 48 列子代理视图中均不再显示运行提示，并在没有新流式增量时继续推进 `~` 耗时。同一耗时行在观察期间位置不变；完成／中断后恢复不带 `~` 的原生累计值，空闲父会话不随子代理增长。零值隐藏以及原有标题点击、上下文、定价、TPS／TTFT、Responses 突发／静默、分叉与压缩检查全部通过，没有调用真实付费模型或修改现有 OpenCode 配置。
+
+验证产物：`/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/token-usage-smoke-kuK7vo`，其中 `10-running-*-start.txt`／`advanced.txt` 保存各入口没有运行提示且耗时继续增长的画面，`result.json` 保存原生耗时、宿主版本与不含旧动画模块的打包文件列表。Node 22 的既有 OpenTUI 引擎警告与 MockTimers 实验警告保留。
+
+插件版本、SDK、价格快照未变；未升级版本、提交、推送或发布。
+
+## 2026-10-10 · 实时 TPS 突发增量保护（未发布）
+
+`src/performance.ts` 合并 100ms 内的可观察增量，以每个近期窗口的首批增量作为计数基线，不把基线字节计入其时间戳之后的输出；有效跨度至少为 500ms，窗口仍为约 2 秒。EWMA 按经过时间计算权重，最多每 100ms 推进一次，与 delta 条数和视图读取次数解耦。超过窗口的服务端事件间隔或本地静默会重建基线并清除旧平滑值，不使用模型专属倍率、TPS 硬上限或隐藏 reasoning 猜测。
+
+共享性能监视器的超时任务同时负责近期窗口与已有 TTFT 保留期清理：连续 2 秒没有新 delta 后，使实时估算过期并通知视图，回退到已准备的历史 TPS，没有历史值则隐藏该行。静默年龄只使用本地单调时钟，不拿客户端 epoch 减服务端时间；超时和增量均不读取历史或调用 API，也不改变原生 Run Time。TTFT 仍取 step 开始到首个原始增量，完成后的全树 assistant `Σ(Output + Reasoning) ÷ Σ(time.streamed − time.created)` 口径不变。读取失败、切换会话、多视图共享和子代理范围沿用现有控制器。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.8、SDK 2.0.24、OpenTUI 0.5.14。已复核 V2 插件／CLI 文档与版本固定的 OpenCode 2.0.26 Responses 适配器和事件总线：事件 `created` 是宿主发布时间，done-only 摘要可回退为 delta，并非内部 token 生成时钟。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 209 项通过，新增 12 项近期 TPS、突发、时钟、过期及共享控制器回归测试 |
+| `npm run build` | 通过 |
+| `node --check scripts/smoke.mjs`、`node --check test/fixtures/responses.mjs`、`git diff --check` | 通过 |
+| `npm run test:smoke` | 真实 OpenCode 2.0.26 打包／隔离安装的完整检查通过，包含新增 Responses SSE 场景 |
+
+自动化测试覆盖 10ms 摘要突发、同时间戳与碎片化基线、长暂停后恢复、500ms 边界、乱序／重复／空增量、UTF-8、时间加权平滑、有效高速不限幅、客户端／远程 epoch 偏差、无事件过期、并发独立过期、删除／销毁清理、TTFT 保留及多视图不读取历史。中英文 README 已同步说明首次测速延迟、静默回退及实测／估算口径差异。
+
+新增本地 Responses SSE 模拟提供商，包含摘要 delta 突发、第二段 done-only 摘要、间隔 600ms 的文本和静默等待；宿主仍为真实 OpenCode，不调用付费模型或修改现有配置。首轮事件记录中，宿主将摘要交付为相隔 5ms 的 800／400 字节 delta，TUI 正确只显示 TTFT、不显示 TPS；失败的是标题误匹配断言，而非插件指标。限定为数值指标行后，完整复验通过：摘要突发不显示 TPS，后续文本显示 `~11.3 tok/s`，静默后隐藏 TPS、仍保留 `TTFT 0.3s`，完成后按服务端上报的 Output 200 与 Reasoning 800 恢复无 `~` 的历史吞吐。原有侧边栏标题、详情、窄终端、子代理、原生耗时、定价、分叉和压缩检查全部通过；不宣称真实 OpenAI 服务已验证。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-ZKisPX`，其中 `11-responses-burst.txt`、`11-responses-live.txt`、`11-responses-quiet.txt`、`11-responses-completed.txt` 保存四个阶段，`stream-events.json` 保存真实宿主事件，`result.json` 记录 Responses 实时与历史 TPS 及原有全套结果。Node 22 的既有 OpenTUI 引擎警告与 MockTimers 实验警告保留。
+
+插件版本、SDK、价格快照未变；未升级版本、提交、推送或发布。
+
 ## 2026-10-10 · 点击侧边栏标题查看详情（未发布）
 
 侧边栏 `Token Usage` 标题的左键单击复用 `/usage` 的 `UsageDialog` 与统一打开函数，默认紧凑模式，保留 `d` 切换、居中 large 弹窗、滚动及 Escape／esc 关闭。按标题所属的被查看会话打开，不改变统计口径或子代理摘要入口；仅弹窗挂载期间保留原有独立详情控制器，关闭沿用现有取消读取、订阅与 ticker 清理。

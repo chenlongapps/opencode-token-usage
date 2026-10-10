@@ -648,6 +648,27 @@ test("child summary retains session-local time on narrow terminals without extra
   assert.match(fitUsageSummary(fields, 160, true), /Not updated$/);
 });
 
+test("child summaries retain live time and freshness markers without running labels", () => {
+  for (const [runtime, expected] of [
+    [{ status: "ready", milliseconds: 318_000, estimatedMilliseconds: 319_500 }, "~5m19s"],
+    [{ status: "stale", milliseconds: 318_000, estimatedMilliseconds: 319_500 }, "~5m19s · stale"],
+    [{ status: "unavailable" }, "—"],
+    [{ status: "stale", milliseconds: 0 }, "0s · stale"],
+  ] as const) {
+    const fields = [
+      ["Context", "—"], ["Total", "5,080"], ["Cost", "$0.005"],
+      ["Time", formatRunTime(runtime, true)], ["TPS", "48.7 tok/s"],
+    ] as const;
+    assert.equal(fitUsageSummary(fields, 160), `Token Usage · Context — · Total 5,080 · Cost $0.005 · Time ${expected} · TPS 48.7 tok/s`);
+    for (const width of [100, 80, 48, 40, 32, 20]) {
+      const line = fitUsageSummary(fields, width);
+      assert.ok(line.length <= width, `summary fits ${width} columns`);
+      assert.ok(line.includes(`Time ${expected}`));
+      assert.doesNotMatch(line, /Running\.|\n|undefined/);
+    }
+  }
+});
+
 test("child summary omits zero runtime without empty separators or losing all metrics on narrow terminals", () => {
   const fields = [
     ["Context", "—"], ["Total", "0"], ["Cost", "—"],

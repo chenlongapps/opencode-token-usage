@@ -308,7 +308,7 @@ test("stream deltas publish estimated TPS and TTFT without source reads, then co
     assistantMessageID: "live", sessionID: "root", delta: "abcdefgh",
   } });
   await until(() => state.performance?.tpsEstimated === true);
-  assert.deepEqual(state.performance, { tps: 8, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 500 });
   assert.equal(source.reads, reads);
 
   source.history.set("root", [message("a"), {
@@ -340,12 +340,13 @@ test("opening a detailed view shares live TPS without advancing the sidebar's sm
       assistantMessageID: "live", sessionID: "root", delta: "a".repeat(40),
     } });
   }
-  await until(() => sidebarState.performance?.tps === 20);
+  await until(() => sidebarState.performance?.tps === 10);
   events.emit({ type: "session.text.delta", id: "third", created: 2_500, data: {
     assistantMessageID: "live", sessionID: "root", delta: "a".repeat(400),
   } });
-  await until(() => sidebarState.performance?.tps !== 20);
-  assert.deepEqual(sidebarState.performance, { tps: 41, tpsEstimated: true, ttft: 0 });
+  await until(() => sidebarState.performance?.tps !== 10);
+  const eased = 10 * 0.65 + (110 / 1.5) * 0.35;
+  assert.deepEqual(sidebarState.performance, { tps: eased, tpsEstimated: true, ttft: 0 });
 
   let dialogState: UsageState = { status: "loading" };
   const dialog = new UsageController(source, events.subscribe, value => { dialogState = value; }, 2, 3_000, 5, performance, true);
@@ -358,8 +359,8 @@ test("opening a detailed view shares live TPS without advancing the sidebar's sm
   events.emit({ type: "session.text.delta", id: "fourth", created: 3_000, data: {
     assistantMessageID: "live", sessionID: "root", delta: "a".repeat(160),
   } });
-  await until(() => sidebarState.performance?.tps !== 41 && dialogState.performance?.tps !== 41);
-  assert.deepEqual(sidebarState.performance, { tps: 41 * 0.65 + 80 * 0.35, tpsEstimated: true, ttft: 0 });
+  await until(() => sidebarState.performance?.tps !== eased && dialogState.performance?.tps !== eased);
+  assert.deepEqual(sidebarState.performance, { tps: eased * 0.65 + 75 * 0.35, tpsEstimated: true, ttft: 0 });
   assert.deepEqual(dialogState.performance, sidebarState.performance);
   assert.equal(source.reads, reads);
 
@@ -367,6 +368,37 @@ test("opening a detailed view shares live TPS without advancing the sidebar's sm
   dialog.refresh();
   await until(() => dialogState !== previous);
   assert.deepEqual(dialogState.performance, sidebarState.performance);
+});
+
+test("shared views reject startup bursts and remove quiet live TPS without history reads", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", [{ ...message("completed"), time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }]);
+  let mono = 0;
+  const performance = new PerformanceMonitor(events.subscribe, 60_000, Date.now, () => mono);
+  let sidebarState: UsageState = { status: "loading" }, dialogState: UsageState = { status: "loading" };
+  const sidebar = new UsageController(source, events.subscribe, state => { sidebarState = state; }, 2, 3_000, 2, performance);
+  const dialog = new UsageController(source, events.subscribe, state => { dialogState = state; }, 2, 3_000, 2, performance, true);
+  t.after(() => { sidebar.dispose(); dialog.dispose(); performance.dispose(); });
+  sidebar.select("root"); dialog.select("root");
+  await until(() => sidebarState.status === "ready" && dialogState.status === "ready");
+  const reads = source.reads;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  events.emit({ type: "session.step.started", data: { sessionID: "root", assistantMessageID: "a", started: 1_000 } });
+  for (const created of [1_500, 1_510]) events.emit({ type: "session.reasoning.delta", id: `${created}`, created,
+    data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(400) } });
+  t.mock.timers.tick(2);
+  assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 }, "insufficient live samples retain historical TPS");
+  events.emit({ type: "session.text.delta", id: "text", created: 2_010,
+    data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(40) } });
+  t.mock.timers.tick(2);
+  assert.deepEqual(sidebarState.performance, { tps: 20, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+  mono = 2_000;
+  t.mock.timers.tick(2_000);
+  t.mock.timers.tick(2);
+  assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 });
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+  assert.equal(source.reads, reads, "expiry updates only the prepared in-memory performance baseline");
 });
 
 test("a shared monitor restores a stream captured before switching to its session tree", async t => {
@@ -394,7 +426,7 @@ test("a shared monitor restores a stream captured before switching to its sessio
 
   controller.select("other");
   await until(() => state.status === "ready" && state.summary?.total === 7);
-  assert.deepEqual(state.performance, { tps: 12, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(state.performance, { tps: 8, tpsEstimated: true, ttft: 500 });
 
   controller.select("root");
   await until(() => state.status === "ready" && state.summary?.total === 10);
@@ -406,8 +438,8 @@ test("a shared monitor restores a stream captured before switching to its sessio
 
   controller.select("other");
   await until(() => state.status === "ready" && state.summary?.total === 7);
-  // Window now holds 8 + 16 + 8 bytes over 1 s => 8 tok/s raw, eased from 12.
-  assert.deepEqual(state.performance, { tps: 12 * 0.65 + 8 * 0.35, tpsEstimated: true, ttft: 500 });
+  // The initial 8 bytes are the baseline; 16 + 8 subsequent bytes over 1 s.
+  assert.deepEqual(state.performance, { tps: 8 * 0.65 + 6 * 0.35, tpsEstimated: true, ttft: 500 });
 });
 
 test("a rebuilt controller recovers shared stream state and a new child joins the current tree immediately", async t => {
@@ -423,7 +455,7 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   events.emit({ type: "session.text.delta", id: "root-delta-1", created: 1_250, data: {
     assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
   } });
-  events.emit({ type: "session.text.delta", id: "root-delta-2", created: 1_500, data: {
+  events.emit({ type: "session.text.delta", id: "root-delta-2", created: 1_750, data: {
     assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
   } });
   await until(() => firstState.performance?.tpsEstimated === true);
@@ -434,7 +466,7 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   t.after(() => { controller.dispose(); performance.dispose(); });
   controller.select("root");
   await until(() => state.status === "ready");
-  assert.deepEqual(state.performance, { tps: 8, tpsEstimated: true, ttft: 250 });
+  assert.deepEqual(state.performance, { tps: 2, tpsEstimated: true, ttft: 250 });
 
   source.sessions.set("child", session("child", "root"));
   source.history.set("child", []);
@@ -445,12 +477,12 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   events.emit({ type: "session.text.delta", id: "child-delta-1", created: 2_500, data: {
     assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
   } });
-  events.emit({ type: "session.text.delta", id: "child-delta-2", created: 2_750, data: {
+  events.emit({ type: "session.text.delta", id: "child-delta-2", created: 3_000, data: {
     assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
   } });
   await until(() => state.performance?.ttft === 375);
-  // Root: 8 bytes / 0.25 s = 8; child: 16 bytes / 0.25 s = 16; duration-weighted average = 12.
-  assert.deepEqual(state.performance, { tps: 12, tpsEstimated: true, ttft: 375 });
+  // Root: 4 / 4 / 0.5 = 2; child: 8 / 4 / 0.5 = 4; tree average = 3.
+  assert.deepEqual(state.performance, { tps: 3, tpsEstimated: true, ttft: 375 });
 });
 
 const turn = (id: string, created: number, completed: number, tokens = 10): UsageMessage[] => [

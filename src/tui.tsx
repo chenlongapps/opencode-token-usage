@@ -10,23 +10,10 @@ import { ContextSourceRpc } from "./context-rpc.js";
 import { breakdownRows } from "./context-sources.js";
 import { createClickHandlers } from "./click.js";
 import { createSource } from "./source.js";
-import { animateRunning, withRunningIndicator } from "./running.js";
 import { bar, countLabel, fitUsageSummary, formatCompact, formatEstimatedCost, formatRateTier, formatRunTime, formatTokens, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
-
-function createRunningIndicator(context: Plugin.Context, sessionID: () => string, visible: () => boolean) {
-  const [indicator, setIndicator] = createSignal<string>();
-  // Only activity/visibility changes restart the clock, not usage or performance refreshes.
-  const active = createMemo(() => visible() && context.data.session.status(sessionID()) === "running");
-  createEffect(() => {
-    sessionID(); // Switching between two running sessions also resets the animation.
-    if (active()) onCleanup(animateRunning(setIndicator));
-  });
-  return () => active() ? indicator() : undefined;
-}
 
 function UsageView(props: {
   context: Plugin.Context;
-  sessionID: string;
   state: () => UsageState;
   hideTitle?: boolean;
   openDetails?: () => void;
@@ -36,7 +23,6 @@ function UsageView(props: {
     () => !!props.context.renderer.getSelection()?.getSelectedText(),
   );
   const rows = createMemo(() => usageRows(props.state().summary, props.state().context, props.state().performance, props.state().runtime));
-  const running = createRunningIndicator(props.context, () => props.sessionID, () => rows().some(([label]) => label === "Run Time"));
   const performanceStart = createMemo(() => rows().findIndex(([label]) => label === "Run Time" || label === "TPS" || label === "TTFT"));
   const status = () => ({ loading: "Loading…", ready: "", stale: "Not updated · retrying…", unavailable: "Unavailable · retrying…" })[props.state().status];
 
@@ -51,7 +37,7 @@ function UsageView(props: {
       <For each={rows()}>{(row, index) => (
         <box flexDirection="row" justifyContent="space-between" marginTop={index() === performanceStart() ? 1 : 0}>
           <text fg={props.context.theme.text.muted}>{row[0]}</text>
-          <text fg={props.context.theme.text.muted}>{row[0] === "Run Time" ? withRunningIndicator(row[1], running()) : row[1]}</text>
+          <text fg={props.context.theme.text.muted}>{row[1]}</text>
         </box>
       )}</For>
     </box>
@@ -85,12 +71,11 @@ function UsagePanel(props: {
   });
   onCleanup(() => { controller.dispose(); unregister(); });
 
-  return <UsageView context={props.context} sessionID={props.sessionID} state={state} openDetails={() => props.open(props.sessionID)} />;
+  return <UsageView context={props.context} state={state} openDetails={() => props.open(props.sessionID)} />;
 }
 
 function ChildUsageDialog(props: {
   context: Plugin.Context;
-  sessionID: string;
   state: () => UsageState;
 }) {
   const dimensions = useTerminalDimensions();
@@ -117,7 +102,7 @@ function ChildUsageDialog(props: {
         contentOptions={{ minHeight: 0 }}
         scrollbarOptions={{ visible: false }}
       >
-        <UsageView context={props.context} sessionID={props.sessionID} state={props.state} hideTitle />
+        <UsageView context={props.context} state={props.state} hideTitle />
       </scrollbox>
       <text fg={props.context.theme.text.muted}>↑/↓ scroll · esc close</text>
     </box>
@@ -130,7 +115,7 @@ function ChildUsageLauncher(props: {
   performance: PerformanceMonitor;
   runtime: RuntimeMonitor;
   register: (controller: UsageController) => () => void;
-  open: (sessionID: string, state: () => UsageState) => void;
+  open: (state: () => UsageState) => void;
 }) {
   const [state, setState] = createSignal<UsageState>({ status: "loading" });
   const controller = new UsageController(
@@ -152,7 +137,6 @@ function ChildUsageLauncher(props: {
   onCleanup(() => { controller.dispose(); unregister(); });
   const dimensions = useTerminalDimensions();
   const runtime = createMemo(() => formatRunTime(state().runtime, true));
-  const running = createRunningIndicator(props.context, () => props.sessionID, () => !!state().summary && runtime() !== undefined);
   const summary = createMemo(() => {
     const current = state();
     if (!current.summary) return `Token Usage · ${({ loading: "Loading…", ready: "Loading…", stale: "Unavailable", unavailable: "Unavailable · retrying…" })[current.status]}`;
@@ -165,14 +149,14 @@ function ChildUsageLauncher(props: {
       : "—";
     return fitUsageSummary([
       ["Context", context], ["Total", formatTokens(current.summary.total)], ["Cost", cost],
-      ["Time", withRunningIndicator(runtime(), running())], ["TPS", tps],
+      ["Time", runtime()], ["TPS", tps],
     ], Math.max(20, dimensions().width - 8), current.status === "stale");
   });
 
   return (
     <box flexDirection="row" justifyContent="flex-end" paddingRight={2} flexShrink={0}>
       <text fg={props.context.theme.text.muted} wrapMode="none" onMouseUp={event => {
-        if (event.button === 0) props.open(props.sessionID, state);
+        if (event.button === 0) props.open(state);
       }}>{summary()}</text>
     </box>
   );
@@ -216,7 +200,6 @@ function UsageDialog(props: {
   const theme = () => props.context.theme.text;
   const context = createMemo(() => state().context);
   const runtime = createMemo(() => formatRunTime(state().runtime));
-  const running = createRunningIndicator(props.context, () => props.sessionID, () => !!state().summary && runtime() !== undefined);
   const request = createMemo(() => state().details?.request);
   const requestTime = createMemo(() => {
     const time = request()?.time;
@@ -349,7 +332,7 @@ function UsageDialog(props: {
               <Show when={runtime()}>{(time) => (
                 <box flexDirection="row" justifyContent="space-between" gap={2}>
                   <text fg={theme().muted} wrapMode="word" minWidth={0}>Run Time (this session)</text>
-                  <text fg={theme().base} wrapMode="word" minWidth={0}>{withRunningIndicator(time(), running())}</text>
+                  <text fg={theme().base} wrapMode="word" minWidth={0}>{time()}</text>
                 </box>
               )}</Show>
             </box>
@@ -420,8 +403,8 @@ export default Plugin.define({
       append: "sidebar.content",
       render: props => <UsagePanel context={context} sessionID={props.sessionID} performance={performance} runtime={runtime} register={register} open={openUsage} />,
     });
-    const openChildUsage = (sessionID: string, state: () => UsageState) => {
-      context.ui.dialog.show(() => <ChildUsageDialog context={context} sessionID={sessionID} state={state} />);
+    const openChildUsage = (state: () => UsageState) => {
+      context.ui.dialog.show(() => <ChildUsageDialog context={context} state={state} />);
       context.ui.dialog.set({ size: "medium", centered: true });
     };
     // Child sessions do not mount the sidebar; keep one live summary above the composer.
