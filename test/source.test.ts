@@ -102,6 +102,29 @@ test("adapter uses the viewed session model/location and falls back to location 
   assert.equal((await createSource(fallback).model(selected, signal)).context, undefined);
 });
 
+test("activity adapter uses the complete V2 active set and forwards cancellation without history reads", async () => {
+  const signal = new AbortController().signal;
+  const requests: unknown[] = [];
+  const client = { session: { active: async (options: unknown) => {
+    requests.push(options);
+    return { root: { type: "running" }, offscreen: { type: "running" } };
+  } } } as unknown as OpenCodeClient;
+  assert.deepEqual(await createSource(client).active!(signal), new Set(["root", "offscreen"]));
+  assert.deepEqual(requests, [{ signal }]);
+});
+
+test("malformed or failed activity reads cannot masquerade as an empty inactive set", async () => {
+  const signal = new AbortController().signal;
+  for (const response of [undefined, null, [], { data: {} }, { root: null }, { root: { type: "idle" } }]) {
+    const client = { session: { active: async () => response } } as unknown as OpenCodeClient;
+    await assert.rejects(createSource(client).active!(signal), /Invalid active session snapshot/);
+  }
+  const offline = { session: { active: async () => { throw new Error("offline"); } } } as unknown as OpenCodeClient;
+  await assert.rejects(createSource(offline).active!(signal), /offline/);
+  const empty = { session: { active: async () => ({}) } } as unknown as OpenCodeClient;
+  assert.deepEqual(await createSource(empty).active!(signal), new Set());
+});
+
 test("v2 cursors carry pagination options; subsequent requests must not repeat order or filters", async () => {
   const requests: unknown[] = [];
   const client = {

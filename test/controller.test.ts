@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { UsageController } from "../src/controller.js";
 import type { UsageState } from "../src/controller.js";
-import { PerformanceMonitor } from "../src/performance.js";
+import { ACTIVITY_CHECK_MS, PerformanceMonitor } from "../src/performance.js";
 import { Events, FakeSource, deferred, message, page, session, until } from "./helpers.js";
 import type { UsageMessage } from "../src/usage.js";
 
@@ -374,7 +374,7 @@ test("shared views reject startup bursts and remove quiet live TPS without histo
   const source = new FakeSource(), events = new Events();
   source.history.set("root", [{ ...message("completed"), time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }]);
   let mono = 0;
-  const performance = new PerformanceMonitor(events.subscribe, 60_000, Date.now, () => mono);
+  const performance = new PerformanceMonitor(events.subscribe, { monotonic: () => mono });
   let sidebarState: UsageState = { status: "loading" }, dialogState: UsageState = { status: "loading" };
   const sidebar = new UsageController(source, events.subscribe, state => { sidebarState = state; }, 2, 3_000, 2, performance);
   const dialog = new UsageController(source, events.subscribe, state => { dialogState = state; }, 2, 3_000, 2, performance, true);
@@ -483,6 +483,57 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
   await until(() => state.performance?.ttft === 375);
   // Root: 4 / 4 / 0.5 = 2; child: 8 / 4 / 0.5 = 4; tree average = 3.
   assert.deepEqual(state.performance, { tps: 3, tpsEstimated: true, ttft: 375 });
+});
+
+test("a shared monitor reclaims an offscreen stream after every view closes and reopening cannot restore stale TTFT", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.sessions.set("other", session("other"));
+  source.history.set("other", [message("other-history", 7)]);
+  let mono = 0, activityReads = 0;
+  const performance = new PerformanceMonitor(events.subscribe, {
+    retention: 100, monotonic: () => mono, active: async () => { activityReads++; return new Set(); },
+  });
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2, 3_000, 2, performance);
+  t.after(() => { controller.dispose(); performance.dispose(); });
+  controller.select("root");
+  await until(() => state.status === "ready");
+  const reads = source.reads;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  events.emit({ type: "session.step.started", created: 1_000, data: { sessionID: "other", assistantMessageID: "lost", started: 1_000 } });
+  events.emit({ type: "session.text.delta", created: 1_250, data: { sessionID: "other", assistantMessageID: "lost", delta: "abcd" } });
+  controller.dispose();
+  mono = ACTIVITY_CHECK_MS;
+  t.mock.timers.tick(ACTIVITY_CHECK_MS);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  mono += 100;
+  t.mock.timers.tick(100);
+  assert.equal(activityReads, 1);
+  assert.equal(source.reads, reads, "orphan reclamation never reads offscreen history");
+  t.mock.timers.reset();
+  const reopened = new UsageController(source, events.subscribe, value => { state = value; }, 2, 3_000, 2, performance);
+  t.after(() => reopened.dispose());
+  reopened.select("other");
+  await until(() => state.status === "ready" && state.summary?.total === 7);
+  assert.deepEqual(state.performance, {});
+});
+
+test("controller-owned performance monitor uses the source's reconnect activity reconciliation", async t => {
+  const source = new FakeSource(), events = new Events();
+  let activityReads = 0;
+  source.active = async () => { activityReads++; return new Set(); };
+  let state: UsageState = { status: "loading" };
+  const controller = new UsageController(source, events.subscribe, value => { state = value; }, 2);
+  t.after(() => controller.dispose());
+  controller.select("root");
+  await until(() => state.status === "ready");
+  events.emit({ type: "session.step.started", created: 1_000, data: { sessionID: "offscreen", assistantMessageID: "lost", started: 1_000 } });
+  events.emit({ type: "session.text.delta", created: 1_250, data: { sessionID: "offscreen", assistantMessageID: "lost", delta: "abcd" } });
+  const reads = source.reads;
+  events.emit({ type: "server.connected", data: {} });
+  await until(() => activityReads === 1 && source.reads > reads);
+  assert.equal(state.summary?.total, 10);
+  assert.deepEqual(state.performance, {});
 });
 
 const turn = (id: string, created: number, completed: number, tokens = 10): UsageMessage[] => [

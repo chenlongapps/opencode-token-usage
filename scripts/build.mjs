@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { readFile, writeFile, unlink, rm } from "node:fs/promises";
 import { transformAsync } from "@babel/core";
 
+await rm("dist", { recursive: true, force: true });
 execFileSync(process.execPath, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json"], { stdio: "inherit" });
 const result = await transformAsync(await readFile("dist/tui.jsx", "utf8"), {
   filename: "tui.jsx",

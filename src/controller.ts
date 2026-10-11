@@ -76,7 +76,7 @@ export class UsageController {
     runtime?: RuntimeMonitor,
   ) {
     this.ownsPerformance = performance === undefined;
-    this.performance = performance ?? new PerformanceMonitor(subscribe);
+    this.performance = performance ?? new PerformanceMonitor(subscribe, { active: source.active });
     this.unsubscribePerformance = this.performance.listen(sessionID => {
       if (this.sessions.has(sessionID)) this.refreshPerformance();
     });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile, copyFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,14 +38,14 @@ const packageName = JSON.parse(await readFile(path.join(repo, "package.json"), "
 
 const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: repo, encoding: "utf8", env: npmEnv }));
 const files = packed[0].files.map(file => file.path);
-assert.ok(files.includes("dist/index.js") && files.includes("dist/tui.js") && files.includes("index.js") && files.includes("tui.js"));
-assert.ok(files.includes("dist/pricing.js") && files.includes("dist/pricing.d.ts") && files.includes("docs/pricing.md"));
-assert.ok(["aliases", "overrides", "prices.generated"].every(name => files.includes(`dist/${name}.js`)));
-assert.ok(files.includes("dist/context-rpc.js") && files.includes("dist/context-sources.js"));
-assert.ok(files.includes("dist/runtime.js") && files.includes("dist/runtime.d.ts"));
-assert.ok(files.includes("dist/runtime-monitor.js") && files.includes("dist/runtime-monitor.d.ts"));
-assert.ok(files.every(file => !file.startsWith("dist/running.")), "the removed animation is not packaged");
-assert.ok(files.includes("dist/click.js") && files.includes("dist/click.d.ts"));
+const expectedDist = (await readdir(path.join(repo, "src"), { recursive: true }))
+  .filter(file => /\.tsx?$/.test(file) && !file.endsWith(".d.ts"))
+  .flatMap(file => {
+    const name = file.replace(/\.tsx?$/, "").split(path.sep).join("/");
+    return [`dist/${name}.js`, `dist/${name}.d.ts`];
+  }).sort();
+assert.deepEqual(files.filter(file => file.startsWith("dist/")).sort(), expectedDist, "packed dist must match current sources exactly");
+assert.ok(files.includes("index.js") && files.includes("tui.js") && files.includes("docs/pricing.md"));
 assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/")));
 await writeFile(path.join(installation, "package.json"), JSON.stringify({ private: true, type: "module" }));
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
@@ -53,13 +53,13 @@ const plugin = path.join(installation, "node_modules", ...packageName.split("/")
 const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
 const { contextUsage, formatDuration, summarize } = await import(path.join(plugin, "dist/usage.js"));
 const { ContextSourceRpc } = await import(path.join(plugin, "dist/context-rpc.js"));
-const { historicalPerformance } = await import(path.join(plugin, "dist/performance.js"));
+const { historicalPerformance, PerformanceMonitor } = await import(path.join(plugin, "dist/performance.js"));
 const { summarizeRuntime } = await import(path.join(plugin, "dist/runtime.js"));
 
 let childAgent = "general";
 const requests = [];
 // Keep live checks observable until the TUI has rendered them, rather than racing a fixed delay.
-const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE"]
+const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE", "TOOL_WAIT_SMOKE"]
   .map(marker => [marker, { started: false, ...Promise.withResolvers() }]));
 const responsesGates = { started: false, textEnded: false, burst: Promise.withResolvers(), finish: Promise.withResolvers() };
 const compactionSummary = `## Objective
@@ -103,7 +103,8 @@ const mock = createServer(async (request, response) => {
       && !data.messages.slice(lastUser + 1).some(message => message.role === "tool");
     const tool = data.tools?.find(tool => tool.function.name === "subagent");
     const toolCalls = spawnChild && tool ? [{ index: 0, id: "usage-smoke-child", type: "function", function: {
-      name: "subagent", arguments: JSON.stringify({ agent: childAgent, description: "Usage smoke child", prompt: "Return CHILD_DONE." }),
+      name: "subagent", arguments: JSON.stringify({ agent: childAgent, description: "Usage smoke child",
+        prompt: userText.includes("LONG_TOOL_SMOKE") ? "TOOL_WAIT_SMOKE Return CHILD_DONE." : "Return CHILD_DONE." }),
     } }] : undefined;
     const content = compactionSmoke ? compactionSummary : toolCalls ? undefined : gate ? "SMOKE_OK ".repeat(4).trim() : "SMOKE_OK";
     const usage = reasoningSmoke ? {
@@ -170,6 +171,8 @@ const client = OpenCode.make({
 });
 const source = createSource(client);
 const streamEvents = [];
+const performanceObservers = new Set();
+let orphanMonitor;
 const eventController = new AbortController();
 let eventCapture;
 const wait = async (check, label, timeout = 30_000) => {
@@ -306,6 +309,7 @@ try {
   eventCapture = (async () => {
     for await (const event of client.event.subscribe({ signal: eventController.signal })) {
       if (/^session\.(?:execution\.|step\.|text\.delta|reasoning\.delta|tool\.input\.delta)/.test(event.type)) streamEvents.push(event);
+      for (const observe of performanceObservers) observe(event);
     }
   })().catch(error => {
     if (!eventController.signal.aborted) streamEvents.push({ error: String(error) });
@@ -855,8 +859,60 @@ try {
   console.log("PASS: real completed compaction resets viewed context and preserves ascending full history");
 
   await ownRuntime(semanticsTarget.id);
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+
+  // A packaged monitor with no mounted view/history: inject lost terminal events and
+  // synthetic reconnect handshakes, but read activity from the real isolated host.
+  let age = 0;
+  const activitySnapshots = [];
+  orphanMonitor = new PerformanceMonitor(listener => {
+    const observe = event => {
+      if (/^session\.(?:step\.(?:ended|failed)|execution\.(?:succeeded|failed|interrupted)|idle|status)$/.test(event.type)) return;
+      listener(event);
+    };
+    performanceObservers.add(observe);
+    return () => performanceObservers.delete(observe);
+  }, { retention: 100, monotonic: () => globalThis.performance.now() + age, active: async signal => {
+    const active = await source.active(signal);
+    activitySnapshots.push([...active]);
+    return active;
+  } });
+  const toolWaitTarget = await client.session.create({ location: { directory: project }, title: "Offscreen Tool Wait", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  await client.session.prompt({ sessionID: toolWaitTarget.id, text: "SPAWN_SMOKE_CHILD LONG_TOOL_SMOKE" });
+  await wait(() => streamGates.get("TOOL_WAIT_SMOKE").started, "real parent waits for the held subagent tool");
+  const toolWaitChild = (await client.session.list({ parentID: toolWaitTarget.id })).data[0];
+  assert.ok(toolWaitChild);
+  const waitingIDs = [toolWaitTarget.id, toolWaitChild.id];
+  // A complete tool input can arrive without input.delta; preserve that parent's
+  // stream without inventing TTFT, while the child's real text deltas supply TTFT.
+  await wait(() => waitingIDs.every(id => [...orphanMonitor.active.values()].some(step => step.sessionID === id))
+    && orphanMonitor.summary([], [toolWaitChild.id]).ttft !== undefined, "offscreen streams and measurable TTFT captured");
+  const waitingTtft = waitingIDs.map(id => orphanMonitor.summary([], [id]).ttft);
+  const reconcileActivity = async () => {
+    const before = activitySnapshots.length;
+    orphanMonitor.handle({ type: "server.connected", data: {} });
+    await wait(() => activitySnapshots.length > before && !orphanMonitor.synchronization, "reconnect activity snapshot applied");
+  };
+  for (const elapsed of [60 * 60_000, 24 * 60 * 60_000]) {
+    age += elapsed; // Accelerated local age, not a claim of a day-long wall-clock run.
+    await reconcileActivity();
+    assert.ok(waitingIDs.every(id => activitySnapshots.at(-1).includes(id)), "host considers parent tool and child provider waits running");
+    assert.deepEqual(waitingIDs.map(id => orphanMonitor.summary([], [id]).ttft), waitingTtft);
+    assert.equal(orphanMonitor.active.size, 2, "long waits retain both streams");
+  }
+  streamGates.get("TOOL_WAIT_SMOKE").resolve();
+  await client.session.wait({ sessionID: toolWaitTarget.id });
+  await wait(() => streamEvents.some(event => event.type === "session.execution.succeeded" && event.data.sessionID === toolWaitTarget.id), "terminal events captured but withheld from the monitor");
+  await reconcileActivity();
+  assert.ok(waitingIDs.every(id => !activitySnapshots.at(-1).includes(id)), "host confirms both offscreen sessions inactive");
+  await wait(() => orphanMonitor.active.size === 0 && orphanMonitor.observed.size === 0, "lost-ending streams and TTFT reclaimed without history reads");
+  assert.equal(orphanMonitor.cleanupTimer, undefined);
+  assert.deepEqual(orphanMonitor.summary([], waitingIDs), {});
+  orphanMonitor.dispose();
+  console.log("PASS: real active-session reconciliation protects offscreen tool/child waits at accelerated 25h age and reclaims lost endings without history");
+
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
 } finally {
+  orphanMonitor?.dispose();
   for (const gate of streamGates.values()) gate.resolve();
   responsesGates.burst.resolve(); responsesGates.finish.resolve();
   eventController.abort();

@@ -28,6 +28,7 @@ export class FakeSource implements UsageSource {
   reads = 0;
   size = 2;
   composition?: (session: Session, signal: AbortSignal) => Promise<ContextSources | undefined>;
+  active?: NonNullable<UsageSource["active"]>;
   async session(id: string): Promise<Session> {
     this.reads++;
     if (this.fail) throw new Error("offline");

@@ -32,6 +32,15 @@ export const LIVE_MIN_SPAN_MS = 500;
 export const LIVE_SAMPLE_MS = 100;
 export const LIVE_EWMA_ALPHA = 0.35;
 export const LIVE_BYTES_PER_TOKEN = 4;
+/** Quiet streams need a server liveness check, not a maximum tool-wait duration. */
+export const ACTIVITY_CHECK_MS = 60_000;
+
+export type ReadActiveSessions = (signal: AbortSignal) => Promise<ReadonlySet<string>>;
+export interface PerformanceOptions {
+  retention?: number;
+  monotonic?: () => number;
+  active?: ReadActiveSessions | undefined;
+}
 
 /** The first batch is a counter baseline, not bytes generated after its timestamp. */
 export function estimatedLiveTps(samples: readonly StreamSample[]): number | undefined {
@@ -68,6 +77,13 @@ interface ActiveStep {
   streamed?: number;
   finishedAt?: number;
   reconciledAt?: number;
+  /** Local monotonic age and revision guard for asynchronous activity snapshots. */
+  checkedAt: number;
+  revision: number;
+  /** Server event watermark, compared only with other server timestamps. */
+  latest: number;
+  /** Inferred inactivity can be revoked by newer live activity during retention. */
+  inactive?: boolean;
   bytes: number;
   samples: StreamSample[];
   bucketStarted?: number;
@@ -177,15 +193,17 @@ export class PerformanceMonitor {
   private observed = new Map<string, RuntimeObservation>();
   private listeners = new Set<PerformanceListener>();
   private cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  private synchronization: AbortController | undefined;
   private disposed = false;
   private readonly unsubscribe: (() => void) | undefined;
+  private readonly retention: number;
+  private readonly monotonic: () => number;
+  private readonly readActive: ReadActiveSessions | undefined;
 
-  constructor(
-    subscribe?: PerformanceSubscribe,
-    private readonly retention = 60_000,
-    private readonly now = Date.now,
-    private readonly monotonic = () => performance.now(),
-  ) {
+  constructor(subscribe?: PerformanceSubscribe, options: PerformanceOptions = {}) {
+    this.retention = options.retention ?? 60_000;
+    this.monotonic = options.monotonic ?? (() => performance.now());
+    this.readActive = options.active;
     this.unsubscribe = subscribe?.(event => this.handle(event));
   }
 
@@ -199,6 +217,7 @@ export class PerformanceMonitor {
     if (this.disposed) return;
     this.disposed = true;
     this.unsubscribe?.();
+    this.synchronization?.abort();
     clearTimeout(this.cleanupTimer);
     this.cleanupTimer = undefined;
     this.listeners.clear();
@@ -227,13 +246,83 @@ export class PerformanceMonitor {
     delete step.smoothedAt;
   }
 
+  private touch(step: ActiveStep, created?: number) {
+    step.revision++;
+    step.checkedAt = this.monotonic();
+    if (finite(created)) step.latest = Math.max(step.latest, created);
+    // A live event wins over an inactive snapshot taken just before it arrived.
+    if (step.inactive) {
+      delete step.finishedAt;
+      delete step.inactive;
+      const sample = this.observed.get(this.key(step.sessionID, step.messageID));
+      if (sample) delete sample.expiresAt;
+    }
+  }
+
+  private finish(step: ActiveStep, inactive = false) {
+    if (step.finishedAt !== undefined && (inactive || !step.inactive)) return;
+    step.finishedAt ??= this.monotonic();
+    step.inactive = inactive;
+    step.revision++;
+    const key = this.key(step.sessionID, step.messageID);
+    const sample = this.observed.get(key);
+    if (sample) sample.expiresAt = step.finishedAt + this.retention;
+    this.resetLive(step);
+    this.publish(step.sessionID);
+  }
+
+  /** One shared, history-free read covers offscreen sessions too. Failures are not idle. */
+  private async checkActivity(force = false) {
+    if (this.disposed || !this.readActive) return;
+    if (this.synchronization) {
+      if (!force) return;
+      this.synchronization.abort();
+      this.synchronization = undefined;
+    }
+    const now = this.monotonic();
+    const unfinished = [...this.active.values()].filter(step => step.finishedAt === undefined);
+    if (!unfinished.length || (!force && !unfinished.some(step => now - step.checkedAt >= ACTIVITY_CHECK_MS))) return;
+    // The endpoint is process-wide: use each read for every tracked unfinished step,
+    // rather than issuing one request per staggered session deadline.
+    const candidates = new Map(unfinished.map(step => [step, step.revision]));
+    const request = new AbortController();
+    this.synchronization = request;
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]);
+    let onAbort: () => void = () => {};
+    try {
+      // Also bound readers that fail to cooperate with cancellation.
+      const active = await Promise.race([
+        this.readActive(signal),
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(signal.reason);
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        }),
+      ]);
+      if (this.disposed || signal.aborted || this.synchronization !== request) return;
+      for (const [step, revision] of candidates) {
+        if (this.active.get(this.key(step.sessionID, step.messageID)) !== step || step.revision !== revision) continue;
+        if (!active.has(step.sessionID)) this.finish(step, true);
+      }
+    } catch { /* Preserve quiet tools/retries when server activity is unknown. */ }
+    finally {
+      signal.removeEventListener("abort", onAbort);
+      request.abort();
+      if (this.synchronization === request) {
+        this.synchronization = undefined;
+        for (const [step, revision] of candidates) {
+          if (step.revision === revision) step.checkedAt = this.monotonic();
+        }
+        this.scheduleCleanup();
+      }
+    }
+  }
+
   private prune() {
-    const now = this.now();
     const monotonic = this.monotonic();
     const changed = new Set<string>();
     for (const [key, step] of this.active) {
-      if ((step.finishedAt ?? step.reconciledAt) !== undefined
-        && (step.finishedAt ?? step.reconciledAt)! + this.retention <= now) {
+      if (step.finishedAt !== undefined && step.finishedAt + this.retention <= monotonic) {
         this.active.delete(key);
         changed.add(step.sessionID);
       } else if (step.observedAt !== undefined && monotonic - step.observedAt >= LIVE_WINDOW_MS) {
@@ -242,7 +331,7 @@ export class PerformanceMonitor {
       }
     }
     for (const [key, sample] of this.observed) {
-      if (sample.expiresAt !== undefined && sample.expiresAt <= now) {
+      if (sample.expiresAt !== undefined && sample.expiresAt <= monotonic) {
         this.observed.delete(key);
         changed.add(sample.sessionID);
       }
@@ -255,22 +344,24 @@ export class PerformanceMonitor {
     this.cleanupTimer = undefined;
     if (this.disposed) return;
     let next = Infinity;
-    const now = this.now();
     const monotonic = this.monotonic();
     const retain = Number.isFinite(this.retention) && this.retention >= 0;
     for (const step of this.active.values()) {
-      const settled = step.finishedAt ?? step.reconciledAt;
-      if (retain && settled !== undefined) next = Math.min(next, settled + this.retention - now);
+      if (retain && step.finishedAt !== undefined) next = Math.min(next, step.finishedAt + this.retention - monotonic);
+      if (step.finishedAt === undefined && this.readActive && !this.synchronization) {
+        next = Math.min(next, step.checkedAt + ACTIVITY_CHECK_MS - monotonic);
+      }
       // Local monotonic age, never client epoch minus a remote event timestamp.
       if (step.observedAt !== undefined) next = Math.min(next, step.observedAt + LIVE_WINDOW_MS - monotonic);
     }
     for (const sample of this.observed.values()) {
-      if (retain && sample.expiresAt !== undefined) next = Math.min(next, sample.expiresAt - now);
+      if (retain && sample.expiresAt !== undefined) next = Math.min(next, sample.expiresAt - monotonic);
     }
     if (!Number.isFinite(next)) return;
     this.cleanupTimer = setTimeout(() => {
       this.cleanupTimer = undefined;
       for (const sessionID of this.prune()) this.publish(sessionID);
+      void this.checkActivity();
       this.scheduleCleanup();
     }, Math.max(0, Math.ceil(next)));
     this.cleanupTimer.unref?.();
@@ -279,43 +370,103 @@ export class PerformanceMonitor {
   handle(event: PerformanceEvent): boolean {
     if (this.disposed) return false;
     for (const sessionID of this.prune()) this.publish(sessionID);
+    if (event.type === "server.connected") {
+      // Delivery across a connection gap cannot share a throughput window.
+      for (const step of this.active.values()) {
+        this.resetLive(step);
+        this.publish(step.sessionID);
+      }
+      void this.checkActivity(true);
+      this.scheduleCleanup();
+      return false;
+    }
     const data = (event.data && typeof event.data === "object" ? event.data : {}) as {
       assistantMessageID?: unknown;
       sessionID?: unknown;
       started?: unknown;
       delta?: unknown;
+      status?: { type?: unknown };
     };
     const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined;
     if (event.type === "session.deleted") {
       if (sessionID) this.deleteSession(sessionID);
       return false;
     }
+    if (!sessionID) return false;
+    if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted", "session.idle"].includes(event.type)
+      || (event.type === "session.status" && data.status?.type === "idle")) {
+      for (const step of this.active.values()) {
+        if (step.sessionID !== sessionID || !finite(event.created) || event.created < step.latest) continue;
+        step.latest = event.created;
+        this.finish(step);
+      }
+      this.scheduleCleanup();
+      return false;
+    }
+    if (event.type === "session.execution.started"
+      || (event.type === "session.status" && ["busy", "retry"].includes(String(data.status?.type)))) {
+      for (const step of this.active.values()) {
+        if (step.sessionID === sessionID && finite(event.created) && event.created >= step.latest) this.touch(step, event.created);
+      }
+      this.scheduleCleanup();
+      return false;
+    }
     const messageID = typeof data.assistantMessageID === "string" ? data.assistantMessageID : undefined;
-    if (!sessionID || !messageID) return false;
+    if (!messageID) return false;
     const key = this.key(sessionID, messageID);
 
     if (event.type === "session.step.started") {
       if (!finite(data.started)) return false;
       if (this.active.has(key)) return false;
+      // A session's foreground steps are serial; missing endings must not accumulate
+      // forever just because the same session continues to run later steps.
+      for (const step of this.active.values()) {
+        if (step.sessionID !== sessionID) continue;
+        if (step.started > data.started) return false;
+      }
+      for (const step of this.active.values()) {
+        if (step.sessionID !== sessionID) continue;
+        step.latest = Math.max(step.latest, data.started);
+        this.finish(step);
+      }
       this.active.set(key, {
         messageID, sessionID, started: data.started, bytes: 0, samples: [], events: new Set(),
+        checkedAt: this.monotonic(), revision: 0, latest: Math.max(data.started, finite(event.created) ? event.created : data.started),
       });
+      this.scheduleCleanup();
       return false;
     }
 
     const step = this.active.get(key);
     if (!step) return false;
+    if (event.type === "session.retry.scheduled" || (event.type.startsWith("session.tool.") && event.type !== "session.tool.input.delta")) {
+      if (!finite(event.created) || event.created < step.latest) return false;
+      if (event.type === "session.retry.scheduled") {
+        delete step.finishedAt;
+        delete step.inactive;
+        delete step.reconciledAt;
+        delete step.streamed;
+        this.resetLive(step);
+        const sample = this.observed.get(key);
+        if (sample) delete sample.expiresAt;
+      }
+      this.touch(step, event.created);
+      this.scheduleCleanup();
+      return false;
+    }
     if (event.type === "session.step.streamed") {
       if (!finite(event.created) || event.created < step.started) return false;
+      if (step.streamed !== undefined && event.created <= step.streamed) return false;
       step.streamed = event.created;
+      this.touch(step, event.created);
+      this.scheduleCleanup();
       if (step.bytes > 0) this.publish(sessionID);
       return step.bytes > 0;
     }
     if (event.type === "session.step.ended" || event.type === "session.step.failed") {
-      step.finishedAt = this.now();
-      const sample = this.observed.get(key);
-      if (sample) sample.expiresAt = step.finishedAt + this.retention;
-      if (step.reconciledAt !== undefined) this.active.delete(key);
+      if (finite(event.created) && event.created < step.latest) return false;
+      if (finite(event.created)) step.latest = event.created;
+      this.finish(step);
       this.scheduleCleanup();
       return false;
     }
@@ -324,7 +475,9 @@ export class PerformanceMonitor {
     if (typeof data.delta !== "string" || data.delta.length === 0 || !finite(event.created) || event.created < step.started) return false;
     if (step.last !== undefined && event.created < step.last) return false;
     if (event.id && step.events.has(event.id)) return false;
+    if (step.finishedAt !== undefined && !step.inactive) return false;
     if (event.id) step.events.add(event.id);
+    this.touch(step, event.created);
     if (step.reconciledAt !== undefined) {
       // A later delta means the snapshot did not represent the final stream.
       delete step.reconciledAt;
@@ -369,20 +522,22 @@ export class PerformanceMonitor {
 
   reconcile(messages: Iterable<UsageMessage>, sessionIDs: Iterable<string>) {
     const sessions = new Set(sessionIDs);
-    const represented = new Set<string>();
+    if (this.disposed) return;
+    const represented = new Map<string, UsageMessage>();
     for (const message of messages) {
       if (message.type === "assistant" && (message.tokens || message.time?.streamed !== undefined
-        || message.time?.completed !== undefined)) represented.add(message.id);
+        || message.time?.completed !== undefined)) represented.set(message.id, message);
     }
-    for (const [key, step] of this.active) {
+    for (const step of this.active.values()) {
       if (sessions.has(step.sessionID) && represented.has(step.messageID)) {
-        if (step.finishedAt !== undefined) this.active.delete(key);
-        else {
-          // A snapshot can arrive before step.ended. Retain the step to attach
-          // the real expiry later, and set a fallback if that event is lost.
-          step.reconciledAt ??= this.now();
-          const sample = this.observed.get(key);
-          if (sample) sample.expiresAt ??= step.reconciledAt + this.retention;
+        // streamed/tokens describe the provider boundary, not tool settlement.
+        // Only completion or an authoritative inactive session permits expiry;
+        // a stale pre-retry completion cannot settle newer activity.
+        step.reconciledAt ??= this.monotonic();
+        const completed = represented.get(step.messageID)?.time?.completed;
+        if (finite(completed) && completed >= step.latest) {
+          step.latest = completed;
+          this.finish(step);
         }
       }
     }

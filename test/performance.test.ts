@@ -298,7 +298,7 @@ test("live TPS is independent of summary read frequency, including no readers", 
 for (const order of ["snapshot first", "end first"] as const) {
   test(`TTFT expires after ${order} without losing the live sample`, () => {
     let now = 10_000;
-    const tracker = new PerformanceMonitor(undefined, 100, () => now);
+    const tracker = new PerformanceMonitor(undefined, { retention: 100, monotonic: () => now });
     const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 1_800 },
       tokens: { output: 8 }, content: [{ type: "text", text: "answer" }] }];
     tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
@@ -316,14 +316,14 @@ for (const order of ["snapshot first", "end first"] as const) {
   });
 }
 
-test("a represented stream without an end event also expires", () => {
+test("a completed history without an end event also expires", () => {
   let now = 10_000;
-  const tracker = new PerformanceMonitor(undefined, 100, () => now);
+  const tracker = new PerformanceMonitor(undefined, { retention: 100, monotonic: () => now });
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
   tracker.handle(event("session.text.delta", "delta", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "abcd" }));
   tracker.handle(event("session.text.delta", "delta-2", 1_400, { assistantMessageID: "live", sessionID: "root", delta: "efgh" }));
   tracker.handle(event("session.step.streamed", "streamed", 1_800, { assistantMessageID: "live", sessionID: "root" }));
-  const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 1_800 }, tokens: { output: 8 } }];
+  const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 1_800, completed: 2_000 }, tokens: { output: 8 } }];
   tracker.reconcile(history, ["root"]);
   assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, ttft: 200 });
   now += 101;
@@ -334,7 +334,7 @@ test("a represented stream without an end event also expires", () => {
 
 test("a delta after an early snapshot restores live TPS and retains TTFT", () => {
   let now = 10_000;
-  const tracker = new PerformanceMonitor(undefined, 100, () => now);
+  const tracker = new PerformanceMonitor(undefined, { retention: 100, monotonic: () => now });
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
   tracker.handle(event("session.text.delta", "first", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "abcd" }));
   const early: UsageMessage[] = [{ id: "live", type: "assistant", tokens: { output: 1 } }];
@@ -345,7 +345,7 @@ test("a delta after an early snapshot restores live TPS and retains TTFT", () =>
   assert.deepEqual(tracker.summary(early, ["root"]), { tps: 2, tpsEstimated: true, ttft: 200 });
   now += 60;
   tracker.handle({ type: "noop", data: {} });
-  assert.equal(tracker.summary(early, ["root"]).ttft, 200, "the early fallback expiry was cancelled");
+  assert.equal(tracker.summary(early, ["root"]).ttft, 200, "an early usage snapshot does not expire an unfinished TTFT sample");
   tracker.dispose();
 });
 
@@ -450,7 +450,8 @@ test("out-of-order deltas cannot corrupt the window or advance its smoothing", t
 test("quiet live TPS expires without events using monotonic age, retaining TTFT and historical TPS", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let mono = 0, wall = 8e15;
-  const tracker = new PerformanceMonitor(undefined, 60_000, () => wall, () => mono);
+  t.mock.method(Date, "now", () => wall);
+  const tracker = new PerformanceMonitor(undefined, { monotonic: () => mono });
   t.after(() => tracker.dispose());
   const changes: string[] = [];
   tracker.listen(sessionID => changes.push(sessionID));
@@ -482,7 +483,7 @@ test("deletion and disposal cancel quiet-window expiry callbacks", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let mono = 0;
   for (const dispose of [false, true]) {
-    const tracker = new PerformanceMonitor(undefined, 60_000, () => 0, () => mono);
+    const tracker = new PerformanceMonitor(undefined, { monotonic: () => mono });
     let changes = 0;
     tracker.listen(() => changes++);
     tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
@@ -503,7 +504,7 @@ test("deletion and disposal cancel quiet-window expiry callbacks", t => {
 test("each concurrent stream expires independently without changing other trees", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let mono = 0;
-  const tracker = new PerformanceMonitor(undefined, 60_000, () => 0, () => mono);
+  const tracker = new PerformanceMonitor(undefined, { monotonic: () => mono });
   t.after(() => tracker.dispose());
   for (const [sessionID, bytes] of [["root", 40], ["child", 80]] as const) {
     tracker.handle(event("session.step.started", `start-${sessionID}`, 0, { assistantMessageID: sessionID, sessionID, started: 0 }));
@@ -524,7 +525,7 @@ test("each concurrent stream expires independently without changing other trees"
 test("stream markers, duplicate and empty deltas cannot keep quiet TPS alive", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let mono = 0;
-  const tracker = new PerformanceMonitor(undefined, 60_000, () => 0, () => mono);
+  const tracker = new PerformanceMonitor(undefined, { monotonic: () => mono });
   t.after(() => tracker.dispose());
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
   for (const time of [0, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {

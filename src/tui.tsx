@@ -383,6 +383,7 @@ export default Plugin.define({
   setup(context) {
     const performance = new PerformanceMonitor(
       listener => context.data.listen(({ details }) => listener(details)),
+      { active: createSource(context.client).active },
     );
     const runtime = new RuntimeMonitor(listener => context.data.listen(({ details }) => listener(details)));
     const synchronizeRuntime = () => void runtime.synchronize(signal => context.client.rpc(ContextSourceRpc).clock({}, {

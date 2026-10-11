@@ -1,5 +1,45 @@
 # 验证记录
 
+## 2026-10-11 · 性能监视器异常流回收（未发布）
+
+`PerformanceMonitor` 在 `server.connected` 后重置近期 TPS 窗口，并通过 V2 `session.active()` 对账全部已跟踪的未结束流，包括离屏会话。未结束流静默 60 秒后进行共享活动检查，每次请求覆盖全部未结束流；确认 inactive 后保留 60 秒，再释放流、去重事件集合和 TTFT 观察。没有未结束流时停止活动查询，增量及 2 秒 TPS 窗口过期仍使用内存，不读取历史。状态请求有 5 秒超时；失败保留并重试，请求身份及逐流 revision 防止迟到响应覆盖新活动、重连及销毁。
+
+历史 tokens／`time.streamed` 只表示提供商已交付，不能证明工具已完成，不再单独触发 TTFT／流状态回收。有效历史 `time.completed`、step／execution 结束或后继 step 可以结算，重复结束不延长保留期；旧结束／重试不能影响新 step，重试可撤销此前失败的回收。回收与静默检查都用本地单调时钟。服务端仍 running 的长工具等待、首 token 前等待和重试没有硬性寿命上限。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.9、SDK 2.0.24、OpenTUI 0.5.14。已复核 V2 插件、CLI 插件与官方 OpenAPI 文档，以及已安装 SDK 的 `session.active()` Promise 解包形状、execution／step／retry／tool 事件；活动集合覆盖本进程的前台执行，缺席才表示 inactive，读取异常不能代替空集合。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 234 项通过，新增 29 项生命周期、控制器及适配器回归测试 |
+| `npm run build` | 通过 |
+| `node --check scripts/smoke.mjs`、`git diff --check` | 通过 |
+| `npm run test:smoke` | 真实 OpenCode 2.0.26 打包／隔离安装的完整复验通过，包含新增异常流场景 |
+
+自动化测试覆盖无视图／无结束事件／无后续历史的自主回收、首 token 缺失、session 结束兜底、连续 step 替代、长工具等待及 streamed-only 历史、长重试、跨树重连、交错会话的共享查询、失败／超时重试、新 delta／工具进度／retry／execution 活动与慢查询竞态、重复重连及取消失效、旧状态响应、重复结束不续期、单调时钟、删除／销毁与空监视器停止查询。关闭全部控制器后回收离屏流，再打开对应会话不会恢复过期 TTFT。
+
+首轮真实 OpenCode 2.0.26 的原有整套检查通过，新增场景因测试要求父会话必须有实时 TTFT 而超时。事件记录确认宿主可以直接交付完整工具参数、没有 `session.tool.input.delta`，父会话因此没有可测实时 TTFT；其流状态仍应保留。测试已改为同时确认父／子流存在，并保留实际可测的子会话 TTFT，不伪造父会话样本。首轮记录：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-nvGQ95`。
+
+完整复验使用真实宿主执行 subagent 工具、由本地模拟提供商暂缓子会话输出；独立的打包监视器没有挂载视图，也没有接收历史对账。测试过滤其 step／execution 结束事件，注入与宿主相同的无 `created` 重连握手，并将该监视器的单调时钟加速至 1 小时、累计 25 小时。两次真实活动查询都包含父／子会话，两条流一直保留，子会话 TTFT 始终为 418ms；结束后第三次活动集合为空，监视器回收全部流与观察并停止定时任务。此处验证的是加速年龄及注入的事件丢失／重连路径，不是实际等待 25 小时或切断真实网络连接。
+
+通过记录：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-WOFN5d`。`result.json` 的 `performanceLifecycle` 保存会话、90,000,000ms 加速年龄、可测 TTFT 与三次真实活动集合；`stream-events.json` 保存包括被过滤结束事件在内的宿主事件。原有侧边栏、详情、子代理、耗时、TPS 突发／过期、分叉和压缩检查全部通过。中英文 README、产品约定及路线图已同步；插件版本仍为 0.4.9，未升级版本、提交、推送或发布。
+
+## 2026-10-11 · 构建清理与打包文件一致性
+
+`scripts/build.mjs` 在 TypeScript 编译前递归清理 `dist`，目录不存在时也可构建；`npm pack` 的既有 `prepack` 钩子复用该流程。`scripts/smoke.mjs` 的打包断言改为从当前 `src` 推导完整 `.js`／`.d.ts` 清单，精确比对包内 `dist` 文件，统一检测残留、缺失以及未清理的 JSX 中间产物。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.9。本次执行本地构建与打包专项校验。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck`、`npm test` | 通过，205 项测试全部通过 |
+| `npm run build` | 通过，原有孤儿 `dist/popover.js`／`dist/popover.d.ts` 已清理 |
+| 实际 `npm pack --json` | 预置孤儿 JS、声明及嵌套残留后，`prepack` 全部清理；16 个源码模块对应 32 个 `dist` 文件，tarball 共 41 个文件，归档实际清单与 npm 清单一致 |
+| 重复打包 | 连续两次完整 `prepack`／打包的 SHA-512 integrity 一致 |
+| `node --check scripts/smoke.mjs` | 通过 |
+
+打包验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-pack-EJkcwj/chenlongapps-opencode-token-usage-0.4.9.tgz`。
+
 ## 2026-10-10 · 移除 Run Time 运行状态动画（未发布）
 
 侧边栏、子代理摘要／完整浮窗以及 `/usage` 紧凑／详细模式直接显示耗时，不再附加 `Running.`／`Running..`／`Running...`。移除 `src/running.ts`、动画专用计时器及其 5 项测试，清理仅供动画使用的会话 ID 传递；各入口的原生状态仍用于控制 `~` 实时估算，共享 500ms 耗时 ticker 与原生累计算法未改动。零值隐藏、不可用／未更新标记及面板末行顺序保持不变。

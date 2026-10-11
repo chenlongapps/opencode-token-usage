@@ -2,6 +2,7 @@ import type { OpenCodeClient, SessionInfo } from "@opencode/client";
 import { ContextSourceRpc } from "./context-rpc.js";
 import { parseContextSources } from "./context-sources.js";
 import type { ContextSources } from "./context-sources.js";
+import type { ReadActiveSessions } from "./performance.js";
 import { modelKey } from "./usage.js";
 import type { PriceCatalog, UsageMessage } from "./usage.js";
 
@@ -19,10 +20,21 @@ export interface UsageSource {
   messages(id: string, cursor: string | undefined, signal: AbortSignal): Promise<Page<UsageMessage>>;
   model(session: Session, signal: AbortSignal): Promise<ActiveModel>;
   composition?(session: Session, signal: AbortSignal): Promise<ContextSources | undefined>;
+  active?: ReadActiveSessions;
 }
 
 export function createSource(client: OpenCodeClient): UsageSource {
   return {
+    async active(signal) {
+      // V2 returns the complete process-wide foreground-drain set, already unwrapped
+      // by the Promise client. Cached TUI status can still be stale after reconnect.
+      const active = await client.session.active({ signal });
+      if (!active || typeof active !== "object" || Array.isArray(active)
+        || Object.values(active).some(value => !value || value.type !== "running")) {
+        throw new Error("Invalid active session snapshot");
+      }
+      return new Set(Object.keys(active));
+    },
     session: (sessionID, signal) => client.session.get({ sessionID }, { signal }),
     children: (parentID, cursor, signal) => client.session.list(cursor ? { cursor } : { parentID, order: "asc", limit: 100 }, { signal }),
     // Unlike session.context(), message.list() includes pre-compaction history.
