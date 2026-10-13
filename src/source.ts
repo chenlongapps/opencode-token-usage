@@ -6,7 +6,8 @@ import type { ReadActiveSessions } from "./performance.js";
 import { modelKey } from "./usage.js";
 import type { PriceCatalog, UsageMessage } from "./usage.js";
 
-export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location" | "title" | "revert">;
+export type Session = Pick<SessionInfo, "id" | "parentID" | "fork" | "model" | "location" | "title" | "revert">
+  & Partial<Pick<SessionInfo, "time">>;
 export interface Page<T> { data: T[]; cursor: { next?: string | null; previous?: string | null } }
 /** Active model of the viewed session plus the location's current resolved price catalog. */
 export interface ActiveModel {

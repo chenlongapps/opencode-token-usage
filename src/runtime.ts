@@ -14,6 +14,12 @@ export interface PreparedRuntime {
   turn?: { messageID: string; started: number; milliseconds: number };
 }
 
+/** Native session metadata from the existing session read; omitted metadata is unknown. */
+export interface RuntimeTime {
+  created: number;
+  idle?: number;
+}
+
 const timestamp = (value: unknown): value is number => typeof value === "number" && value >= 0
   && Number.isFinite(new Date(value).getTime());
 
@@ -25,19 +31,25 @@ interface Response {
 /**
  * OpenCode 2.0.26's TUI turnDuration/inputIndex: completed assistant time minus
  * the first user/synthetic input after the previous idle marker, or the nearest
- * input in legacy histories with no idle markers. With no input it falls back
- * to the assistant's creation time. Take only the final response in each turn:
+ * input in legacy histories with no idle markers. Native session metadata with
+ * no previous idle identifies the first turn, even before its first marker.
+ * With no input it falls back to the assistant's creation time.
+ * Take only the final response in each turn:
  * intermediate footer durations overlap and must never be added separately.
  * No execution-log API, client clock, child history, or additional reads.
  */
-export function summarizeRuntime(messages: readonly UsageMessage[], fork = false): RuntimeSummary {
-  return prepareRuntime(messages, fork).summary;
+export function summarizeRuntime(messages: readonly UsageMessage[], fork = false, time?: RuntimeTime): RuntimeSummary {
+  return prepareRuntime(messages, fork, time).summary;
 }
 
 /** Scan history once per snapshot, keeping the current turn's overlapping subtotal separate. */
-export function prepareRuntime(messages: readonly UsageMessage[], fork = false): PreparedRuntime {
+export function prepareRuntime(messages: readonly UsageMessage[], fork = false, time?: RuntimeTime): PreparedRuntime {
+  // A new session has not recorded an idle yet. Merely missing a message marker
+  // must not turn synthetic deliveries/steers into new turns during that run.
+  // Unknown metadata retains the native legacy fallback, as does a past idle.
+  const firstTurn = timestamp(time?.created) && time?.idle === undefined;
   // Even a copied marker identifies the host's turn semantics for an open fork.
-  const legacy = !messages.some(message => message.type === "idle");
+  const legacy = !firstTurn && !messages.some(message => message.type === "idle");
   // Fork copies belong to the original session, including copied turn boundaries.
   const history = fork ? messages.filter(message => !/_\d+$/.test(message.id)) : messages;
   let milliseconds = 0, unavailable = false;

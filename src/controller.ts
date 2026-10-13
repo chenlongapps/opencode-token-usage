@@ -232,15 +232,30 @@ export class UsageController {
       const history = viewedMessages(snapshot);
       const session = snapshot.sessions.get(snapshot.viewedID)!;
       const revertMessageID = session.revert?.messageID;
-      this.preparedRuntime = prepareRuntime(history, !!session.fork);
+      const previousRuntime = this.preparedRuntime;
+      this.preparedRuntime = prepareRuntime(history, !!session.fork, session.time);
       this.runtimeFresh = true;
+      let runtime = this.runtimeSummary()!;
+      const estimated = this.state.runtime?.estimatedMilliseconds;
+      const turn = this.preparedRuntime.turn, previousTurn = previousRuntime?.turn;
+      // A reconnect can finish reading history before its optional clock RPC.
+      // Keep the last trusted projection only for the same retained open turn
+      // and unchanged historical subtotal. This is not a maximum-value latch:
+      // native completion, reverts and replacement histories remain authoritative.
+      if (runtime.status === "ready" && runtime.estimatedMilliseconds === undefined && estimated !== undefined
+        && turn && previousTurn && turn.started === previousTurn.started
+        && runtime.milliseconds !== undefined && previousRuntime?.summary.milliseconds !== undefined
+        && runtime.milliseconds - turn.milliseconds === previousRuntime.summary.milliseconds - previousTurn.milliseconds
+        && runtime.milliseconds <= estimated && snapshot.messages.get(snapshot.viewedID)?.has(previousTurn.messageID)) {
+        runtime = { ...runtime, estimatedMilliseconds: estimated };
+      }
       this.update({
         status: "ready",
         summary: summarize(messages, snapshot.model.catalog),
         context: contextUsage(history, snapshot.model.context, revertMessageID),
         ...(this.detailed ? { details: { request: requestDetails(history, revertMessageID), models: summarizeModels(messages, snapshot.model.catalog), sessionTitle: session.title } } : {}),
         performance: this.performance.summaryPrepared(this.prepared, this.sessions),
-        runtime: this.runtimeSummary()!,
+        runtime,
         model: snapshot.model.label,
       });
       this.refreshRuntime();

@@ -142,6 +142,19 @@ test("v2 cursors carry pagination options; subsequent requests must not repeat o
   ]);
 });
 
+test("the session adapter retains native first-turn and previous-idle metadata from its existing read", async () => {
+  const signal = new AbortController().signal;
+  for (const idle of [undefined, 0, 5_000]) {
+    const native = { ...session("root"), time: { created: 900, updated: 10_000, ...(idle === undefined ? {} : { idle }) } };
+    const client = { session: { get: async (input: unknown, options: unknown) => {
+      assert.deepEqual(input, { sessionID: "root" });
+      assert.deepEqual(options, { signal });
+      return native;
+    } } } as unknown as OpenCodeClient;
+    assert.equal((await createSource(client).session("root", signal)).time, native.time);
+  }
+});
+
 test("large trees read at most four histories at once and reuse unchanged paginated histories", async () => {
   const source = new FakeSource();
   const children = 80;

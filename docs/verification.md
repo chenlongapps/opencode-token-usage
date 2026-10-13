@@ -1,5 +1,33 @@
 # 验证记录
 
+## 2026-10-14 · 首轮 Run Time 起点重置与重连归零（未发布）
+
+无 idle 消息并不一定是旧历史：新会话的第一轮在执行结束前也没有该标记。此前每次 synthetic／steer 输入都被当成 legacy 轮次边界，工具延续时丢失首轮之前已经过去的时间；重新读取历史或重建视图可以重新暴露该少算。匿名固定夹具复现原先 `~1m 56s` 与正确 `~18m 57s` 的差异，不依赖屏幕操作。
+
+`src/runtime.ts` 接收既有会话读取的原生时间元数据：有效 `time.created` 且尚未设置 `time.idle` 时，首轮使用首个 user／synthetic 输入，即使尚未产生第一条 idle 消息。工具、retry 与 steer 保持同轮，完成页脚替换重叠时长；首次 idle 前后的 native 小计一致。已有原生 idle 时间（包括零）或元数据未知的无标记旧历史仍使用最近输入。会话创建时间只用于区分边界语义，不代替缺失的输入时间、不会按会话年龄计时。`src/source.ts` 保留原有 `session.get()` 返回的时间字段，控制器复用它，没有新增请求、周期读取或持久化。
+
+另修复 `src/controller.ts` 的重连窗口：历史读取可以早于可选 clock RPC 返回，不能把同一仍保留的开放轮次的可信 `~` 值替换成原生零小计。只有起点一致、此前 assistant 仍在历史中且不含当前轮的历史小计未变时保留冻结显示；等待可信锚点期间停止 ticker。完成／中断、回退删除及替换历史仍使用新历史的权威数值，允许合法向下校正，不使用最大值锁掩盖差异。
+
+已核对 V2 插件／CLI／Client／API 文档、SDK 2.0.24 的 `SessionInfo.time`，以及版本固定的宿主 [`2.0.9 projector`](https://github.com/anomalyco/opencode/blob/v2.0.9/packages/core/src/session/projector.ts)、[`2.0.28 projector`](https://github.com/anomalyco/opencode/blob/v2.0.28/packages/core/src/session/projector.ts) 与 [`2.0.28 info`](https://github.com/anomalyco/opencode/blob/v2.0.28/packages/core/src/session/info.ts)：新建／分叉不继承 `time_idle`，原生执行结束记录它；未设置时 API 不输出 `time.idle`。2.0.28 的 `turnDuration`／`inputIndex`、分叉副本 ID、完成 compaction 与升序历史语义已复核；首轮的元数据修正避免其首次 idle 前临时误用 legacy 回退。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.9、SDK 2.0.24、OpenTUI 0.5.14、真实 OpenCode 2.0.28。此前 2.0.11／2.0.22／2.0.24／2.0.26 的验证记录保留，不宣称这些宿主本次全部重跑。
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm test` | 247 项通过，新增 13 项首轮、恢复及适配器回归测试 |
+| `npm run build` | 通过 |
+| `node --check scripts/smoke.mjs`、`git diff --check` | 通过 |
+| `npm run test:smoke` | 真实 OpenCode 2.0.28 打包／隔离安装的完整检查通过，含首轮延续场景 |
+
+自动化测试覆盖多次 synthetic 投递造成的约 17 分钟少算、首次 idle 前后完成结算、首轮 steer／retry 页脚替换、无 marker 的分叉、旧历史最近输入、缺失／无效消息时间、同一视图刷新、sidebar／详情同时重建、暂停回调后一次补齐两分钟、慢校时期间冻结及恢复、新监视器的一次 clock 读取，以及历史替换／小计变化不能继承旧冻结值。暂停、重连和慢 RPC 由注入的事件、单调时钟与可控 Promise 验证，不是实际断网或操作系统暂停。
+
+新增真实宿主首轮场景：本地模拟提供商先返回 subagent 工具调用，两个原生 synthetic inbox 项在同一轮投递，继续输出保持门控等待。确认消息中没有 idle、原生 `time.idle` 也未设置；打包算法与侧边栏均从最初输入计时，完成之前 native 小计保持零。可见耗时为投递前 `~4.4s`、投递后 `~7.2s`、新 TUI 恢复 `~8.7s`、终端失焦／恢复 `~9.2s`、紧凑／详细 `/usage` `~9.4s`，各实时值与服务端 clock 减原始输入相符。结束后两个 TUI 均恢复原生 9,564ms；原有上下文、定价、TPS／TTFT、Responses、子代理、分叉及 compaction 的完整检查也通过。模拟提供商只在本地，不调用付费模型、不修改现有 OpenCode 配置。
+
+验证产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-DIvmzk`。`13-first-turn-*.txt`／`.ansi` 保存首轮各入口，`result.json` 的 `firstTurnRuntime` 保存最初输入、投递项、实测参考与显示值及最终 native 时长。2.0.28 已加入实际验证宿主记录；Node 22 的既有 OpenTUI 引擎警告与 MockTimers 实验警告保留。
+
+用户报告的 **macOS 物理多屏切换** 尚未实机复验：上述终端焦点事件、新 TUI 恢复和模拟重连不代表已确认物理切屏是原因，也不代表已验证 App Nap 或睡眠／唤醒。中英文 README、产品约定与路线图已同步；版本、SDK 与价格快照未变，未升级版本、提交、推送或发布。
+
 ## 2026-10-11 · 性能监视器异常流回收（未发布）
 
 `PerformanceMonitor` 在 `server.connected` 后重置近期 TPS 窗口，并通过 V2 `session.active()` 对账全部已跟踪的未结束流，包括离屏会话。未结束流静默 60 秒后进行共享活动检查，每次请求覆盖全部未结束流；确认 inactive 后保留 60 秒，再释放流、去重事件集合和 TTFT 观察。没有未结束流时停止活动查询，增量及 2 秒 TPS 窗口过期仍使用内存，不读取历史。状态请求有 5 秒超时；失败保留并重试，请求身份及逐流 revision 防止迟到响应覆盖新活动、重连及销毁。

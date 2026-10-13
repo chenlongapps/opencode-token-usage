@@ -54,12 +54,12 @@ const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await imp
 const { contextUsage, formatDuration, summarize } = await import(path.join(plugin, "dist/usage.js"));
 const { ContextSourceRpc } = await import(path.join(plugin, "dist/context-rpc.js"));
 const { historicalPerformance, PerformanceMonitor } = await import(path.join(plugin, "dist/performance.js"));
-const { summarizeRuntime } = await import(path.join(plugin, "dist/runtime.js"));
+const { prepareRuntime, summarizeRuntime } = await import(path.join(plugin, "dist/runtime.js"));
 
 let childAgent = "general";
 const requests = [];
 // Keep live checks observable until the TUI has rendered them, rather than racing a fixed delay.
-const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE", "TOOL_WAIT_SMOKE"]
+const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE", "TOOL_WAIT_SMOKE", "FIRST_TURN_TOOL_SMOKE", "FIRST_TURN_CONTINUE_SMOKE"]
   .map(marker => [marker, { started: false, ...Promise.withResolvers() }]));
 const responsesGates = { started: false, textEnded: false, burst: Promise.withResolvers(), finish: Promise.withResolvers() };
 const compactionSummary = `## Objective
@@ -99,7 +99,7 @@ const mock = createServer(async (request, response) => {
     const reasoningSmoke = userText.includes("REASONING_SMOKE");
     const compactionSmoke = (userText.includes("## Objective") && userText.includes("## Work State"))
       || userText.includes("required summary template");
-    const spawnChild = userText.includes("SPAWN_SMOKE_CHILD")
+    const spawnChild = (userText.includes("SPAWN_SMOKE_CHILD") || userText.includes("FIRST_TURN_TOOL_SMOKE"))
       && !data.messages.slice(lastUser + 1).some(message => message.role === "tool");
     const tool = data.tools?.find(tool => tool.function.name === "subagent");
     const toolCalls = spawnChild && tool ? [{ index: 0, id: "usage-smoke-child", type: "function", function: {
@@ -191,6 +191,7 @@ const scrollToEnd = (tui, check, label) => wait(() => {
 }, label);
 const runtimeResults = {};
 // Independent oracle: the host's native footer backward scan, once per final turn.
+// Before a new session's first idle, its metadata identifies one continuous turn.
 // This uses only projected messages, never experimental session execution logs.
 const ownRuntime = async sessionID => {
   const session = await client.session.get({ sessionID });
@@ -201,7 +202,7 @@ const ownRuntime = async sessionID => {
     cursor = page.cursor.next;
   } while (cursor);
   const retained = messages;
-  const legacy = !messages.some(message => message.type === "idle");
+  const legacy = session.time.idle !== undefined && !messages.some(message => message.type === "idle");
   if (session.fork) messages = messages.filter(message => !/_\d+$/.test(message.id));
   const final = new Map();
   let turn = 0;
@@ -225,7 +226,7 @@ const ownRuntime = async sessionID => {
     }
     milliseconds += Math.max(0, response.time.completed - (input?.time.created ?? response.time.created));
   }
-  assert.deepEqual(summarizeRuntime(retained, !!session.fork), { status: "ready", milliseconds });
+  assert.deepEqual(summarizeRuntime(retained, !!session.fork, session.time), { status: "ready", milliseconds });
   runtimeResults[sessionID] = milliseconds;
   return milliseconds;
 };
@@ -910,7 +911,70 @@ try {
   orphanMonitor.dispose();
   console.log("PASS: real active-session reconciliation protects offscreen tool/child waits at accelerated 25h age and reclaims lost endings without history");
 
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+  const firstTurnTarget = await client.session.create({ location: { directory: project }, title: "First Turn Runtime", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
+  const firstTurnTui = openTui(firstTurnTarget.id);
+  await wait(() => /Token Usage/.test(firstTurnTui.screen()), "first-turn regression TUI opens");
+  await client.session.prompt({ sessionID: firstTurnTarget.id, text: "FIRST_TURN_TOOL_SMOKE SPAWN_SMOKE_CHILD" });
+  await wait(() => streamGates.get("FIRST_TURN_TOOL_SMOKE").started, "first-turn tool response is held before completion");
+  await wait(() => liveRuntime(firstTurnTui.screen())?.milliseconds >= 4_000, "first turn accumulates measurable time before synthetic deliveries");
+  const beforeSynthetic = liveRuntime(firstTurnTui.screen()).milliseconds;
+  await firstTurnTui.save("13-first-turn-before-synthetic");
+  const deliveries = [];
+  for (let index = 0; index < 2; index++) deliveries.push(await client.session.synthetic({
+    sessionID: firstTurnTarget.id, text: `FIRST_TURN_CONTINUE_SMOKE notification ${index}`,
+  }));
+  streamGates.get("FIRST_TURN_TOOL_SMOKE").resolve();
+  await wait(() => streamGates.get("FIRST_TURN_CONTINUE_SMOKE").started, "continued first turn is held after tool and synthetic inputs");
+  const firstTurnSnapshot = await loadSnapshot(source, firstTurnTarget.id, new AbortController().signal);
+  const firstTurnHistory = viewedMessages(firstTurnSnapshot);
+  const firstInput = firstTurnHistory.find(message => message.type === "user" || message.type === "synthetic");
+  assert.ok(firstInput);
+  assert.equal(firstTurnSnapshot.sessions.get(firstTurnTarget.id).time.idle, undefined, "host has not settled the first execution");
+  assert.ok(!firstTurnHistory.some(message => message.type === "idle"), "first-turn history has no idle marker yet");
+  assert.ok(firstTurnHistory.some(message => message.type === "assistant" && message.finish === "tool-calls"));
+  assert.ok(deliveries.every(input => firstTurnHistory.some(message => message.type === "synthetic" && message.id === input.id)), "both native synthetic inbox items were delivered");
+  const preparedFirstTurn = prepareRuntime(firstTurnHistory, false, firstTurnSnapshot.sessions.get(firstTurnTarget.id).time);
+  assert.equal(preparedFirstTurn.turn.started, firstInput.time.created);
+  assert.deepEqual(preparedFirstTurn.summary, { status: "ready", milliseconds: 0 }, "tools do not create separate native footers");
+  const matchFirstTurnElapsed = async (terminal, label = "Run Time") => {
+    let observed;
+    await wait(async () => {
+      const displayed = liveRuntime(terminal.screen(), label);
+      if (!displayed) return false;
+      const serverNow = await client.rpc(ContextSourceRpc).clock({}, { location: { directory: project } });
+      const elapsed = serverNow - firstInput.time.created;
+      observed = { displayed: displayed.milliseconds, elapsed };
+      return Math.abs(displayed.milliseconds - elapsed) <= 1_250;
+    }, `first-turn elapsed matches its original input in ${label}`);
+    return observed;
+  };
+  const afterSynthetic = await matchFirstTurnElapsed(firstTurnTui);
+  assert.ok(afterSynthetic.displayed >= beforeSynthetic, "synthetic deliveries cannot reset the visible runtime");
+  await firstTurnTui.save("13-first-turn-after-synthetic");
+  const reopenedFirstTurnTui = openTui(firstTurnTarget.id, { cols: 180, rows: 48 });
+  const reopenedFirstTurn = await matchFirstTurnElapsed(reopenedFirstTurnTui);
+  await reopenedFirstTurnTui.save("13-first-turn-reopened");
+  // Exercise terminal focus envelopes, not a claim of a physical macOS display switch.
+  reopenedFirstTurnTui.send("\x1b[O");
+  await new Promise(resolve => setTimeout(resolve, 600));
+  reopenedFirstTurnTui.send("\x1b[I");
+  const focusedFirstTurn = await matchFirstTurnElapsed(reopenedFirstTurnTui);
+  assert.ok(focusedFirstTurn.displayed >= reopenedFirstTurn.displayed, "terminal refocus cannot shrink the original turn");
+  reopenedFirstTurnTui.click(sidebarTitle);
+  const compactFirstTurn = await matchFirstTurnElapsed(reopenedFirstTurnTui, "Run Time (this session)");
+  await reopenedFirstTurnTui.save("13-first-turn-usage-compact");
+  reopenedFirstTurnTui.send("d");
+  const detailedFirstTurn = await matchFirstTurnElapsed(reopenedFirstTurnTui, "Run Time (this session)");
+  await reopenedFirstTurnTui.save("13-first-turn-usage-detailed");
+  streamGates.get("FIRST_TURN_CONTINUE_SMOKE").resolve();
+  await client.session.wait({ sessionID: firstTurnTarget.id });
+  const firstTurnNative = await ownRuntime(firstTurnTarget.id);
+  await wait(() => runtimeRow(firstTurnTui.screen(), firstTurnNative) && runtimeRow(reopenedFirstTurnTui.screen(), firstTurnNative), "first-turn elapsed settles to its full native duration after the first idle");
+  await reopenedFirstTurnTui.save("13-first-turn-completed");
+  const firstTurnRuntime = { session: firstTurnTarget.id, firstInput: firstInput.time.created, deliveries: deliveries.map(input => input.id), beforeSynthetic, afterSynthetic, reopened: reopenedFirstTurn, focused: focusedFirstTurn, compact: compactFirstTurn, detailed: detailedFirstTurn, native: firstTurnNative };
+  console.log("PASS: first-turn synthetic/tool continuations, new TUI restoration and terminal refocus retain elapsed runtime before the first idle");
+
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
 } finally {
   orphanMonitor?.dispose();
   for (const gate of streamGates.values()) gate.resolve();

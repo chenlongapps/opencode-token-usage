@@ -178,6 +178,78 @@ test("live runtime projects the first turn without changing its zero native subt
   assert.deepEqual(prepared.summary, ready(0), "projection does not mutate historical timing");
 });
 
+test("a first turn without idle markers retains its first input across synthetic deliveries", () => {
+  const time = { created: 900 };
+  const history = [input("u", 1_000), response("tool1", 1_022, 868_892, "tool-calls")];
+  const now = 1_138_883;
+  for (const [index, created] of [868_909, 941_393, 1_022_883].entries()) {
+    history.push(input(`synthetic${index}`, created, "synthetic"), response(`tool${index + 2}`, created + 20, created + 100, "tool-calls"));
+    const prepared = prepareRuntime(history, false, time);
+    assert.deepEqual(prepared.summary, ready(0));
+    assert.equal(prepared.turn?.started, 1_000);
+    assert.equal(projectRuntime(prepared, now).estimatedMilliseconds, 1_137_883,
+      "delivered inputs cannot discard seventeen minutes from the current turn");
+  }
+  history.push(response("live", 1_136_219));
+  assert.equal(projectRuntime(prepareRuntime(history, false, time), now).estimatedMilliseconds, 1_137_883);
+  assert.equal(projectRuntime(prepareRuntime(history), now).estimatedMilliseconds, 116_000,
+    "missing session metadata still retains the legacy fallback, rather than guessing");
+});
+
+test("first-turn completion uses the same start before and after the first idle marker", () => {
+  const history = [input("u", 1_000), response("tool", 2_000, 5_000, "tool-calls"),
+    input("synthetic", 8_000, "synthetic"), response("final", 9_000, 12_000)];
+  const beforeIdle = prepareRuntime(history, false, { created: 900 });
+  assert.deepEqual(beforeIdle.summary, ready(11_000));
+  assert.equal(beforeIdle.turn, undefined);
+  history.push(idle("idle", 12_100));
+  assert.deepEqual(prepareRuntime(history, false, { created: 900, idle: 12_100 }).summary, beforeIdle.summary);
+  assert.deepEqual(summarizeRuntime(history, false, { created: 900, idle: 12_100 }), ready(11_000));
+});
+
+test("first-turn steers and retries replace overlapping footers without changing the first input", () => {
+  const time = { created: 900 };
+  const history = [input("u", 1_000), response("a1", 2_000, 4_000),
+    input("steer", 5_000), input("synthetic", 5_500, "synthetic"), response("a2", 6_000)];
+  assert.deepEqual(prepareRuntime(history, false, time).summary, ready(3_000));
+  assert.equal(projectRuntime(prepareRuntime(history, false, time), 8_000).estimatedMilliseconds, 7_000);
+  history.push({ ...response("retry", 8_000, 9_000, "unknown"), retry: { attempt: 1 } },
+    input("retry-steer", 9_500), response("final", 10_000, 12_000));
+  assert.deepEqual(summarizeRuntime(history, false, time), ready(11_000));
+});
+
+test("native session idle metadata preserves legacy multi-turn and nearest-input semantics", () => {
+  const history = [input("u1", 1_000), response("a1", 2_000, 4_000),
+    input("u2", 10_000), input("synthetic", 11_000, "synthetic"), response("a2", 12_000)];
+  for (const time of [undefined, { created: 0, idle: 0 }, { created: 0, idle: 5_000 }, { created: NaN }]) {
+    const prepared = prepareRuntime(history, false, time);
+    assert.deepEqual(prepared.summary, ready(3_000));
+    assert.equal(prepared.turn?.started, 11_000);
+    assert.equal(projectRuntime(prepared, 13_000).estimatedMilliseconds, 5_000);
+  }
+});
+
+test("a fork's first turn ignores inherited legacy history even without any copied idle markers", () => {
+  const history = [input("u_1", 1_000), response("a_2", 2_000, 5_000),
+    input("own-u", 10_000), response("own-tool", 11_000, 12_000, "tool-calls"),
+    input("own-synthetic", 13_000, "synthetic"), response("own-live", 14_000)];
+  const prepared = prepareRuntime(history, true, { created: 9_000 });
+  assert.deepEqual(prepared.summary, ready(0));
+  assert.deepEqual(prepared.turn, { messageID: "own-live", started: 10_000, milliseconds: 0 });
+  assert.equal(projectRuntime(prepared, 15_000).estimatedMilliseconds, 5_000);
+});
+
+test("first-turn metadata never substitutes session age for missing or invalid message timing", () => {
+  const time = { created: 100 };
+  const noInput = prepareRuntime([response("a", 6_000)], false, time);
+  assert.equal(noInput.turn?.started, 6_000);
+  for (const created of [undefined, NaN, -1]) {
+    const history: UsageMessage[] = [{ id: "u", type: "user", ...(created === undefined ? {} : { time: { created } }) },
+      response("tool", 2_000, 4_000, "tool-calls"), input("synthetic", 5_000, "synthetic"), response("a", 6_000)];
+    assert.deepEqual(prepareRuntime(history, false, time).summary, { status: "unavailable" });
+  }
+});
+
 test("live runtime includes tool/foreground waits but not earlier idle gaps", () => {
   const history = [input("first-u", 1_000), response("first-a", 2_000, 4_000), idle("idle", 5_000),
     input("u", 100_000), response("tool", 101_000, 102_000, "tool-calls")];
