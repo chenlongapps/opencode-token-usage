@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-08",
+  verified: "2026-10-14",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-01"},
@@ -109,6 +109,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"google","id":"gemini-3.6-flash","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-07-21"},
     {"providerID":"google","id":"gemini-3.7-flash","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-08-13"},
     {"providerID":"google","id":"gemini-3.8-flash","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-09-02"},
+    {"providerID":"google","id":"gemini-4-argon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-10-13"},
     {"providerID":"google","id":"gemini-flash-latest","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-08-13"},
     {"providerID":"google","id":"gemini-flash-lite-latest","prices":[{"input":0.3,"output":2.5,"cache":{"read":0.03}}],"released":"2026-07-21"},
     {"providerID":"inception","id":"mercury-2","prices":[{"input":0.25,"output":0.75,"cache":{"read":0.025}}],"released":"2026-02-24"},
@@ -120,6 +121,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"meta","id":"muse-spark-1.2-contributor","prices":[{"input":0.1,"output":0.2,"cache":{"read":0.002}}],"released":"2026-08-05"},
     {"providerID":"meta","id":"muse-spark-1.3","prices":[{"input":1.25,"output":4.25,"cache":{"read":0.15}}],"released":"2026-09-02"},
     {"providerID":"meta","id":"muse-spark-1.3-contributor","prices":[{"input":0.1,"output":0.2,"cache":{"read":0.002}}],"released":"2026-09-02"},
+    {"providerID":"meta","id":"muse-wonder-1.0","prices":[{"input":4,"output":20,"cache":{"read":0.2}}],"released":"2026-10-12"},
     {"providerID":"minimax","id":"minimax-m2","prices":[{"input":0.3,"output":1.2}],"released":"2025-10-27"},
     {"providerID":"minimax","id":"minimax-m2.1","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.03,"write":0.375}}],"released":"2025-12-23"},
     {"providerID":"minimax","id":"minimax-m2.5","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.03,"write":0.375}}],"released":"2026-02-12"},
