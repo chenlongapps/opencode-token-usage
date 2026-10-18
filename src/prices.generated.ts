@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-15",
+  verified: "2026-10-18",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-01"},
@@ -89,9 +89,9 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"cohere","id":"command-r7b-arabic-02-2025","prices":[{"input":0.0375,"output":0.15}],"released":"2025-02-27"},
     {"providerID":"cohere","id":"north-mini-code-1-0","prices":[{"input":0,"output":0}],"released":"2026-06-09"},
     {"providerID":"cohere","id":"north-small-translate-09-2026","prices":[{"input":0,"output":0}],"released":"2026-09-09"},
-    {"providerID":"deepseek","id":"deepseek-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
-    {"providerID":"deepseek","id":"deepseek-v4-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
-    {"providerID":"deepseek","id":"deepseek-v4-flash-vision-exp","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-09-10"},
+    {"providerID":"deepseek","id":"deepseek-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-10-17"},
+    {"providerID":"deepseek","id":"deepseek-v4-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-10-17"},
+    {"providerID":"deepseek","id":"deepseek-v4-flash-vision-exp","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.003}}],"released":"2026-10-17"},
     {"providerID":"deepseek","id":"deepseek-v4-pro","prices":[{"input":0.66,"output":1.98,"cache":{"read":0.022}}],"released":"2026-08-12"},
     {"providerID":"google","id":"deep-research-max-preview-04-2026","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-04-21"},
     {"providerID":"google","id":"deep-research-preview-04-2026","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-04-21"},
@@ -269,6 +269,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"stepfun-ai","id":"step-5-preview","prices":[{"input":1,"output":2.7,"cache":{"read":0.05}}],"released":"2026-09-16"},
     {"providerID":"tencent-tokenhub","id":"hy4-preview","prices":[{"input":0.834,"output":2.501,"cache":{"read":0.042}}],"released":"2026-08-28"},
     {"providerID":"upstage","id":"solar-mini","prices":[{"input":0.15,"output":0.15}],"released":"2024-06-12"},
+    {"providerID":"upstage","id":"solar-mini4","prices":[{"input":0.1,"output":0.4,"cache":{"read":0.01}}],"released":"2026-09-22"},
     {"providerID":"upstage","id":"solar-pro2","prices":[{"input":0.25,"output":0.25}],"released":"2025-05-20"},
     {"providerID":"upstage","id":"solar-pro3","prices":[{"input":0.25,"output":0.25}]},
     {"providerID":"upstage","id":"solar-pro4","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.06}}],"released":"2026-08-06"},
@@ -304,9 +305,9 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"zai","id":"glm-4.5","prices":[{"input":0.6,"output":2.2,"cache":{"read":0.11}}],"released":"2025-07-28"},
     {"providerID":"zai","id":"glm-4.5-air","prices":[{"input":0.2,"output":1.1,"cache":{"read":0.03}}],"released":"2025-07-28"},
     {"providerID":"zai","id":"glm-4.5-flash","prices":[{"input":0,"output":0,"cache":{"read":0}}],"released":"2025-07-28"},
-    {"providerID":"zai","id":"glm-4.5v","prices":[{"input":0.6,"output":1.8}],"released":"2025-08-11"},
+    {"providerID":"zai","id":"glm-4.5v","prices":[{"input":0.6,"output":1.8,"cache":{"read":0.11}}],"released":"2025-08-11"},
     {"providerID":"zai","id":"glm-4.6","prices":[{"input":0.6,"output":2.2,"cache":{"read":0.11}}],"released":"2025-09-30"},
-    {"providerID":"zai","id":"glm-4.6v","prices":[{"input":0.3,"output":0.9}],"released":"2025-12-08"},
+    {"providerID":"zai","id":"glm-4.6v","prices":[{"input":0.3,"output":0.9,"cache":{"read":0.05}}],"released":"2025-12-08"},
     {"providerID":"zai","id":"glm-4.6v-flash","prices":[{"input":0,"output":0,"cache":{"read":0}}],"released":"2025-12-08"},
     {"providerID":"zai","id":"glm-4.7","prices":[{"input":0.6,"output":2.2,"cache":{"read":0.11}}],"released":"2025-12-22"},
     {"providerID":"zai","id":"glm-4.7-flash","prices":[{"input":0,"output":0,"cache":{"read":0}}],"released":"2026-01-19"},
