@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-18",
+  verified: "2026-10-20",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-01"},
@@ -129,6 +129,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"minimax","id":"minimax-m2.7","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.06,"write":0.375}}],"released":"2026-03-18"},
     {"providerID":"minimax","id":"minimax-m2.7-highspeed","prices":[{"input":0.6,"output":2.4,"cache":{"read":0.06,"write":0.375}}],"released":"2026-03-18"},
     {"providerID":"minimax","id":"minimax-m3","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.06}},{"input":0.6,"output":2.4,"cache":{"read":0.12},"tier":{"type":"context","size":512000}}],"released":"2026-06-01"},
+    {"providerID":"minimax","id":"minimax-m3.1-flash","prices":[{"input":0.15,"output":0.6,"cache":{"read":0.015}}],"released":"2026-10-19"},
     {"providerID":"mistral","id":"codestral-2508","prices":[{"input":0.3,"output":0.9,"cache":{"read":0.03}}],"released":"2025-07-30"},
     {"providerID":"mistral","id":"codestral-latest","prices":[{"input":0.3,"output":0.9,"cache":{"read":0.03}}],"released":"2024-05-29"},
     {"providerID":"mistral","id":"devstral-2512","prices":[{"input":0.4,"output":2}],"released":"2025-12-09"},
@@ -212,10 +213,8 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"openai","id":"gpt-5.1","prices":[{"input":1.25,"output":10,"cache":{"read":0.125}}],"released":"2025-11-13"},
     {"providerID":"openai","id":"gpt-5.1-fast","providers":["openai"],"prices":[{"input":2.5,"output":20,"cache":{"read":0.25}}],"released":"2025-11-13"},
     {"providerID":"openai","id":"gpt-5.2","prices":[{"input":1.75,"output":14,"cache":{"read":0.175}}],"released":"2025-12-11"},
-    {"providerID":"openai","id":"gpt-5.2-chat-latest","prices":[{"input":1.75,"output":14,"cache":{"read":0.175}}],"released":"2025-12-11"},
     {"providerID":"openai","id":"gpt-5.2-fast","providers":["openai"],"prices":[{"input":3.5,"output":28,"cache":{"read":0.35}}],"released":"2025-12-11"},
     {"providerID":"openai","id":"gpt-5.2-pro","prices":[{"input":21,"output":168}],"released":"2025-12-11"},
-    {"providerID":"openai","id":"gpt-5.3-chat-latest","prices":[{"input":1.75,"output":14,"cache":{"read":0.175}}],"released":"2026-03-03"},
     {"providerID":"openai","id":"gpt-5.3-codex","prices":[{"input":1.75,"output":14,"cache":{"read":0.175}}],"released":"2026-02-05"},
     {"providerID":"openai","id":"gpt-5.3-codex-fast","providers":["openai"],"prices":[{"input":3.5,"output":28,"cache":{"read":0.35}}],"released":"2026-02-05"},
     {"providerID":"openai","id":"gpt-5.3-codex-spark","prices":[{"input":1.75,"output":14,"cache":{"read":0.175}}],"released":"2026-02-05"},
