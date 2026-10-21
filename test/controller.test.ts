@@ -299,13 +299,16 @@ test("stream deltas publish estimated TPS and TTFT without source reads, then co
     assistantMessageID: "live", sessionID: "root", started: 1_000,
   } });
   events.emit({ type: "session.text.delta", id: "delta-1", created: 1_500, data: {
-    assistantMessageID: "live", sessionID: "root", delta: "abcdefgh",
+    assistantMessageID: "live", sessionID: "root", delta: "a".repeat(80),
   } });
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(state.performance?.tpsEstimated, undefined, "one delta is not a rate yet");
   assert.equal(state.performance?.ttft, 500);
+  events.emit({ type: "session.text.delta", id: "delta-mid", created: 1_750, data: {
+    assistantMessageID: "live", sessionID: "root", delta: "abcd",
+  } });
   events.emit({ type: "session.text.delta", id: "delta-2", created: 2_000, data: {
-    assistantMessageID: "live", sessionID: "root", delta: "abcdefgh",
+    assistantMessageID: "live", sessionID: "root", delta: "efgh",
   } });
   await until(() => state.performance?.tpsEstimated === true);
   assert.deepEqual(state.performance, { tps: 4, tpsEstimated: true, ttft: 500 });
@@ -335,9 +338,9 @@ test("opening a detailed view shares live TPS without advancing the sidebar's sm
   events.emit({ type: "session.step.started", id: "start", created: 1_000, data: {
     assistantMessageID: "live", sessionID: "root", started: 1_000,
   } });
-  for (const created of [1_000, 2_000]) {
+  for (const created of [1_000, 1_250, 2_000]) {
     events.emit({ type: "session.text.delta", id: `delta-${created}`, created, data: {
-      assistantMessageID: "live", sessionID: "root", delta: "a".repeat(40),
+      assistantMessageID: "live", sessionID: "root", delta: "a".repeat(created === 1_000 ? 40 : 20),
     } });
   }
   await until(() => sidebarState.performance?.tps === 10);
@@ -388,8 +391,10 @@ test("shared views reject startup bursts and remove quiet live TPS without histo
     data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(400) } });
   t.mock.timers.tick(2);
   assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 }, "insufficient live samples retain historical TPS");
+  events.emit({ type: "session.text.delta", id: "text-mid", created: 1_760,
+    data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(20) } });
   events.emit({ type: "session.text.delta", id: "text", created: 2_010,
-    data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(40) } });
+    data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(20) } });
   t.mock.timers.tick(2);
   assert.deepEqual(sidebarState.performance, { tps: 20, tpsEstimated: true, ttft: 500 });
   assert.deepEqual(dialogState.performance, sidebarState.performance);
@@ -399,6 +404,32 @@ test("shared views reject startup bursts and remove quiet live TPS without histo
   assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 });
   assert.deepEqual(dialogState.performance, sidebarState.performance);
   assert.equal(source.reads, reads, "expiry updates only the prepared in-memory performance baseline");
+});
+
+test("shared views retain historical TPS below 20 estimated tokens and become ready without source reads", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", [{ ...message("completed"), time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }]);
+  const performance = new PerformanceMonitor(events.subscribe);
+  let sidebarState: UsageState = { status: "loading" }, dialogState: UsageState = { status: "loading" };
+  const sidebar = new UsageController(source, events.subscribe, state => { sidebarState = state; }, 2, 3_000, 2, performance);
+  const dialog = new UsageController(source, events.subscribe, state => { dialogState = state; }, 2, 3_000, 2, performance, true);
+  t.after(() => { sidebar.dispose(); dialog.dispose(); performance.dispose(); });
+  sidebar.select("root"); dialog.select("root");
+  await until(() => sidebarState.status === "ready" && dialogState.status === "ready");
+  const reads = source.reads;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  events.emit({ type: "session.step.started", data: { sessionID: "root", assistantMessageID: "a", started: 0 } });
+  for (const created of [500, 750, 1_000]) events.emit({ type: "session.text.delta", id: `${created}`, created,
+    data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(created === 500 ? 77 : 1) } });
+  t.mock.timers.tick(2);
+  assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 }, "three batches and 500 ms alone are insufficient");
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+  events.emit({ type: "session.text.delta", id: "ready", created: 1_100,
+    data: { sessionID: "root", assistantMessageID: "a", delta: "a" } });
+  t.mock.timers.tick(2);
+  assert.deepEqual(sidebarState.performance, { tps: 1.25, tpsEstimated: true, ttft: 500 });
+  assert.deepEqual(dialogState.performance, sidebarState.performance);
+  assert.equal(source.reads, reads);
 });
 
 test("a shared monitor restores a stream captured before switching to its session tree", async t => {
@@ -416,10 +447,13 @@ test("a shared monitor restores a stream captured before switching to its sessio
     assistantMessageID: "other-live", sessionID: "other", started: 1_000,
   } });
   events.emit({ type: "session.text.delta", id: "other-delta-1", created: 1_500, data: {
+    assistantMessageID: "other-live", sessionID: "other", delta: "a".repeat(80),
+  } });
+  events.emit({ type: "session.text.delta", id: "other-delta-mid", created: 1_750, data: {
     assistantMessageID: "other-live", sessionID: "other", delta: "abcdefgh",
   } });
   events.emit({ type: "session.text.delta", id: "other-delta-2", created: 2_000, data: {
-    assistantMessageID: "other-live", sessionID: "other", delta: "abcdefghijklmnop",
+    assistantMessageID: "other-live", sessionID: "other", delta: "ijklmnop",
   } });
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(state.performance?.tpsEstimated, undefined, "another tree does not update the current panel");
@@ -438,7 +472,7 @@ test("a shared monitor restores a stream captured before switching to its sessio
 
   controller.select("other");
   await until(() => state.status === "ready" && state.summary?.total === 7);
-  // The initial 8 bytes are the baseline; 16 + 8 subsequent bytes over 1 s.
+  // The initial batch is the baseline; 16 + 8 subsequent bytes over 1 s.
   assert.deepEqual(state.performance, { tps: 8 * 0.65 + 6 * 0.35, tpsEstimated: true, ttft: 500 });
 });
 
@@ -453,10 +487,13 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
     assistantMessageID: "root-live", sessionID: "root", started: 1_000,
   } });
   events.emit({ type: "session.text.delta", id: "root-delta-1", created: 1_250, data: {
-    assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
+    assistantMessageID: "root-live", sessionID: "root", delta: "a".repeat(80),
+  } });
+  events.emit({ type: "session.text.delta", id: "root-delta-mid", created: 1_500, data: {
+    assistantMessageID: "root-live", sessionID: "root", delta: "ab",
   } });
   events.emit({ type: "session.text.delta", id: "root-delta-2", created: 1_750, data: {
-    assistantMessageID: "root-live", sessionID: "root", delta: "abcd",
+    assistantMessageID: "root-live", sessionID: "root", delta: "cd",
   } });
   await until(() => firstState.performance?.tpsEstimated === true);
   first.dispose();
@@ -475,10 +512,13 @@ test("a rebuilt controller recovers shared stream state and a new child joins th
     assistantMessageID: "child-live", sessionID: "child", started: 2_000,
   } });
   events.emit({ type: "session.text.delta", id: "child-delta-1", created: 2_500, data: {
-    assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
+    assistantMessageID: "child-live", sessionID: "child", delta: "a".repeat(80),
+  } });
+  events.emit({ type: "session.text.delta", id: "child-delta-mid", created: 2_750, data: {
+    assistantMessageID: "child-live", sessionID: "child", delta: "abcd",
   } });
   events.emit({ type: "session.text.delta", id: "child-delta-2", created: 3_000, data: {
-    assistantMessageID: "child-live", sessionID: "child", delta: "abcdefgh",
+    assistantMessageID: "child-live", sessionID: "child", delta: "efgh",
   } });
   await until(() => state.performance?.ttft === 375);
   // Root: 4 / 4 / 0.5 = 2; child: 8 / 4 / 0.5 = 4; tree average = 3.

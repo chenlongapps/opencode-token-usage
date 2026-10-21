@@ -60,22 +60,125 @@ test("a single delta exposes TTFT but no estimated TPS yet", () => {
   tracker.dispose();
 });
 
+test("live TPS starts at exactly 20 estimated tokens, otherwise retaining historical TPS", t => {
+  const history: UsageMessage[] = [{ id: "completed", type: "assistant", time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }];
+  for (const bytes of [79, 80, 81]) {
+    const tracker = new PerformanceMonitor();
+    t.after(() => tracker.dispose());
+    tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
+    for (const [index, time] of [1_000, 1_250, 1_500].entries()) tracker.handle(event("session.text.delta", `${time}`, time, {
+      assistantMessageID: "a", sessionID: "root", delta: text(index === 0 ? bytes - 2 : 1),
+    }));
+    assert.deepEqual(tracker.summary([], ["root"]), bytes < 80 ? { ttft: 0 } : { tps: 1, tpsEstimated: true, ttft: 0 });
+    assert.deepEqual(tracker.summary(history, ["root"]), bytes < 80 ? { tps: 30, ttft: 0 } : { tps: 1, tpsEstimated: true, ttft: 0 });
+  }
+});
+
+test("the response threshold counts UTF-8 baseline, reasoning and tool-input bytes", t => {
+  const tracker = new PerformanceMonitor();
+  t.after(() => tracker.dispose());
+  tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
+  tracker.handle(event("session.text.delta", "baseline", 0, { assistantMessageID: "a", sessionID: "root", delta: "中".repeat(25) }));
+  tracker.handle(event("session.reasoning.delta", "reasoning", 250, { assistantMessageID: "a", sessionID: "root", delta: "😀" }));
+  tracker.handle(event("session.tool.input.delta", "tool", 500, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+  assert.deepEqual(tracker.summary([], ["root"]), { tps: 2.5, tpsEstimated: true, ttft: 0 });
+});
+
+test("three batches means 100 ms merged batches, not raw delta count or byte volume", t => {
+  const tracker = new PerformanceMonitor();
+  t.after(() => tracker.dispose());
+  tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
+  for (const time of [0, 99, 500, 599]) {
+    tracker.handle(event("session.text.delta", `${time}`, time, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+    assert.deepEqual(tracker.summary([], ["root"]), { ttft: 0 });
+  }
+  tracker.handle(event("session.text.delta", "third-batch", 600, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+  assert.deepEqual(tracker.summary([], ["root"]), { tps: (120 / 4) / 0.501, tpsEstimated: true, ttft: 0 });
+  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 500, bytes: 40_000 }]), undefined);
+});
+
+test("three batches and 20 tokens still require at least 500 ms of observation", t => {
+  const tracker = new PerformanceMonitor();
+  t.after(() => tracker.dispose());
+  tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
+  for (const time of [0, 100, 499]) tracker.handle(event("session.text.delta", `${time}`, time, {
+    assistantMessageID: "a", sessionID: "root", delta: text(40),
+  }));
+  assert.deepEqual(tracker.summary([], ["root"]), { ttft: 0 });
+  tracker.handle(event("session.text.delta", "500", 500, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+  assert.deepEqual(tracker.summary([], ["root"]), { tps: 40.5, tpsEstimated: true, ttft: 0 });
+});
+
+test("response-wide token totals survive window eviction and quiet expiry but batch readiness does not", t => {
+  for (const quiet of [false, true]) {
+    const tracker = new PerformanceMonitor();
+    t.after(() => tracker.dispose());
+    tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
+    for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
+      assistantMessageID: "a", sessionID: "root", delta: text(time === 0 ? 40 : 20),
+    }));
+    assert.equal(tracker.summary([], ["root"]).tps, 20);
+    for (const [index, time] of (quiet ? [2_500, 2_750, 3_000] : [1_500, 2_500, 3_000]).entries()) {
+      tracker.handle(event("session.text.delta", `resume-${time}`, time, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+      if (quiet && index < 2) assert.equal(tracker.summary([], ["root"]).tps, undefined);
+    }
+    assert.equal(tracker.summary([], ["root"]).tpsEstimated, true, "the current window contains only three bytes");
+    if (quiet) assert.equal(tracker.summary([], ["root"]).tps, 1, "resumption starts fresh smoothing");
+  }
+});
+
+test("token readiness belongs to each response, never the session or the tree", t => {
+  const tracker = new PerformanceMonitor();
+  t.after(() => tracker.dispose());
+  for (const [sessionID, messageID, started] of [["root", "a", 0], ["child", "b", 0], ["root", "c", 1_000]] as const) {
+    tracker.handle(event("session.step.started", `start-${messageID}`, started, { assistantMessageID: messageID, sessionID, started }));
+    for (const offset of [0, 250, 500]) tracker.handle(event("session.text.delta", `${messageID}-${offset}`, started + offset, {
+      assistantMessageID: messageID, sessionID, delta: text(20),
+    }));
+    assert.equal(tracker.summary([], ["root", "child"]).tps, undefined, "separate 15-token responses must not pool their bytes");
+  }
+  tracker.handle(event("session.text.delta", "c-ready", 1_600, { assistantMessageID: "c", sessionID: "root", delta: text(20) }));
+  assert.equal(tracker.summary([], ["root"]).tps, 25);
+  assert.equal(tracker.summary([], ["child"]).tps, undefined);
+  tracker.handle(event("session.step.started", "start-d", 2_000, { assistantMessageID: "d", sessionID: "root", started: 2_000 }));
+  for (const time of [2_000, 2_250, 2_500]) tracker.handle(event("session.text.delta", `d-${time}`, time, {
+    assistantMessageID: "d", sessionID: "root", delta: text(20),
+  }));
+  assert.equal(tracker.summary([], ["root"]).tps, undefined, "a new response does not inherit readiness");
+});
+
+test("duplicate and empty deltas cannot satisfy the token or batch threshold", t => {
+  const tracker = new PerformanceMonitor();
+  t.after(() => tracker.dispose());
+  tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
+  for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
+    assistantMessageID: "a", sessionID: "root", delta: text(time === 0 ? 77 : 1),
+  }));
+  tracker.handle(event("session.text.delta", "500", 500, { assistantMessageID: "a", sessionID: "root", delta: text(80) }));
+  tracker.handle(event("session.text.delta", "empty", 600, { assistantMessageID: "a", sessionID: "root", delta: "" }));
+  assert.deepEqual(tracker.summary([], ["root"]), { ttft: 0 });
+  tracker.handle(event("session.text.delta", "ready", 600, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+  assert.deepEqual(tracker.summary([], ["root"]), { tps: 1.25, tpsEstimated: true, ttft: 0 });
+});
+
 test("streaming tracker estimates UTF-8 deltas, de-duplicates events and aggregates active steps", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start-a", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
-  assert.equal(tracker.handle(event("session.text.delta", "delta-a", 1_500, { assistantMessageID: "a", sessionID: "root", delta: "abcd" })), true);
+  assert.equal(tracker.handle(event("session.text.delta", "delta-a", 1_500, { assistantMessageID: "a", sessionID: "root", delta: text(80) })), true);
   assert.deepEqual(tracker.summary([], ["root", "child"]), { ttft: 500 });
-  assert.equal(tracker.handle(event("session.text.delta", "delta-a", 1_500, { assistantMessageID: "a", sessionID: "root", delta: "abcd" })), false);
-  tracker.handle(event("session.reasoning.delta", "delta-a2", 2_000, { assistantMessageID: "a", sessionID: "root", delta: "😀" }));
+  assert.equal(tracker.handle(event("session.text.delta", "delta-a", 1_500, { assistantMessageID: "a", sessionID: "root", delta: text(80) })), false);
+  tracker.handle(event("session.reasoning.delta", "delta-a-mid", 1_750, { assistantMessageID: "a", sessionID: "root", delta: "ab" }));
+  tracker.handle(event("session.reasoning.delta", "delta-a2", 2_000, { assistantMessageID: "a", sessionID: "root", delta: "é" }));
   // The first batch is the baseline: 4 subsequent bytes over 500 ms => 2 tok/s.
   assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 2, tpsEstimated: true, ttft: 500 });
 
   tracker.handle(event("session.step.started", "start-b", 1_000, { assistantMessageID: "b", sessionID: "child", started: 1_000 }));
-  tracker.handle(event("session.tool.input.delta", "delta-b", 2_000, { assistantMessageID: "b", sessionID: "child", delta: "abcdefgh" }));
+  tracker.handle(event("session.tool.input.delta", "delta-b", 2_000, { assistantMessageID: "b", sessionID: "child", delta: text(80) }));
   // Step B has a single sample and contributes no rate yet; the tree still shows step A.
   assert.deepEqual(tracker.summary([], ["root", "child"]), { tps: 2, tpsEstimated: true, ttft: 750 });
 
-  tracker.handle(event("session.tool.input.delta", "delta-b2", 2_500, { assistantMessageID: "b", sessionID: "child", delta: "abcdefgh" }));
+  tracker.handle(event("session.tool.input.delta", "delta-b-mid", 2_250, { assistantMessageID: "b", sessionID: "child", delta: "abcd" }));
+  tracker.handle(event("session.tool.input.delta", "delta-b2", 2_500, { assistantMessageID: "b", sessionID: "child", delta: "efgh" }));
   // Step B: 8 subsequent bytes over 500 ms => 4 tok/s. Tree average: (2 + 4) / 2.
   assert.equal(tracker.summary([], ["root", "child"]).tps, 3);
 
@@ -99,7 +202,8 @@ test("pre-first-token waiting does not dilute live TPS", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
   tracker.handle(event("session.text.delta", "first", 10_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
-  tracker.handle(event("session.text.delta", "second", 11_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
+  tracker.handle(event("session.text.delta", "middle", 10_250, { assistantMessageID: "a", sessionID: "root", delta: text(200) }));
+  tracker.handle(event("session.text.delta", "second", 11_000, { assistantMessageID: "a", sessionID: "root", delta: text(200) }));
   const summary = tracker.summary([], ["root"]);
   // 400 bytes after the first batch => 100 tokens over 1 s, without the 10 s TTFT.
   assert.equal(summary.tps, 100);
@@ -111,8 +215,9 @@ test("pre-first-token waiting does not dilute live TPS", () => {
 test("live TPS changes leave TTFT semantics untouched", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
-  tracker.handle(event("session.text.delta", "first", 3_500, { assistantMessageID: "a", sessionID: "root", delta: "abcd" }));
-  tracker.handle(event("session.text.delta", "second", 4_000, { assistantMessageID: "a", sessionID: "root", delta: "efgh" }));
+  tracker.handle(event("session.text.delta", "first", 3_500, { assistantMessageID: "a", sessionID: "root", delta: text(80) }));
+  tracker.handle(event("session.text.delta", "middle", 3_750, { assistantMessageID: "a", sessionID: "root", delta: "ef" }));
+  tracker.handle(event("session.text.delta", "second", 4_000, { assistantMessageID: "a", sessionID: "root", delta: "gh" }));
   const summary = tracker.summary([], ["root"]);
   assert.equal(summary.ttft, 2_500);
   assert.equal(summary.tps, 2);
@@ -123,11 +228,13 @@ test("sliding window drops samples older than two seconds", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
   tracker.handle(event("session.text.delta", "t0", 0, { assistantMessageID: "a", sessionID: "root", delta: text(100) }));
-  tracker.handle(event("session.text.delta", "t1", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(100) }));
+  tracker.handle(event("session.text.delta", "t-mid", 250, { assistantMessageID: "a", sessionID: "root", delta: text(50) }));
+  tracker.handle(event("session.text.delta", "t1", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(50) }));
   assert.equal(tracker.summary([], ["root"]).tps, 25);
   tracker.handle(event("session.text.delta", "t2", 4_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
   assert.equal(tracker.summary([], ["root"]).tps, undefined, "one remaining sample cannot expose the cached rate");
-  tracker.handle(event("session.text.delta", "t3", 5_000, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
+  tracker.handle(event("session.text.delta", "t3-mid", 4_250, { assistantMessageID: "a", sessionID: "root", delta: text(200) }));
+  tracker.handle(event("session.text.delta", "t3", 5_000, { assistantMessageID: "a", sessionID: "root", delta: text(200) }));
   // A quiet gap resets both the baseline and the old smoothing state.
   const summary = tracker.summary([], ["root"]);
   assert.equal(summary.tps, 100);
@@ -151,8 +258,9 @@ test("fast recent output quickly replaces an old slow average", () => {
 test("completed provider usage replaces the live estimate", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
-  tracker.handle(event("session.text.delta", "first", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "abcd" }));
-  tracker.handle(event("session.text.delta", "second", 1_700, { assistantMessageID: "live", sessionID: "root", delta: "efgh" }));
+  tracker.handle(event("session.text.delta", "first", 1_200, { assistantMessageID: "live", sessionID: "root", delta: text(80) }));
+  tracker.handle(event("session.text.delta", "middle", 1_450, { assistantMessageID: "live", sessionID: "root", delta: "ef" }));
+  tracker.handle(event("session.text.delta", "second", 1_700, { assistantMessageID: "live", sessionID: "root", delta: "gh" }));
   const live = tracker.summary([], ["root"]);
   assert.equal(live.tpsEstimated, true);
   assert.ok(live.tps !== undefined && live.tps > 0);
@@ -170,10 +278,12 @@ test("concurrent steps keep independent windows and aggregate within one tree", 
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start-root", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
   tracker.handle(event("session.text.delta", "root-1", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
-  tracker.handle(event("session.text.delta", "root-2", 1_500, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+  tracker.handle(event("session.text.delta", "root-mid", 1_250, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
+  tracker.handle(event("session.text.delta", "root-2", 1_500, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
   tracker.handle(event("session.step.started", "start-child", 1_000, { assistantMessageID: "b", sessionID: "child", started: 1_000 }));
   tracker.handle(event("session.text.delta", "child-1", 1_000, { assistantMessageID: "b", sessionID: "child", delta: text(80) }));
-  tracker.handle(event("session.text.delta", "child-2", 1_500, { assistantMessageID: "b", sessionID: "child", delta: text(80) }));
+  tracker.handle(event("session.text.delta", "child-mid", 1_250, { assistantMessageID: "b", sessionID: "child", delta: text(40) }));
+  tracker.handle(event("session.text.delta", "child-2", 1_500, { assistantMessageID: "b", sessionID: "child", delta: text(40) }));
   // Root: 40 subsequent bytes / 4 / 0.5 s = 20. Child: 80 / 4 / 0.5 = 40.
   assert.equal(tracker.summary([], ["root"]).tps, 20);
   assert.equal(tracker.summary([], ["child"]).tps, 40);
@@ -200,14 +310,16 @@ test("concurrent steps keep independent windows and aggregate within one tree", 
 test("monitor captures every tree while summaries remain scoped to explicit session sets", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "other-start", 0, { assistantMessageID: "other", sessionID: "other", started: 0 }));
-  tracker.handle(event("session.text.delta", "other-delta-1", 100, { assistantMessageID: "other", sessionID: "other", delta: "xxxx" }));
-  tracker.handle(event("session.text.delta", "other-delta-2", 600, { assistantMessageID: "other", sessionID: "other", delta: "xxxx" }));
+  tracker.handle(event("session.text.delta", "other-delta-1", 100, { assistantMessageID: "other", sessionID: "other", delta: text(80) }));
+  tracker.handle(event("session.text.delta", "other-delta-mid", 350, { assistantMessageID: "other", sessionID: "other", delta: "xx" }));
+  tracker.handle(event("session.text.delta", "other-delta-2", 600, { assistantMessageID: "other", sessionID: "other", delta: "xx" }));
   assert.deepEqual(tracker.summary([], ["root"]), {});
   assert.deepEqual(tracker.summary([], ["other"]), { tps: 2, tpsEstimated: true, ttft: 100 });
 
   tracker.handle(event("session.step.started", "child-start", 0, { assistantMessageID: "child-message", sessionID: "child", started: 0 }));
-  tracker.handle(event("session.text.delta", "child-delta-1", 250, { assistantMessageID: "child-message", sessionID: "child", delta: "xxxx" }));
-  tracker.handle(event("session.text.delta", "child-delta-2", 750, { assistantMessageID: "child-message", sessionID: "child", delta: "xxxxxxxx" }));
+  tracker.handle(event("session.text.delta", "child-delta-1", 250, { assistantMessageID: "child-message", sessionID: "child", delta: text(80) }));
+  tracker.handle(event("session.text.delta", "child-delta-mid", 500, { assistantMessageID: "child-message", sessionID: "child", delta: "xxxx" }));
+  tracker.handle(event("session.text.delta", "child-delta-2", 750, { assistantMessageID: "child-message", sessionID: "child", delta: "xxxx" }));
   assert.equal(tracker.summary([], ["root", "child"]).tps, 4);
   assert.deepEqual(tracker.summary([], ["other"]), { tps: 2, tpsEstimated: true, ttft: 100 });
 
@@ -220,9 +332,10 @@ test("monitor captures every tree while summaries remain scoped to explicit sess
 test("duplicate event IDs count once", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
-  assert.equal(tracker.handle(event("session.text.delta", "dup", 1_200, { assistantMessageID: "a", sessionID: "root", delta: "abcd" })), true);
-  assert.equal(tracker.handle(event("session.text.delta", "dup", 1_200, { assistantMessageID: "a", sessionID: "root", delta: "abcd" })), false);
-  tracker.handle(event("session.text.delta", "next", 1_700, { assistantMessageID: "a", sessionID: "root", delta: "efgh" }));
+  assert.equal(tracker.handle(event("session.text.delta", "dup", 1_200, { assistantMessageID: "a", sessionID: "root", delta: text(80) })), true);
+  assert.equal(tracker.handle(event("session.text.delta", "dup", 1_200, { assistantMessageID: "a", sessionID: "root", delta: text(80) })), false);
+  tracker.handle(event("session.text.delta", "middle", 1_450, { assistantMessageID: "a", sessionID: "root", delta: "ef" }));
+  tracker.handle(event("session.text.delta", "next", 1_700, { assistantMessageID: "a", sessionID: "root", delta: "gh" }));
   assert.equal(tracker.summary([], ["root"]).tps, 2);
   tracker.dispose();
 });
@@ -230,7 +343,7 @@ test("duplicate event IDs count once", () => {
 test("unicode deltas use UTF-8 bytes without claiming tokenizer precision", () => {
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
-  tracker.handle(event("session.text.delta", "en", 1_000, { assistantMessageID: "a", sessionID: "root", delta: "abcd" }));
+  tracker.handle(event("session.text.delta", "en", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(80) }));
   tracker.handle(event("session.text.delta", "zh", 1_200, { assistantMessageID: "a", sessionID: "root", delta: "中文" }));
   tracker.handle(event("session.reasoning.delta", "emoji", 1_400, { assistantMessageID: "a", sessionID: "root", delta: "😀" }));
   tracker.handle(event("session.tool.input.delta", "code", 1_600, { assistantMessageID: "a", sessionID: "root", delta: '{"a":1}' }));
@@ -251,7 +364,8 @@ test("EWMA smoothing advances only for new samples, never summary reads", () => 
   const tracker = new PerformanceMonitor();
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }));
   tracker.handle(event("session.text.delta", "first", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
-  tracker.handle(event("session.text.delta", "second", 2_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+  tracker.handle(event("session.text.delta", "middle", 1_250, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
+  tracker.handle(event("session.text.delta", "second", 2_000, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
   assert.equal(tracker.summary([], ["root"]).tps, 10);
   tracker.handle(event("session.text.delta", "third", 2_500, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
   // Raw is 440 / 4 / 1.5; smooth once over the elapsed 500 ms.
@@ -277,7 +391,8 @@ test("live TPS is independent of summary read frequency, including no readers", 
   const stream = [
     event("session.step.started", "start", 1_000, { assistantMessageID: "a", sessionID: "root", started: 1_000 }),
     event("session.text.delta", "first", 1_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }),
-    event("session.reasoning.delta", "second", 2_000, { assistantMessageID: "a", sessionID: "root", delta: text(40) }),
+    event("session.reasoning.delta", "middle", 1_250, { assistantMessageID: "a", sessionID: "root", delta: text(20) }),
+    event("session.reasoning.delta", "second", 2_000, { assistantMessageID: "a", sessionID: "root", delta: text(20) }),
     event("session.tool.input.delta", "third", 2_500, { assistantMessageID: "a", sessionID: "root", delta: text(400) }),
   ];
   const prepared = preparePerformance([]);
@@ -336,12 +451,13 @@ test("a delta after an early snapshot restores live TPS and retains TTFT", () =>
   let now = 10_000;
   const tracker = new PerformanceMonitor(undefined, { retention: 100, monotonic: () => now });
   tracker.handle(event("session.step.started", "start", 1_000, { assistantMessageID: "live", sessionID: "root", started: 1_000 }));
-  tracker.handle(event("session.text.delta", "first", 1_200, { assistantMessageID: "live", sessionID: "root", delta: "abcd" }));
+  tracker.handle(event("session.text.delta", "first", 1_200, { assistantMessageID: "live", sessionID: "root", delta: text(80) }));
   const early: UsageMessage[] = [{ id: "live", type: "assistant", tokens: { output: 1 } }];
   tracker.reconcile(early, ["root"]);
   assert.deepEqual(tracker.summary(early, ["root"]), { ttft: 200 });
   now += 50;
-  tracker.handle(event("session.text.delta", "second", 1_700, { assistantMessageID: "live", sessionID: "root", delta: "efgh" }));
+  tracker.handle(event("session.text.delta", "middle", 1_450, { assistantMessageID: "live", sessionID: "root", delta: "ef" }));
+  tracker.handle(event("session.text.delta", "second", 1_700, { assistantMessageID: "live", sessionID: "root", delta: "gh" }));
   assert.deepEqual(tracker.summary(early, ["root"]), { tps: 2, tpsEstimated: true, ttft: 200 });
   now += 60;
   tracker.handle({ type: "noop", data: {} });
@@ -350,15 +466,15 @@ test("a delta after an early snapshot restores live TPS and retains TTFT", () =>
 });
 
 test("live rate requires 500 ms and excludes all bytes at the baseline timestamp", () => {
-  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 499, bytes: 4 }]), undefined);
-  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 500, bytes: 4 }]), 2);
-  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 0, bytes: 40_000 }, { time: 500, bytes: 4 }]), 2);
+  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 250, bytes: 2 }, { time: 499, bytes: 2 }]), undefined);
+  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 250, bytes: 2 }, { time: 500, bytes: 2 }]), 2);
+  assert.equal(estimatedLiveTps([{ time: 0, bytes: 40_000 }, { time: 0, bytes: 40_000 }, { time: 250, bytes: 2 }, { time: 500, bytes: 2 }]), 2);
   for (const samples of [
-    [{ time: NaN, bytes: 4 }, { time: 500, bytes: 4 }],
-    [{ time: 0, bytes: -4 }, { time: 500, bytes: 4 }],
-    [{ time: 0, bytes: 4 }, { time: 500, bytes: Infinity }],
+    [{ time: NaN, bytes: 4 }, { time: 250, bytes: 4 }, { time: 500, bytes: 4 }],
+    [{ time: 0, bytes: -4 }, { time: 250, bytes: 4 }, { time: 500, bytes: 4 }],
+    [{ time: 0, bytes: 4 }, { time: 250, bytes: 4 }, { time: 500, bytes: Infinity }],
     [{ time: 0, bytes: 4 }, { time: 600, bytes: 4 }, { time: 500, bytes: 4 }],
-    [{ time: 0, bytes: 4 }, { time: 500, bytes: 0 }],
+    [{ time: 0, bytes: 4 }, { time: 250, bytes: 0 }, { time: 500, bytes: 0 }],
   ]) assert.equal(estimatedLiveTps(samples), undefined);
 });
 
@@ -371,7 +487,8 @@ test("Responses-style startup summary bursts are one baseline, not thousands of 
     assert.deepEqual(tracker.summary([], ["root"]), { ttft: 10_000 });
   }
   // The complete 800-byte burst is excluded; only subsequent text is measured.
-  tracker.handle(event("session.text.delta", "text", 10_510, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+  tracker.handle(event("session.text.delta", "text-mid", 10_260, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
+  tracker.handle(event("session.text.delta", "text", 10_510, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
   assert.deepEqual(tracker.summary([], ["root"]), { tps: 20, tpsEstimated: true, ttft: 10_000 });
 });
 
@@ -385,7 +502,8 @@ test("fragmenting a baseline burst, including same-time deltas, preserves its ra
       assistantMessageID: "a", sessionID: "root", delta: text(bytes),
     }));
     tracker.handle(event("session.reasoning.delta", "same-time", 1_098, { assistantMessageID: "a", sessionID: "root", delta: text(400) }));
-    tracker.handle(event("session.text.delta", "text", 1_598, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+    tracker.handle(event("session.text.delta", "text-mid", 1_348, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
+    tracker.handle(event("session.text.delta", "text", 1_598, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
     assert.deepEqual(tracker.summary([], ["root"]), { tps: 20, tpsEstimated: true, ttft: 1_000 });
   }
 });
@@ -394,11 +512,12 @@ test("a summary burst after a long gap cannot revive the old smoothing value", t
   const tracker = new PerformanceMonitor();
   t.after(() => tracker.dispose());
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
-  for (const [time, bytes] of [[0, 40], [500, 40], [5_000, 400], [5_010, 400]] as const) {
+  for (const [time, bytes] of [[0, 40], [250, 20], [500, 20], [5_000, 400], [5_010, 400]] as const) {
     tracker.handle(event("session.reasoning.delta", `${time}`, time, { assistantMessageID: "a", sessionID: "root", delta: text(bytes) }));
   }
   assert.deepEqual(tracker.summary([], ["root"]), { ttft: 0 });
-  tracker.handle(event("session.text.delta", "resumed", 5_510, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
+  tracker.handle(event("session.text.delta", "resumed-mid", 5_260, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
+  tracker.handle(event("session.text.delta", "resumed", 5_510, { assistantMessageID: "a", sessionID: "root", delta: text(20) }));
   assert.deepEqual(tracker.summary([], ["root"]), { tps: 20, tpsEstimated: true, ttft: 0 });
 });
 
@@ -412,8 +531,8 @@ test("smoothing follows elapsed time, not delta count, and batches sub-100 ms de
   const tracker = new PerformanceMonitor();
   t.after(() => tracker.dispose());
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
-  for (const time of [0, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
-    assistantMessageID: "a", sessionID: "root", delta: text(40),
+  for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
+    assistantMessageID: "a", sessionID: "root", delta: text(time === 0 ? 40 : 20),
   }));
   assert.equal(tracker.summary([], ["root"]).tps, 20);
   for (let i = 1; i < 100; i++) tracker.handle(event("session.text.delta", `burst-${i}`, 500 + i, {
@@ -430,7 +549,8 @@ test("valid high-rate streams are not subject to a model-specific multiplier or 
   t.after(() => tracker.dispose());
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
   tracker.handle(event("session.tool.input.delta", "baseline", 0, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
-  tracker.handle(event("session.tool.input.delta", "output", 500, { assistantMessageID: "a", sessionID: "root", delta: text(10_000) }));
+  tracker.handle(event("session.tool.input.delta", "middle", 250, { assistantMessageID: "a", sessionID: "root", delta: text(5_000) }));
+  tracker.handle(event("session.tool.input.delta", "output", 500, { assistantMessageID: "a", sessionID: "root", delta: text(5_000) }));
   assert.equal(tracker.summary([], ["root"]).tps, 5_000);
 });
 
@@ -438,8 +558,8 @@ test("out-of-order deltas cannot corrupt the window or advance its smoothing", t
   const tracker = new PerformanceMonitor();
   t.after(() => tracker.dispose());
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
-  for (const time of [0, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
-    assistantMessageID: "a", sessionID: "root", delta: text(40),
+  for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
+    assistantMessageID: "a", sessionID: "root", delta: text(time === 0 ? 40 : 20),
   }));
   assert.equal(tracker.handle(event("session.text.delta", "old", 200, {
     assistantMessageID: "a", sessionID: "root", delta: text(40_000),
@@ -456,8 +576,8 @@ test("quiet live TPS expires without events using monotonic age, retaining TTFT 
   const changes: string[] = [];
   tracker.listen(sessionID => changes.push(sessionID));
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
-  for (const time of [500, 1_000]) tracker.handle(event("session.text.delta", `${time}`, time, {
-    assistantMessageID: "a", sessionID: "root", delta: text(40),
+  for (const time of [500, 750, 1_000]) tracker.handle(event("session.text.delta", `${time}`, time, {
+    assistantMessageID: "a", sessionID: "root", delta: text(time === 500 ? 40 : 20),
   }));
   const history: UsageMessage[] = [{ id: "completed", type: "assistant", time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }];
   assert.equal(tracker.summary(history, ["root"]).tps, 20);
@@ -474,9 +594,11 @@ test("quiet live TPS expires without events using monotonic age, retaining TTFT 
   mono += 10_000;
   t.mock.timers.tick(10_000);
   assert.equal(changes.length, before + 1, "no periodic ticker remains after expiry");
-  tracker.handle(event("session.text.delta", "resume-1", 20_000, { assistantMessageID: "a", sessionID: "root", delta: text(40_000) }));
-  tracker.handle(event("session.text.delta", "resume-2", 20_500, { assistantMessageID: "a", sessionID: "root", delta: text(40) }));
-  assert.deepEqual(tracker.summary([], ["root"]), { tps: 20, tpsEstimated: true, ttft: 500 });
+  tracker.handle(event("session.text.delta", "resume-1", 20_000, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+  tracker.handle(event("session.text.delta", "resume-mid", 20_250, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 30, ttft: 500 }, "two fresh batches still fall back to history");
+  tracker.handle(event("session.text.delta", "resume-2", 20_500, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
+  assert.deepEqual(tracker.summary([], ["root"]), { tps: 1, tpsEstimated: true, ttft: 500 }, "expiry retains response-wide token readiness");
 });
 
 test("deletion and disposal cancel quiet-window expiry callbacks", t => {
@@ -487,8 +609,8 @@ test("deletion and disposal cancel quiet-window expiry callbacks", t => {
     let changes = 0;
     tracker.listen(() => changes++);
     tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
-    for (const time of [0, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
-      assistantMessageID: "a", sessionID: "root", delta: text(40),
+    for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
+      assistantMessageID: "a", sessionID: "root", delta: text(time === 0 ? 40 : 20),
     }));
     if (dispose) tracker.dispose();
     else tracker.handle({ type: "session.deleted", data: { sessionID: "root" } });
@@ -508,8 +630,8 @@ test("each concurrent stream expires independently without changing other trees"
   t.after(() => tracker.dispose());
   for (const [sessionID, bytes] of [["root", 40], ["child", 80]] as const) {
     tracker.handle(event("session.step.started", `start-${sessionID}`, 0, { assistantMessageID: sessionID, sessionID, started: 0 }));
-    for (const time of [0, 500]) tracker.handle(event("session.text.delta", `${sessionID}-${time}`, time, {
-      assistantMessageID: sessionID, sessionID, delta: text(bytes),
+    for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${sessionID}-${time}`, time, {
+      assistantMessageID: sessionID, sessionID, delta: text(time === 0 ? bytes : bytes / 2),
     }));
     mono = 500;
   }
@@ -528,8 +650,8 @@ test("stream markers, duplicate and empty deltas cannot keep quiet TPS alive", t
   const tracker = new PerformanceMonitor(undefined, { monotonic: () => mono });
   t.after(() => tracker.dispose());
   tracker.handle(event("session.step.started", "start", 0, { assistantMessageID: "a", sessionID: "root", started: 0 }));
-  for (const time of [0, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
-    assistantMessageID: "a", sessionID: "root", delta: text(40),
+  for (const time of [0, 250, 500]) tracker.handle(event("session.text.delta", `${time}`, time, {
+    assistantMessageID: "a", sessionID: "root", delta: text(time === 0 ? 40 : 20),
   }));
   mono = 1_000;
   t.mock.timers.tick(1_000);

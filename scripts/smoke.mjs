@@ -106,7 +106,8 @@ const mock = createServer(async (request, response) => {
       name: "subagent", arguments: JSON.stringify({ agent: childAgent, description: "Usage smoke child",
         prompt: userText.includes("LONG_TOOL_SMOKE") ? "TOOL_WAIT_SMOKE Return CHILD_DONE." : "Return CHILD_DONE." }),
     } }] : undefined;
-    const content = compactionSmoke ? compactionSummary : toolCalls ? undefined : gate ? "SMOKE_OK ".repeat(4).trim() : "SMOKE_OK";
+    // Gated live-rate fixtures must exceed the response-wide 80-byte threshold.
+    const content = compactionSmoke ? compactionSummary : toolCalls ? undefined : gate ? "SMOKE_OK ".repeat(10).trim() : "SMOKE_OK";
     const usage = reasoningSmoke ? {
       prompt_tokens: 1200, completion_tokens: 270, total_tokens: 1470,
       prompt_tokens_details: { cached_tokens: 1000, cache_write_tokens: 100 },
@@ -124,7 +125,7 @@ const mock = createServer(async (request, response) => {
       })}\n\n`);
       chunk({ role: "assistant" });
       await new Promise(resolve => setTimeout(resolve, longTtftSmoke ? 2_000 : reasoningSmoke ? 1_500 : 300));
-      const fragmentSize = compactionSmoke ? content.length : gate ? 8 : 4;
+      const fragmentSize = compactionSmoke ? content.length : gate ? 16 : 4;
       chunk(toolCalls ? { tool_calls: toolCalls } : { content: content.slice(0, fragmentSize) });
       if (content) {
         // Multiple spaced deltas survive host batching and fit inside the live TPS window.

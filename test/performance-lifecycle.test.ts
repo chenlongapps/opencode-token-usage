@@ -23,8 +23,8 @@ function fixture(t: TestContext, active?: ReadActiveSessions) {
   };
   const stream = (sessionID: string, messageID = sessionID) => {
     start(sessionID, messageID);
-    for (const offset of [100, 600]) send("session.text.delta", sessionID, {
-      assistantMessageID: messageID, delta: "abcd",
+    for (const offset of [100, 350, 600]) send("session.text.delta", sessionID, {
+      assistantMessageID: messageID, delta: offset === 100 ? "a".repeat(80) : "ab",
     }, remote + monotonic + offset);
   };
   const advance = async (milliseconds: number) => {
@@ -165,8 +165,11 @@ test("reconnect reconciles all tracked trees and resets only live windows for st
   assert.equal(f.monitor["observed"].size, 2);
   f.send("session.text.delta", "offscreen-child", { assistantMessageID: "offscreen-child", delta: "a".repeat(40_000) });
   assert.equal(f.monitor.summary([], ["offscreen-child"]).tps, undefined, "resumption needs a fresh baseline");
-  await f.advance(500);
-  f.send("session.text.delta", "offscreen-child", { assistantMessageID: "offscreen-child", delta: "abcd" });
+  await f.advance(250);
+  f.send("session.text.delta", "offscreen-child", { assistantMessageID: "offscreen-child", delta: "ab" });
+  assert.equal(f.monitor.summary([], ["offscreen-child"]).tps, undefined, "two batches cannot restore live TPS");
+  await f.advance(250);
+  f.send("session.text.delta", "offscreen-child", { assistantMessageID: "offscreen-child", delta: "ab" });
   assert.deepEqual(f.monitor.summary([], ["offscreen-child"]), { tps: 2, tpsEstimated: true, ttft: 100 });
 });
 
