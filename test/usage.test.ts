@@ -140,6 +140,31 @@ test("tiers use per-message incoming tokens and strict thresholds", () => {
   assert.equal(estimate(normalize({ input: 1, cache: { read: 100, write: 100 } }), tiers).cost, 0.00034);
 });
 
+test("model reasoning rates follow strict context tiers rather than array order", () => {
+  const tiers: Price[] = [
+    { input: 1, output: 2, reasoning: 5, cache: { read: 0.1 } },
+    { input: 3, output: 4, cache: { read: 0.1 }, tier: { type: "context", size: 200 } },
+    { input: 2, output: 3, reasoning: 8, cache: { read: 0.1 }, tier: { type: "context", size: 100 } },
+  ];
+  for (const [input, read, lowerExclusive, inputRate, outputRate, reasoningRate] of [
+    [100, 0, undefined, 1, 2, 5],
+    [101, 0, 100, 2, 3, 8],
+    [200, 0, 100, 2, 3, 8],
+    [201, 0, 200, 3, 4, 4], // Without a distinct reasoning rate, use this tier's output rate.
+    [1, 100, 100, 2, 3, 8], // Cache reads count towards the incoming-token threshold.
+  ] as const) {
+    const messages: UsageMessage[] = [priced({
+      id: "reasoned", type: "assistant", tokens: { input, output: 10, reasoning: 20, cache: { read } },
+    })];
+    const group = summarizeModels(messages, catalog(tiers))[0]!;
+    assert.equal(group.costStatus, "complete");
+    assert.equal(group.cost, (input * inputRate + 10 * outputRate + 20 * reasoningRate + read * 0.1) / 1_000_000);
+    assert.equal(group.cost, summarize(messages, catalog(tiers)).cost);
+    assert.equal(group.appliedRates[0]?.lowerExclusive, lowerExclusive);
+    assert.equal(group.appliedRates[0]?.rates.reasoning, reasoningRate);
+  }
+});
+
 test("free prices are distinct from missing prices and absent applicable tiers", () => {
   const tokens = normalize({ input: 10, output: 10 });
   assert.deepEqual(estimate(tokens, [{ input: 0, output: 0, cache: { read: 0, write: 0 } }]), { cost: 0, defaultPrice: false });
@@ -362,6 +387,10 @@ test("first-party fallback keeps distinct reasoning and unknown cache-write bill
   const qwen = { providerID: "alibaba", id: "qwen-plus" };
   const tokens = { input: 1_000_000, output: 1_000_000, reasoning: 1_000_000 };
   const prices = snapshotPrices(qwen);
+  // The upstream snapshot may gain tiers or reorder them; this request need
+  // not use prices[0]. Compare against the highest applicable context tier.
+  const selected = prices.filter(price => !price.tier || tokens.input > price.tier.size)
+    .sort((a, b) => (b.tier?.size ?? -1) - (a.tier?.size ?? -1))[0]!;
   const priced = summarize([{
     id: "reasoned", type: "assistant", model: qwen,
     tokens,
@@ -371,7 +400,7 @@ test("first-party fallback keeps distinct reasoning and unknown cache-write bill
   assert.equal(summarizeModels([{
     id: "reasoned", type: "assistant", model: qwen,
     tokens,
-  }])[0]?.appliedRates[0]?.rates.reasoning, prices[0]?.reasoning ?? prices[0]?.output);
+  }])[0]?.appliedRates[0]?.rates.reasoning, selected.reasoning ?? selected.output);
 
   const unknownWrite = summarize([{
     id: "write", type: "assistant", model: { providerID: "alibaba", id: "qwen3.8-27b" },

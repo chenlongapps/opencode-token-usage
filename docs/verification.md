@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-10-21 · 自动价格更新的分档测试修复（未发布）
+
+[价格工作流 39519970473](https://github.com/chenlongapps/opencode-token-usage/actions/runs/39519970473) 在 `npm test` 阶段失败，尚未升级版本或发布。models.dev 为 `alibaba/qwen-plus` 新增超过 256,000 incoming tokens 的分档；测试请求的 1,000,000 input tokens 正确选中推理费率 12，但旧断言固定读取 `prices[0]` 的基础费率 4，导致普通测试及其嵌套重定价测试同时失败。生产定价算法无需修改。
+
+`test/usage.test.ts` 改为按请求选择最高适用分档，再检查推理费率；新增固定夹具覆盖严格阈值、乱序多档、缓存读取参与阈值及缺失独立推理费率时使用当前档 output 价格。`test/price-update.test.mjs` 在隔离快照中主动加入乱序多档，不再只修改标量费率；修改断言之前，该夹具已复现相同类型的失败。
+
+环境：macOS、Node.js v22.23.2、插件包 0.4.13。当前仓库的类型检查、248 项测试及构建通过。另在隔离副本实际运行 `npm run prices:update`，获得 313 条原厂价格（新增 2、移除 3、变化 17），随后类型检查、248 项测试、构建及 `npm pack --dry-run` 全部通过。隔离构建首次因副本漏拷 `tsconfig.build.json` 失败，补齐配置后通过，不是仓库构建故障。
+
+隔离验证目录：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-price-fix-9ZczT3`。本次只修复测试并记录验证，未修改生产算法或工作流，未提交、推送、重跑 GitHub Actions 或发布 npm。
+
 ## 2026-10-14 · 首轮 Run Time 起点重置与重连归零（未发布）
 
 无 idle 消息并不一定是旧历史：新会话的第一轮在执行结束前也没有该标记。此前每次 synthetic／steer 输入都被当成 legacy 轮次边界，工具延续时丢失首轮之前已经过去的时间；重新读取历史或重建视图可以重新暴露该少算。匿名固定夹具复现原先 `~1m 56s` 与正确 `~18m 57s` 的差异，不依赖屏幕操作。

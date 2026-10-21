@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { renderSnapshot } from "../scripts/pricing-source.ts";
 import { GENERATED_PRICE_SNAPSHOT } from "../src/prices.generated.ts";
 
-test("repricing every generated model does not invalidate algorithm or usage regression tests", async t => {
+test("repricing models and adding context tiers does not invalidate algorithm or usage regression tests", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "token-usage-repriced-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = fileURLToPath(new URL("../", import.meta.url));
@@ -30,6 +30,15 @@ test("repricing every generated model does not invalidate algorithm or usage reg
       if (price.cache?.[key] !== undefined) price.cache[key] = price.cache[key] * 7 + 0.5;
     }
   }
+  // Upstream can add tiers, not just change scalar rates. Keep this fixture
+  // deterministic even when the checked-in qwen-plus entry has no tiers.
+  const qwen = snapshot.entries.find(entry => entry.providerID === "alibaba" && entry.id === "qwen-plus");
+  assert.ok(qwen);
+  qwen.prices = [
+    { input: 1, output: 2, reasoning: 5 },
+    { input: 3, output: 4, reasoning: 12, tier: { type: "context", size: 500_000 } },
+    { input: 2, output: 3, reasoning: 8, tier: { type: "context", size: 100_000 } },
+  ];
   await writeFile(path.join(root, "src/prices.generated.ts"), renderSnapshot(snapshot));
   // A nested test process must not inherit Node's internal child-runner protocol.
   const env = { ...process.env };
