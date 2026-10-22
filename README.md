@@ -1,6 +1,6 @@
 <h1 align="center">opencode-token-usage</h1>
 
-<p align="center">A session-tree token usage monitor for OpenCode 2.</p>
+<p align="center">Token usage, context window, estimated cost and live performance for OpenCode 2.</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@chenlongapps/opencode-token-usage" target="_blank" rel="noopener noreferrer"><img alt="npm" src="https://img.shields.io/npm/v/%40chenlongapps%2Fopencode-token-usage?style=flat-square&logo=npm" /></a>
@@ -15,30 +15,61 @@
   <a href="https://github.com/chenlongapps/opencode-token-usage/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 
+### Overview
+
+**opencode-token-usage** is a community plugin that brings token usage, context window occupancy, estimated cost and performance metrics into OpenCode 2's terminal interface.
+
+Use it to see how many tokens a session and its subagents consume, how full the current context window is, and how estimated costs are distributed across models—without leaving your conversation.
+
+### Features
+
+- **Session-tree totals:** Track input, output, reasoning and cache tokens across the session tree, including unopened subagents, without double-counting inherited fork history.
+- **Context visibility:** See the viewed session's context usage, latest reported request and estimated prompt composition.
+- **Estimated cost by model:** Price recorded calls using their actual models, with a built-in first-party price snapshot as a fallback. Estimates are not provider bills.
+- **Performance at a glance:** Monitor tokens per second (TPS), time to first token (TTFT) and the viewed session's own elapsed response time. Live TPS and elapsed-time estimates are marked with `~`.
+- **Native terminal UI:** Keep a sidebar panel in the main session and a single-line summary in subagent views; open details only when needed.
+- **On-demand details:** Use `/usage` for compact or detailed statistics, including per-model usage and rates, without sending a prompt to the model.
+
 [![OpenCode Token Usage plugin preview](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
 
 ---
 
 ### Installation
 
+Requires **OpenCode 2** and **Node.js 22+**. See [Compatibility](#compatibility) for verified host versions and the OpenTUI engine caveat.
+
 ```bash
 opencode plugin add @chenlongapps/opencode-token-usage
 ```
 
-Alternatively, add the package to your project's `opencode.json` or `opencode.jsonc`:
+Restart OpenCode after installation.
+
+### Quick start
+
+1. **View usage:** Open a session. The **Token Usage** panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough.
+2. **Explore details:** Enter `/usage` or left-click the panel's **Token Usage** title. Press `d` to toggle compact/detailed mode and Escape to close. Opening details does not send a prompt to the model.
+3. **Inspect subagents:** In subagent views, click the live summary above the composer to open the full panel. Closing it does not interrupt the subagent.
+
+For exact definitions and edge cases, see [Detailed usage](#detailed-usage), [Metrics](#metrics) and [price sources and limitations](docs/pricing.md).
+
+Questions about setup, costs, subagents, reasoning speed or privacy? See the [FAQ](docs/faq.md).
+
+### Other installation options
+
+Instead of the command above, add the package to your project's `opencode.json` or `opencode.jsonc`:
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugins": ["@chenlongapps/opencode-token-usage"]
 }
 ```
 
-> [!NOTE]
-> Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, 2.0.26, and 2.0.28. Native turn durations and sidebar title clicks were integration-tested on 2.0.26 and 2.0.28; the other listed host checks predate these additions.
-
-Restart OpenCode after installation. The panel appears in the native sidebar when `session.sidebar` is set to `auto` and the terminal is wide enough. Click its **Token Usage** title to open the detailed usage dialog. OpenCode hides the sidebar in subagent views, so the plugin keeps one live summary line above the composer with Context, Total, Cost, Time, and TPS. Click the line to open the full statistics in a centered dialog. Press Escape or click **esc** to close it; closing the dialog does not interrupt the subagent.
-
 For remote sessions, add the package name to `plugins` in your local `~/.config/opencode/cli.json` to load only the terminal entry point. The configuration path follows `XDG_CONFIG_HOME`.
+
+### Compatibility
+
+Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, 2.0.26, and 2.0.28. Native turn durations and sidebar title clicks were integration-tested on 2.0.26 and 2.0.28; the other listed host checks predate these additions. See the [verification record](docs/verification.md) for tested combinations.
 
 ### Detailed usage
 
@@ -136,6 +167,7 @@ To load the plugin from source, build the project and add the repository's absol
 
 ### Documentation
 
+- [FAQ](docs/faq.md) · [简体中文](docs/faq.zh-CN.md)
 - [Roadmap](ROADMAP.md)
 - [Verification record](docs/verification.md)
 - [Release guide](docs/releasing.md)

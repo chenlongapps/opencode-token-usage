@@ -1,15 +1,18 @@
 {
   "name": "@chenlongapps/opencode-token-usage",
   "version": "0.4.15",
-  "description": "Session-tree token usage, live performance, context window and estimated cost for OpenCode 2",
+  "description": "OpenCode 2 plugin for session-tree token usage, context window monitoring, estimated costs, and performance metrics (TPS, TTFT, run time).",
   "keywords": [
     "opencode",
     "opencode-plugin",
     "token-usage",
     "context-window",
+    "cost-tracking",
     "tps",
     "ttft",
-    "cost"
+    "subagents",
+    "terminal-ui",
+    "llm"
   ],
   "homepage": "https://github.com/chenlongapps/opencode-token-usage#readme",
   "bugs": {

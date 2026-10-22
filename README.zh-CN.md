@@ -1,6 +1,6 @@
 <h1 align="center">opencode-token-usage</h1>
 
-<p align="center">面向 OpenCode 2 的会话树 token 用量监视器。</p>
+<p align="center">在 OpenCode 2 中查看 token 用量、上下文窗口、估算费用与实时性能。</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@chenlongapps/opencode-token-usage" target="_blank" rel="noopener noreferrer"><img alt="npm" src="https://img.shields.io/npm/v/%40chenlongapps%2Fopencode-token-usage?style=flat-square&logo=npm" /></a>
@@ -15,30 +15,61 @@
   <strong>简体中文</strong>
 </p>
 
+### 项目简介
+
+**opencode-token-usage** 是一个面向 OpenCode 2 的社区插件，在终端界面中展示 token 用量、上下文窗口占用、估算费用和性能指标。
+
+无需离开当前对话，就能了解：当前会话及其子代理消耗了多少 token、上下文窗口还剩多少空间，以及各模型的估算费用分布。
+
+### 主要特点
+
+- **会话树用量汇总：** 统计整棵会话树的输入、输出、推理和缓存 token，包含未打开的子代理，避免重复计算分叉继承历史。
+- **上下文可见：** 查看当前会话的上下文占用、最近一次已上报请求及提示词构成估算。
+- **按模型估算费用：** 按每次调用实际使用的模型计价，以内置原厂价格快照作为回退。估算费用不等于提供商账单。
+- **性能一目了然：** 查看每秒 token 数（TPS）、首 token 时间（TTFT）及当前会话自身的对话耗时。实时 TPS 与已耗时估算以 `~` 标记。
+- **原生终端界面：** 主会话使用侧边栏，子代理视图保留单行摘要，按需打开完整面板。
+- **按需查看详情：** 通过 `/usage` 切换紧凑／详细统计，查看各模型的用量与费率，不向模型发送提示词。
+
 [![OpenCode Token Usage 插件预览](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
 
 ---
 
 ### 安装
 
+需要 **OpenCode 2** 和 **Node.js 22+**。已验证宿主版本及 OpenTUI 引擎限制见[兼容性](#兼容性)。
+
 ```bash
 opencode plugin add @chenlongapps/opencode-token-usage
 ```
 
-也可以在项目的 `opencode.json` 或 `opencode.jsonc` 中配置：
+安装后重启 OpenCode。
+
+### 快速上手
+
+1. **查看用量：** 打开会话。终端足够宽且 `session.sidebar` 设为 `auto` 时，原生侧边栏会显示 **Token Usage** 面板。
+2. **展开详情：** 输入 `/usage`，或左键点击面板的 **Token Usage** 标题。按 `d` 切换紧凑／详细模式，按 Escape 关闭；打开详情不会向模型发送提示词。
+3. **查看子代理：** 在子代理视图中，点击输入区上方的实时摘要可打开完整面板，关闭面板不会中断子代理。
+
+精确统计口径及边界情况见[详细用量](#详细用量)、[指标](#指标)和[价格来源与限制](docs/pricing.md)。
+
+关于安装、费用、子代理、推理速度及隐私的常见问题，见 [FAQ](docs/faq.zh-CN.md)。
+
+### 其他安装方式
+
+除了上述命令，也可以在项目的 `opencode.json` 或 `opencode.jsonc` 中配置：
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugins": ["@chenlongapps/opencode-token-usage"]
 }
 ```
 
-> [!NOTE]
-> 需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。此前发布已验证 OpenCode 2.0.9 和 2.0.10；SDK 2.0.24 集成检查已在 OpenCode 2.0.11、2.0.22、2.0.24、2.0.26 和 2.0.28 上通过。原生对话耗时与侧边栏标题点击的集成验证使用 2.0.26 和 2.0.28，其余列出的宿主检查早于这些功能加入。
-
-安装后重启 OpenCode。终端足够宽且 `session.sidebar` 设为 `auto` 时，面板会显示在原生侧边栏中。点击面板的 **Token Usage** 标题可打开用量详情弹窗。OpenCode 在子代理视图中隐藏侧边栏，因此插件会在输入区上方保留一行实时摘要，显示 Context、Total、Cost、Time 和 TPS。点击摘要可在居中弹窗中查看完整统计；按 Escape 或点击 **esc** 即可关闭，关闭弹窗不会中断子代理。
-
 连接远程服务器时，可将包名加入本机 `~/.config/opencode/cli.json` 的 `plugins`，仅加载终端入口；配置路径遵循 `XDG_CONFIG_HOME`。
+
+### 兼容性
+
+需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。此前发布已验证 OpenCode 2.0.9 和 2.0.10；SDK 2.0.24 集成检查已在 OpenCode 2.0.11、2.0.22、2.0.24、2.0.26 和 2.0.28 上通过。原生对话耗时与侧边栏标题点击的集成验证使用 2.0.26 和 2.0.28，其余列出的宿主检查早于这些功能加入。已测试组合见[验证记录](docs/verification.md)。
 
 ### 详细用量
 
@@ -136,6 +167,7 @@ OPENCODE_BIN=/absolute/path/to/opencode-2.0.11 npm run test:smoke
 
 ### 文档
 
+- [常见问题 FAQ](docs/faq.zh-CN.md)
 - [路线图](ROADMAP.md)
 - [验证记录](docs/verification.md)
 - [发布说明](docs/releasing.md)
