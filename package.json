@@ -1,6 +1,6 @@
 {
   "name": "@chenlongapps/opencode-token-usage",
-  "version": "0.4.16",
+  "version": "0.4.17",
   "description": "OpenCode 2 plugin for session-tree token usage, context window monitoring, estimated costs, and performance metrics (TPS, TTFT, run time).",
   "keywords": [
     "opencode",
