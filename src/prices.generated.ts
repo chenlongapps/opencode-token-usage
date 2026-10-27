@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-24",
+  verified: "2026-10-27",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-03"},
@@ -224,6 +224,8 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"openai","id":"gpt-6-sol-fast","providers":["openai"],"prices":[{"input":4,"output":20,"cache":{"read":0.4,"write":5}},{"tier":{"type":"context","size":272000}}],"released":"2026-09-22"},
     {"providerID":"openai","id":"gpt-6.1-sol","prices":[{"input":2,"output":10,"cache":{"read":0.1,"write":2.5}},{"input":4,"output":15,"cache":{"read":0.2,"write":5},"tier":{"type":"context","size":272000}}],"released":"2026-09-29"},
     {"providerID":"openai","id":"gpt-6.1-sol-fast","providers":["openai"],"prices":[{"input":4,"output":20,"cache":{"read":0.2,"write":5}},{"tier":{"type":"context","size":272000}}],"released":"2026-09-29"},
+    {"providerID":"openai","id":"gpt-6.1-terra","prices":[{"input":1,"output":5,"cache":{"read":0.05,"write":1.25}},{"input":2,"output":7.5,"cache":{"read":0.1,"write":2.5},"tier":{"type":"context","size":272000}}],"released":"2026-10-26"},
+    {"providerID":"openai","id":"gpt-6.1-terra-fast","providers":["openai"],"prices":[{"input":2,"output":10,"cache":{"read":0.1,"write":2.5}},{"tier":{"type":"context","size":272000}}],"released":"2026-10-26"},
     {"providerID":"openai","id":"gpt-daybreak-blue-latest","prices":[{"input":4,"output":20,"cache":{"read":0.4,"write":5}},{"input":8,"output":30,"cache":{"read":0.8,"write":10},"tier":{"type":"context","size":272000}}],"released":"2026-08-07"},
     {"providerID":"openai","id":"gpt-daybreak-red-latest","prices":[{"input":12.5,"output":75,"cache":{"read":1.25,"write":15.625}}],"released":"2026-08-07"},
     {"providerID":"openai","id":"o1","prices":[{"input":15,"output":60,"cache":{"read":7.5}}],"released":"2024-12-05"},
