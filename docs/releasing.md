@@ -15,7 +15,7 @@ GitHub Actions 的发布任务需要 `id-token: write`，并使用 GitHub 托管
 
 ## 自动价格 patch
 
-`.github/workflows/update-prices.yml` 每天 UTC 22:00 检查 models.dev，也可在 Actions 中选择 `main` 手动运行：
+`.github/workflows/update-prices.yml` 每 4 小时检查 models.dev，也可在 Actions 中选择 `main` 手动运行：
 
 ```text
 更新白名单内的原厂快照（无变化就结束）
@@ -37,7 +37,7 @@ GitHub Actions 的发布任务需要 `id-token: write`，并使用 GitHub 托管
 - 检查失败：不升级版本、不提交、不打标签、不发布。
 - 远端 `main` 在验证期间改变：原子推送整体失败，不强推或自动重放旧结果；重新运行更新任务。
 - 标签／npm 版本已被占用、registry 故障或新版本不高于 npm `latest`：停止，不猜测版本或倒退 `latest`。
-- 自动价格标签已推送，但创建 Release、dispatch 或 npm 发布失败：下一次更新任务先重试该标签，不再升 patch。未发布的手动版本不会被每日任务擅自发布，需先完成手动发布。
+- 自动价格标签已推送，但创建 Release、dispatch 或 npm 发布失败：下一次更新任务先重试该标签，不再升 patch。未发布的手动版本不会被定时任务擅自发布，需先完成手动发布。
 - npm 已收到版本：重跑发布任务会跳过 `npm publish`，不修改已有版本或其 dist-tag。
 - `npm publish` 成功但可见性校验超时：不另升版本或移动标签。先查询目标版本与 `latest`；版本已出现时重跑原标签，版本尚未出现时等待 npm 处理。持续的 registry 查询故障也会使校验失败，不会被当作版本不存在或成功发布。
 

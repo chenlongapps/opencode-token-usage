@@ -50,7 +50,7 @@ Yes. **Total** adds Input, Output, Reasoning, Cache Read and Cache Write. **Inpu
 
 ## Do prices update automatically, and does the plugin fetch them at runtime?
 
-The repository's daily price workflow checks models.dev and releases updated fallback snapshots when reviewed prices change and validation passes. Those snapshots ship with plugin releases; the installed plugin does not fetch prices from models.dev while running or refreshing statistics. Update the plugin to obtain a newer bundled snapshot. OpenCode-resolved prices remain part of the pricing policy, so the snapshot is not the only possible rate source. See the [README's price update workflow](../README.md#development) and [pricing behavior](../README.md#behavior).
+The repository's price workflow checks models.dev every 4 hours and releases updated fallback snapshots when reviewed prices change and validation passes. Those snapshots ship with plugin releases; the installed plugin does not fetch prices from models.dev while running or refreshing statistics. Update the plugin to obtain a newer bundled snapshot. OpenCode-resolved prices remain part of the pricing policy, so the snapshot is not the only possible rate source. See the [README's price update workflow](../README.md#development) and [pricing behavior](../README.md#behavior).
 
 ## Why does Run Time differ from the sum of response footer durations?
 

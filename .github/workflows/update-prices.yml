@@ -2,8 +2,8 @@ name: Update model prices
 
 on:
   schedule:
-    # Every day at 22:00 UTC.
-    - cron: '0 22 * * *'
+    # Every 4 hours, on the hour (UTC).
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 permissions:
