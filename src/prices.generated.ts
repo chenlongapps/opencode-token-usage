@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-27",
+  verified: "2026-10-30",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-03"},
@@ -140,7 +140,8 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"mistral","id":"ministral-8b-2512","prices":[{"input":0.15,"output":0.15,"cache":{"read":0.015}}],"released":"2025-12-02"},
     {"providerID":"mistral","id":"ministral-8b-latest","prices":[{"input":0.15,"output":0.15,"cache":{"read":0.015}}],"released":"2024-10-01"},
     {"providerID":"mistral","id":"mistral-large-2512","prices":[{"input":0.5,"output":1.5,"cache":{"read":0.05}}],"released":"2024-11-01"},
-    {"providerID":"mistral","id":"mistral-large-4","prices":[{"input":1.36,"output":4.18,"cache":{"read":0.14}}],"released":"2026-10-06"},
+    {"providerID":"mistral","id":"mistral-large-4","prices":[{"input":0.7,"output":2.1,"cache":{"read":0.07}}],"released":"2026-10-06"},
+    {"providerID":"mistral","id":"mistral-large-4-0-8","prices":[{"input":0.7,"output":2.1,"cache":{"read":0.07}}],"released":"2026-10-06"},
     {"providerID":"mistral","id":"mistral-large-latest","prices":[{"input":0.5,"output":1.5,"cache":{"read":0.05}}],"released":"2024-11-01"},
     {"providerID":"mistral","id":"mistral-medium-2505","prices":[{"input":0.4,"output":2}],"released":"2025-05-07"},
     {"providerID":"mistral","id":"mistral-medium-2508","prices":[{"input":0.4,"output":2}],"released":"2025-08-12"},
