@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-10-30",
+  verified: "2026-11-10",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-03"},
@@ -53,6 +53,8 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"alibaba","id":"qwq-plus","prices":[{"input":0.8,"output":2.4}],"released":"2025-03-05"},
     {"providerID":"anthropic","id":"claude-fable-5","prices":[{"input":10,"output":50,"cache":{"read":1,"write":12.5}}],"released":"2026-06-07"},
     {"providerID":"anthropic","id":"claude-fable-5-1","prices":[{"input":10,"output":50,"cache":{"read":0.25,"write":12.5}}],"released":"2026-09-01"},
+    {"providerID":"anthropic","id":"claude-fable-5-2","prices":[{"input":8,"output":40,"cache":{"read":0.2,"write":10}}],"released":"2026-11-09"},
+    {"providerID":"anthropic","id":"claude-fable-5-2-fast","providers":["anthropic"],"prices":[{"input":16,"output":80,"cache":{"read":0.4,"write":20}}],"released":"2026-11-09"},
     {"providerID":"anthropic","id":"claude-haiku-4-5","prices":[{"input":1,"output":5,"cache":{"read":0.1,"write":1.25}}],"released":"2025-10-15"},
     {"providerID":"anthropic","id":"claude-haiku-4-5-20251001","prices":[{"input":1,"output":5,"cache":{"read":0.1,"write":1.25}}],"released":"2025-10-15"},
     {"providerID":"anthropic","id":"claude-haiku-5-5","prices":[{"input":0.1,"output":0.5,"cache":{"read":0.01,"write":0.125}},{"input":0.5,"output":2.5,"cache":{"read":0.05,"write":0.625},"tier":{"type":"context","size":100000}}],"released":"2026-10-07"},
@@ -113,6 +115,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"inception","id":"mercury-edit-2","prices":[{"input":0.25,"output":0.75,"cache":{"read":0.025}}],"released":"2026-03-30"},
     {"providerID":"longcat","id":"longcat-2.0","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.006}}],"released":"2026-06-30"},
     {"providerID":"longcat","id":"longcat-2.5-preview","prices":[{"input":0.3,"output":1.2,"cache":{"read":0.006}}],"released":"2026-09-25"},
+    {"providerID":"meta","id":"muse-ember-1.0","prices":[{"input":0.1,"output":0.5,"cache":{"read":0.004}},{"input":0.3,"output":1.5,"cache":{"read":0.012},"tier":{"type":"context","size":200000}}],"released":"2026-11-09"},
     {"providerID":"meta","id":"muse-spark-1.1","prices":[{"input":1.25,"output":4.25,"cache":{"read":0.15}}],"released":"2026-04-08"},
     {"providerID":"meta","id":"muse-spark-1.2","prices":[{"input":1.25,"output":4.25,"cache":{"read":0.15}}],"released":"2026-08-05"},
     {"providerID":"meta","id":"muse-spark-1.2-contributor","prices":[{"input":0.1,"output":0.2,"cache":{"read":0.002}}],"released":"2026-08-05"},
