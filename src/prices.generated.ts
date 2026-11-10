@@ -106,6 +106,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"google","id":"gemini-3.7-flash","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-08-13"},
     {"providerID":"google","id":"gemini-3.8-flash","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-09-02"},
     {"providerID":"google","id":"gemini-4-argon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-10-13"},
+    {"providerID":"google","id":"gemini-4-carbon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-11-10"},
     {"providerID":"google","id":"gemini-flash-latest","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-08-13"},
     {"providerID":"google","id":"gemini-flash-lite-latest","prices":[{"input":0.3,"output":2.5,"cache":{"read":0.03}}],"released":"2026-07-21"},
     {"providerID":"google","id":"gemini-pro-latest","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-02-19"},
