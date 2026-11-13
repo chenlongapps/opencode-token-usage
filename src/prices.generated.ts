@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-11-10",
+  verified: "2026-11-13",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-03"},
@@ -91,7 +91,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"deepseek","id":"deepseek-v4-pro","prices":[{"input":0.66,"output":1.98,"cache":{"read":0.022}}],"released":"2026-08-13"},
     {"providerID":"google","id":"deep-research-max-preview-04-2026","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-04-21"},
     {"providerID":"google","id":"deep-research-preview-04-2026","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-04-21"},
-    {"providerID":"google","id":"gemini-2.5-computer-use-preview-10-2025","prices":[{"input":1.25,"output":10},{"input":2.5,"output":15,"tier":{"type":"context","size":200000}}],"released":"2025-10-07"},
+    {"providerID":"google","id":"gemini-2.5-computer-use-preview-10-2025","prices":[{"input":1.25,"output":10}],"released":"2025-10-07"},
     {"providerID":"google","id":"gemini-2.5-flash","prices":[{"input":0.3,"output":2.5,"cache":{"read":0.03}}],"released":"2025-06-17"},
     {"providerID":"google","id":"gemini-2.5-flash-lite","prices":[{"input":0.1,"output":0.4,"cache":{"read":0.01}}],"released":"2025-06-17"},
     {"providerID":"google","id":"gemini-2.5-pro","prices":[{"input":1.25,"output":10,"cache":{"read":0.125}},{"input":2.5,"output":15,"cache":{"read":0.25},"tier":{"type":"context","size":200000}}],"released":"2025-06-17"},
@@ -107,9 +107,12 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"google","id":"gemini-3.8-flash","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-09-02"},
     {"providerID":"google","id":"gemini-4-argon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-10-13"},
     {"providerID":"google","id":"gemini-4-carbon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-11-10"},
+    {"providerID":"google","id":"gemini-4-hydrogen","prices":[{"input":1.5,"output":7.5,"cache":{"read":0.075}}],"released":"2026-11-12"},
     {"providerID":"google","id":"gemini-flash-latest","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-08-13"},
     {"providerID":"google","id":"gemini-flash-lite-latest","prices":[{"input":0.3,"output":2.5,"cache":{"read":0.03}}],"released":"2026-07-21"},
     {"providerID":"google","id":"gemini-pro-latest","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-02-19"},
+    {"providerID":"google","id":"gemma-4-26b-a4b-it","prices":[{"input":0,"output":0}],"released":"2026-04-02"},
+    {"providerID":"google","id":"gemma-4-31b-it","prices":[{"input":0,"output":0}],"released":"2026-04-02"},
     {"providerID":"inception","id":"mercury-2","prices":[{"input":0.25,"output":0.75,"cache":{"read":0.025}}],"released":"2026-02-24"},
     {"providerID":"inception","id":"mercury-2.5","prices":[{"input":0.2,"output":0.75,"cache":{"read":0.02}}],"released":"2026-09-08"},
     {"providerID":"inception","id":"mercury-3","prices":[{"input":0.1,"output":0.35,"cache":{"read":0.01}}],"released":"2026-10-16"},
