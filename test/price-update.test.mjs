@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { renderSnapshot } from "../scripts/pricing-source.ts";
+import { fromModelsDev, renderSnapshot } from "../scripts/pricing-source.ts";
+import { ORIGINAL_PROVIDERS } from "../src/overrides.ts";
 import { GENERATED_PRICE_SNAPSHOT } from "../src/prices.generated.ts";
 
-test("repricing models and adding context tiers does not invalidate algorithm or usage regression tests", async t => {
+test("adding manufacturer models, repricing and adding context tiers preserves regression tests", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "token-usage-repriced-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = fileURLToPath(new URL("../", import.meta.url));
@@ -39,6 +40,26 @@ test("repricing models and adding context tiers does not invalidate algorithm or
     { input: 3, output: 4, reasoning: 12, tier: { type: "context", size: 500_000 } },
     { input: 2, output: 3, reasoning: 8, tier: { type: "context", size: 100_000 } },
   ];
+  // Reproduce catalog growth independently of the live upstream response and
+  // checked-in snapshot. Gateway quotes must never become manufacturer rates.
+  const catalog = Object.fromEntries(Object.keys(ORIGINAL_PROVIDERS).map(id => [id, { models: {} }]));
+  const ids = ["gemini-4-hydrogen", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemma-test-only-future-model"];
+  for (const id of ids) {
+    catalog.google.models[id] = {
+      id, modalities: { input: ["text"], output: ["text"] }, cost: { input: 1, output: 2 },
+    };
+  }
+  catalog.openrouter = { models: {
+    "google/gemma-4-31b-it": {
+      id: "google/gemma-4-31b-it", modalities: { input: ["text"], output: ["text"] },
+      cost: { input: 999, output: 999 },
+    },
+  } };
+  const added = fromModelsDev(catalog, "2026-11-13").entries;
+  assert.deepEqual(added.map(entry => entry.id).sort(), [...ids].sort());
+  assert.ok(added.every(entry => entry.providerID === "google" && entry.prices[0].input === 1));
+  snapshot.entries = snapshot.entries.filter(entry => !(entry.providerID === "google" && ids.includes(entry.id)));
+  snapshot.entries.push(...added);
   await writeFile(path.join(root, "src/prices.generated.ts"), renderSnapshot(snapshot));
   // A nested test process must not inherit Node's internal child-runner protocol.
   const env = { ...process.env };
@@ -46,7 +67,7 @@ test("repricing models and adding context tiers does not invalidate algorithm or
   let result;
   try {
     result = execFileSync(process.execPath, [
-      path.join(project, "node_modules/tsx/dist/cli.mjs"), "--test", "--test-reporter=tap", "test/pricing.test.ts", "test/usage.test.ts",
+      "--import", path.join(project, "node_modules/tsx/dist/loader.mjs"), "--test", "--test-reporter=tap", "test/pricing.test.ts", "test/usage.test.ts",
     ], { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     throw new Error(`Repriced snapshot regression failed:\n${error.stdout}\n${error.stderr}`, { cause: error });

@@ -63,6 +63,15 @@ test("manufacturer IDs, exact gateway wrappers, version aliases, and free suffix
   ]) assert.equal(find(provider!, id!)?.id, expected, `${provider}/${id}`);
 });
 
+test("Google catalog models resolve to manufacturer prices through exact gateway IDs", () => {
+  // Catalog membership may grow; never classify a real unreleased model as unknown.
+  const entries = OFFICIAL_PRICE_SNAPSHOT.entries.filter(entry => entry.providerID === "google");
+  assert.ok(entries.length > 0);
+  for (const entry of entries) {
+    assert.deepEqual(find("openrouter", `google/${entry.id}`), entry);
+  }
+});
+
 test("unrelated makers, unknown wrappers and similarly named modes never borrow a rate", () => {
   for (const [provider, id] of [
     ["openrouter", "openai/gpt-6-sol-unknown-test-mode"],
@@ -74,9 +83,9 @@ test("unrelated makers, unknown wrappers and similarly named modes never borrow 
     ["custom", "prefix-gpt-6-sol"],
     ["alibaba", "kimi-k3"], // Alibaba hosts Kimi, but is not its manufacturer.
     ["mistral", "zai-glm-5-3"], // Mistral hosts Z.ai's models.
-    ["opencode", "ling-3.0-flash-fin-free"],
-    ["opencode", "nemotron-3-ultra-free"],
-    ["openrouter", "google/gemma-4-31b-it"],
+    ["opencode", "test-only-unknown-ling-free"],
+    ["opencode", "test-only-unknown-nemotron-free"],
+    ["openrouter", "google/gemma-test-only-unknown-model"],
   ]) assert.equal(find(provider!, id!), undefined, `${provider}/${id}`);
 });
 

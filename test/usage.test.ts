@@ -351,11 +351,11 @@ test("a complete OpenCode zero yields to a complete snapshot price only", () => 
   assert.equal(summarizeModels([cacheUsage], freeCacheWrite)[0]?.appliedRates[0]?.source, "OpenCode");
 });
 
-test("runtime zero prices for OpenCode Zen free models display as zero", () => {
+test("runtime zero prices for models without a manufacturer fallback display as zero", () => {
   const ids = [
-    "ling-3.0-flash-fin-free",
-    "nemotron-3.5-lightning-free",
-    "nemotron-3-ultra-free",
+    "test-only-unknown-ling-free",
+    "test-only-unknown-nemotron:free",
+    "test-only-unknown-model-free",
   ];
   const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
   const prices = new Map(ids.map(id => [modelKey({ providerID: "opencode", id }), [freePrice]]));
