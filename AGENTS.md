@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（当前为 0.4.23），使用 `@opencode/plugin@2.0.24` 与 OpenTUI `0.5.14`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 已验证，不代表独立 Node 22 原生 TUI 渲染受支持。
+- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（当前为 0.4.24），使用 `@opencode/plugin@2.0.24` 与 OpenTUI `0.5.14`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 已验证，不代表独立 Node 22 原生 TUI 渲染受支持。
 - `src/usage.ts` 负责统计、上下文、定价与格式化；`src/performance.ts` 负责历史 TPS／TTFT 与共享流式测速、突发合并和过期；`src/runtime.ts` 负责当前会话原生对话耗时累计及当前轮估算准备，`src/runtime-monitor.ts` 负责共享服务端时间锚点、单调时钟与运行结束门控；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏、子代理浮窗和 `/token-usage` 弹窗。
 - 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 默认使用 PATH 中的稳定版 OpenCode 2（最低 2.0.9）、Python 3 终端、本地模拟提供商与隔离配置验证打包产物；未验证版本只警告并继续实际检查。可用 `OPENCODE_BIN` 指定独立基准二进制，统一用于版本探测、服务端与 TUI。
 - `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。

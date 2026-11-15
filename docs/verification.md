@@ -1,3 +1,9 @@
+# 0.4.24 发布前验证（2026-11-15）
+
+本次在 Linux、Node.js 24.22.1、npm 11.9.0 环境中重新执行：干净安装（独立 npm 缓存）、`npm run typecheck`、269 项 `npm test`、`npm run build`、`npm pack --dry-run` 与 `git diff --check`，均通过。安装仍有固定 OpenTUI 依赖的 Node >=26.4 引擎警告。
+
+同步中英文 README 的命令迁移与兼容性边界，并按标签差异补齐 0.4.12–0.4.24 更新日志。本环境没有 OpenCode 二进制，未重新运行真实宿主冒烟；2.0.28 完整回归与 2.3.0 部分验证沿用下方原始记录，2.3.0 子代理总量不匹配仍未解决。下方“未发布”描述保留各次验证当时的状态，实际发布以 GitHub Release 与 npm registry 为准。
+
 # 验证记录
 
 ## 2026-11-16 · 详情命令改为 `/token-usage`（未发布）

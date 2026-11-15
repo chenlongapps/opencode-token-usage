@@ -71,6 +71,10 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 
 Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, 2.0.26, and 2.0.28. Native turn durations and sidebar title clicks were integration-tested on 2.0.26 and 2.0.28; the other listed host checks predate these additions. See the [verification record](docs/verification.md) for tested combinations.
 
+Version **0.4.24** uses `/token-usage` for plugin details; `/usage` is reserved for OpenCode. Native first-token timestamps improve TTFT and historical TPS when available, with fallbacks for older hosts.
+
+OpenCode **2.3.0 has partial verification only**: plugin details, coexistence with built-in `/usage`, native performance timing and history restoration passed. The full smoke suite stopped at a subagent total mismatch (6,350 actual vs 5,080 expected); full compatibility is not confirmed. OpenCode **2.0.28 passed the full packaged regression** for these changes. See the [verification record](docs/verification.md).
+
 ### Detailed usage
 
 Enter `/token-usage` in a session or left-click the sidebar's **Token Usage** title to open the same centered native dialog with the session tree's token totals and estimated cost by recorded model. It opens in compact mode. Scroll with ↑/↓, Page Up/Down, Home/End, press `d` to switch between compact and detailed numbers and reveal model rates, and close with Escape or **esc**. Neither entry sends a prompt to the model. Other sidebar rows remain selectable; dragging to select text does not open the dialog.

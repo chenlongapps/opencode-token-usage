@@ -4,6 +4,67 @@
 
 价格条目反映对应版本的内置快照，不代表当前费率或提供商账单。当前用法与统计口径见 [README.zh-CN.md](README.zh-CN.md)，历史检查及验证边界见[验证记录](docs/verification.md)。
 
+## [0.4.24] - 2026-11-15
+
+### 变更
+
+- 插件详情命令统一为 `/token-usage`，不再注册 `/usage` 别名，避免与 OpenCode 原生命令冲突；侧边栏标题点击与命令面板入口仍可用。
+- TTFT 优先采用原生首 token 事件与历史时间，避免 delta 缓冲延迟；历史 TPS 排除首 token 前等待，旧宿主保留回退。重试复用消息 ID 时隔离旧样本。
+- 同步中英文升级与兼容性说明，补齐 0.4.12–0.4.23 更新日志。OpenCode 2.0.28 完整打包回归及 2.3.0 详情／原生性能专项已在既有验证中通过；2.3.0 完整冒烟仍有子代理总量夹具不匹配，不能视为完整兼容。
+
+## [0.4.23] - 2026-11-13
+
+- 同步 models.dev 原厂价格快照。
+
+## [0.4.22] - 2026-11-13
+
+- 同步 models.dev 原厂价格快照。
+- 定价回归测试不再依赖动态目录的固定模型数量。
+
+## [0.4.21] - 2026-11-10
+
+- 同步 models.dev 原厂价格快照。
+
+## [0.4.20] - 2026-11-10
+
+- 同步 models.dev 原厂价格快照。
+
+## [0.4.19] - 2026-10-30
+
+- 同步 models.dev 原厂价格快照。
+- 价格快照检查频率由每天调整为每 4 小时。
+
+## [0.4.18] - 2026-10-27
+
+- 同步 models.dev 原厂价格快照。
+
+## [0.4.17] - 2026-10-24
+
+- 同步 models.dev 原厂价格快照。
+
+## [0.4.16] - 2026-10-23
+
+- 同步 models.dev 原厂价格快照。
+- 更新中英文功能与开发文档。
+
+## [0.4.15] - 2026-10-22
+
+- 同步 models.dev 原厂价格快照。
+- 实时 TPS 仅在单响应累计至少 20 个估算 token、当前窗口至少三批且跨度至少 500ms 时显示。
+
+## [0.4.14] - 2026-10-21
+
+- 同步 models.dev 原厂价格快照。
+- 修复自动价格更新的多档费率测试，使用固定夹具覆盖档位选择。
+
+## [0.4.13] - 2026-10-20
+
+- 同步 models.dev 原厂价格快照。
+
+## [0.4.12] - 2026-10-18
+
+- 同步 models.dev 原厂价格快照。
+
 ## [0.4.11] - 2026-10-15
 
 ### 变更
@@ -260,3 +321,17 @@
 [0.2.1]: https://github.com/chenlongapps/opencode-token-usage/compare/49f63fa...dd0df79
 [0.2.0]: https://github.com/chenlongapps/opencode-token-usage/compare/1e3aec0...49f63fa
 [0.1.0]: https://github.com/chenlongapps/opencode-token-usage/tree/1e3aec0
+
+[0.4.24]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.23...v0.4.24
+[0.4.23]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.22...v0.4.23
+[0.4.22]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.21...v0.4.22
+[0.4.21]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.20...v0.4.21
+[0.4.20]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.19...v0.4.20
+[0.4.19]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.18...v0.4.19
+[0.4.18]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.17...v0.4.18
+[0.4.17]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.16...v0.4.17
+[0.4.16]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.15...v0.4.16
+[0.4.15]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.14...v0.4.15
+[0.4.14]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.13...v0.4.14
+[0.4.13]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.12...v0.4.13
+[0.4.12]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.11...v0.4.12
