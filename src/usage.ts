@@ -45,7 +45,7 @@ export interface UsageMessage {
   model?: ModelRef;
   cost?: number;
   tokens?: TokenInput;
-  time?: { created: number; streamed?: number; completed?: number };
+  time?: { created: number; firstToken?: number; streamed?: number; completed?: number };
   content?: readonly UsageContent[];
 }
 

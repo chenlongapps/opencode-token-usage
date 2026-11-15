@@ -1,5 +1,33 @@
 # 验证记录
 
+## 2026-11-16 · 详情命令改为 `/token-usage`（未发布）
+
+`src/tui.tsx` 的斜杠命令从 `/usage` 统一改为 `/token-usage`，不注册旧名称别名，避免占用 OpenCode 2.3.0 的原生账户用量入口。命令 ID `opencode-token-usage.show`、命令面板标题 `Token usage`、标题点击和详情弹窗共用入口保留。中英文 README、当前产品约定和冒烟输入已同步；历史记录中的旧名称保持原样。
+
+类型检查、269 项自动化测试和冒烟脚本语法检查通过。真实 OpenCode 2.3.0 的完整冒烟已通过构建／打包／隔离安装，实测原生 `/usage` 打开 Console 用量弹窗、`/token-usage` 打开插件详情；两者均不新增消息或提供商请求。紧凑／详细、关闭重开、标题点击、窄终端详情以及原生 TTFT／TPS 与历史恢复检查通过。
+
+本轮 2.3.0 完整冒烟仍未全部通过：已越过原先的命令冲突，后来停在 `subagent usage summary with its own runtime`。`final-6.txt` 实际显示子代理摘要 `Total 6,350 · Cost $0.006`，而旧夹具固定期待 `Total 5,080 · Cost $0.005`；摘要本身已挂载，不能将该超时描述成命令改名失败或子代理面板缺失。此处尚未调整固定总量夹具，也不宣称完整 2.3.0 兼容验证通过。产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-CyDpUu`。
+
+命令改名后的真实 OpenCode 2.0.28 完整冒烟通过，覆盖 `/token-usage`、标题点击、紧凑／详细／窄终端、子代理、耗时、模型／费用、流式性能、分叉、压缩与异常流回收等既有检查。产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-VWXWsr`。
+
+插件包仍为 0.4.23，未升级版本、提交、推送或发布。
+
+## 2026-11-16 · 原生 TTFT 与历史 TPS 对齐（未发布）
+
+排查 OpenCode 2.3.0 的原生页脚与截图对应消息，确认宿主以 `time.firstToken − time.created` 计算 TTFT，并在文本／推理／工具输入开始处发布持久化 `session.step.first-token`。首个文本 delta 经过宿主 100ms 缓冲后才发布，旧插件用 delta 作为首 token 时点，因而稍晚。截图数据的原生 TTFT 为 1,926ms；输出 69 tokens，首 token 后的生成时长为 689ms，完整请求时长为 2,615ms，分别对应原生 `1.9s / 100.1 tok/s` 与旧插件 `2.0s / 26.4 tok/s`。本次没有保存截图当时的 ephemeral delta，不能据显示值断言它的精确毫秒值。
+
+`src/performance.ts` 现在优先读取历史 `time.firstToken` 并监听原生首 token 事件，原生历史不会被缓冲 delta 覆盖。旧宿主仍回退到首个非空 delta 或可测 reasoning／tool 历史时间。历史 TPS 使用 `streamed − (firstToken ?? created)`，排除有效原生首 token 前等待；无效原生时间回退，零生成时长不伪造 TPS。重试复用消息 ID 时重置观察，以开始时间隔离旧尝试；迟到原生事件不延长完成保留期。全树平均范围、实时 TPS 的字节窗口／门槛／平滑及耗时逻辑保持原约定。
+
+环境：macOS、Node.js v22.23.2、npm 10.9.8，插件包 0.4.23、SDK 2.0.24。类型检查、269 项自动化测试、构建、冒烟脚本语法检查和 `git diff --check` 通过。新增 12 项用例覆盖截图固定时间数据、原生／delta／历史优先级与乱序到达、完成保留期、重新打开、重试复用 ID、无效时间、零生成时长、全树加权和控制器仅内存更新。
+
+真实 OpenCode 2.3.0 的 `npm run test:smoke -- --performance-only` 已通过打包、隔离安装、流式显示、完成后与原生页脚比较、真实原生事件重放及新 TUI 的纯文本历史恢复。实测 native TTFT 312ms，首 delta 晚 106ms；原生页脚为 `43.3 tok/s · 312ms ttft`，插件为 `TPS 43.3 tok/s / TTFT 0.3s`（原有秒级一位小数格式）。产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-HTcAHy`。
+
+本轮 2.3.0 **完整**冒烟未通过：`/usage` 打开宿主的 OpenCode Console 用量弹窗而非插件详情，停在 `empty /usage dialog`；标题点击入口已通过。该命令冲突尚未修复，专项通过不能视为完整宿主兼容验证，既有验证版本列表未扩展。失败产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-61zsdm`。更早一次安装被 npm 过期缓存中的 AWS 依赖版本阻塞，改用独立新缓存后正常安装；Node 22 的既有 OpenTUI 引擎警告保留。
+
+真实 OpenCode 2.0.28 的完整 `npm run test:smoke` 通过，确认缺少原生 first-token 字段的宿主仍可使用原有回退。覆盖实时 TPS／TTFT、侧边栏、`/usage` 紧凑／详细与窄终端、子代理汇总、原生累计耗时、模型切换／定价、Responses 突发与静默过期、真实分叉、已完成 compaction 与消息排序、异常流回收及首轮 synthetic 延续。旧宿主使用官方 npm 包经 SHA-512 校验后提取的独立二进制，未替换日常安装；产物：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-XV0SZj`。
+
+集成请求由本地模拟提供商响应，未调用真实付费模型或修改日常 OpenCode 配置。本次未升级版本、提交、推送或发布。
+
 ## 2026-10-21 · 实时 TPS 显示门槛（未发布）
 
 `src/performance.ts` 的实时估算仅在三项条件同时满足时开始计算和显示：单条 assistant 响应累计可观察增量至少 20 个估算 Token（UTF-8 字节数 / 4，即至少 80 字节）、当前约 2 秒窗口中至少 3 个按 100ms 合并的独立批次、有效观察跨度至少 500ms。首批内容计入累计门槛，但仍只作测速基线，不进入速度分子；不跨响应或子代理合并门槛。原有时间加权平滑、历史 TPS、TTFT 和 2000ms 静默过期规则不变。

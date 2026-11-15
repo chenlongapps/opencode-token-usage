@@ -75,6 +75,7 @@ interface ActiveStep {
   sessionID: string;
   started: number;
   first?: number;
+  nativeFirst?: boolean;
   last?: number;
   streamed?: number;
   finishedAt?: number;
@@ -105,7 +106,7 @@ export interface PreparedPerformance {
   tps?: number;
   ttftSum: number;
   ttftCount: number;
-  historical: ReadonlyMap<string, number>;
+  historical: ReadonlyMap<string, { started: number; ttft: number | undefined; native: boolean }>;
 }
 
 export type PerformanceSubscribe = (listener: (event: PerformanceEvent) => void) => () => void;
@@ -113,9 +114,19 @@ export type PerformanceListener = (sessionID: string) => void;
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
+function nativeFirst(message: UsageMessage): number | undefined {
+  const time = message.time;
+  if (!finite(time?.created) || !finite(time.firstToken) || time.firstToken < time.created) return undefined;
+  if (finite(time.streamed) && time.firstToken > time.streamed) return undefined;
+  if (finite(time.completed) && time.firstToken > time.completed) return undefined;
+  return time.firstToken;
+}
+
 function historicalFirst(message: UsageMessage): number | undefined {
   const started = message.time?.created;
   if (!finite(started)) return undefined;
+  const first = nativeFirst(message);
+  if (first !== undefined) return first - started;
   for (const part of message.content ?? []) {
     if (part.type === "text") {
       if (part.text) return undefined;
@@ -148,20 +159,22 @@ export function preparePerformance(messages: Iterable<UsageMessage>): PreparedPe
   let duration = 0;
   let ttftSum = 0;
   let ttftCount = 0;
-  const historical = new Map<string, number>();
+  const historical = new Map<string, { started: number; ttft: number | undefined; native: boolean }>();
   for (const message of messages) {
     if (message.type !== "assistant") continue;
     const created = message.time?.created;
     const streamed = message.time?.streamed;
+    const first = nativeFirst(message);
+    const streamStart = first ?? created;
     const tokens = normalize(message.tokens);
     const generated = tokens.output + tokens.reasoning;
-    if (finite(created) && finite(streamed) && streamed > created && generated > 0) {
+    if (finite(streamStart) && finite(streamed) && streamed > streamStart && generated > 0) {
       output += generated;
-      duration += streamed - created;
+      duration += streamed - streamStart;
     }
     const sample = historicalFirst(message);
+    if (finite(created)) historical.set(message.id, { started: created, ttft: sample, native: first !== undefined });
     if (sample !== undefined && finite(sample) && sample >= 0) {
-      historical.set(message.id, sample);
       ttftSum += sample;
       ttftCount++;
     }
@@ -180,7 +193,10 @@ function performanceWithObservations(
   let ttftSamples = prepared.ttftCount;
   for (const sample of observed.values()) {
     const old = prepared.historical.get(sample.messageID);
-    if (old !== undefined) { ttft -= old; ttftSamples--; }
+    // A retry can reuse the message ID. Only observations for the same or a
+    // newer attempt may replace history; native history beats a buffered delta.
+    if (old && (old.started > sample.started || (old.started === sample.started && old.native))) continue;
+    if (old?.ttft !== undefined) { ttft -= old.ttft; ttftSamples--; }
     ttft += sample.first - sample.started;
     ttftSamples++;
   }
@@ -420,7 +436,8 @@ export class PerformanceMonitor {
 
     if (event.type === "session.step.started") {
       if (!finite(data.started)) return false;
-      if (this.active.has(key)) return false;
+      const previous = this.active.get(key);
+      if (previous && (data.started <= previous.started || data.started < previous.latest)) return false;
       // A session's foreground steps are serial; missing endings must not accumulate
       // forever just because the same session continues to run later steps.
       for (const step of this.active.values()) {
@@ -436,12 +453,31 @@ export class PerformanceMonitor {
         messageID, sessionID, started: data.started, bytes: 0, samples: [], events: new Set(),
         checkedAt: this.monotonic(), revision: 0, latest: Math.max(data.started, finite(event.created) ? event.created : data.started),
       });
+      this.observed.delete(key);
+      if (previous) this.publish(sessionID);
       this.scheduleCleanup();
       return false;
     }
 
     const step = this.active.get(key);
     if (!step) return false;
+    if (event.type === "session.step.first-token") {
+      if (step.nativeFirst || !finite(event.created) || event.created < step.started) return false;
+      if (step.streamed !== undefined && event.created > step.streamed) return false;
+      if (step.finishedAt !== undefined && !step.inactive && event.created > step.latest) return false;
+      // The host records this before its 100ms delta delivery buffer. It may
+      // arrive after a delta or completion; replace the fallback, not its expiry.
+      if (step.finishedAt === undefined || (step.inactive && event.created >= step.latest)) this.touch(step, event.created);
+      step.first = event.created;
+      step.nativeFirst = true;
+      this.observed.set(key, {
+        messageID, sessionID, started: step.started, first: event.created,
+        ...(step.finishedAt !== undefined ? { expiresAt: step.finishedAt + this.retention } : {}),
+      });
+      this.scheduleCleanup();
+      this.publish(sessionID);
+      return true;
+    }
     if (event.type === "session.retry.scheduled" || (event.type.startsWith("session.tool.") && event.type !== "session.tool.input.delta")) {
       if (!finite(event.created) || event.created < step.latest) return false;
       if (event.type === "session.retry.scheduled") {

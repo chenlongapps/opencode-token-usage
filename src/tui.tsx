@@ -434,7 +434,7 @@ export default Plugin.define({
             title: "Token usage",
             group: "Session",
             palette: true,
-            slash: { name: "usage" },
+            slash: { name: "token-usage" },
             enabled: () => context.ui.router.current().type === "session",
             run: () => {
               const route = context.ui.router.current();

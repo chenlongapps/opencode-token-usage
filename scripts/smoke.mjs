@@ -11,6 +11,7 @@ import { checkOpenCodeVersion, resolveOpenCodeBinary, verifiedOpenCodeVersions }
 import { respond as respondResponses } from "../test/fixtures/responses.mjs";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
+const performanceOnly = process.argv.includes("--performance-only");
 const opencode = resolveOpenCodeBinary(process.env);
 const work = await mkdtemp(path.join(tmpdir(), "token-usage-smoke-"));
 const project = path.join(work, "project");
@@ -23,7 +24,7 @@ const env = {
   XDG_STATE_HOME: path.join(work, "state"), XDG_CACHE_HOME: path.join(work, "cache"),
   TERM: "xterm-256color", COLORTERM: "truecolor",
   // The baseline uses tabs.enabled; current OpenCode still supports this spelling.
-  OPENCODE_CLI_CONFIG_CONTENT: JSON.stringify({ session: { sidebar: "auto" }, tabs: { enabled: false }, animations: false }),
+  OPENCODE_CLI_CONFIG_CONTENT: JSON.stringify({ session: { sidebar: "auto", tps: true }, tabs: { enabled: false }, animations: false }),
 };
 delete env.OPENCODE_CONFIG;
 delete env.OPENCODE_CONFIG_CONTENT;
@@ -191,6 +192,7 @@ const scrollToEnd = (tui, check, label) => wait(() => {
   return false;
 }, label);
 const runtimeResults = {};
+let nativePerformance;
 // Independent oracle: the host's native footer backward scan, once per final turn.
 // Before a new session's first idle, its metadata identifies one continuous turn.
 // This uses only projected messages, never experimental session execution logs.
@@ -300,7 +302,43 @@ const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
   return entry;
 };
 
-try {
+// A focused lane can verify native timing even if unrelated host UI commands
+// change. The full lane remains responsible for dialogs, forks and compaction.
+const verifyNativePerformance = async (snapshot, tui, sessionID) => {
+  const firstAssistant = viewedMessages(snapshot).find(message => message.type === "assistant");
+  if (Number(host.version.split(".")[1]) >= 3) assert.ok(Number.isFinite(firstAssistant.time.firstToken),
+    "OpenCode 2.3+ persists native first-token timing through the existing SDK adapter");
+  if (firstAssistant.time.firstToken === undefined) {
+    assert.ok(!performanceOnly, "the native-performance lane requires a host with first-token timing");
+    return;
+  }
+  const time = firstAssistant.time;
+  const ttft = time.firstToken - time.created;
+  const tps = (firstAssistant.tokens.output + firstAssistant.tokens.reasoning) / ((time.streamed - time.firstToken) / 1_000);
+  assert.deepEqual(historicalPerformance(uniqueMessages(snapshot)), { tps, ttft },
+    "packed history calculation matches the independent native formula");
+  const capturedFirst = streamEvents.find(event => event.type === "session.step.first-token" && event.data.assistantMessageID === firstAssistant.id);
+  const capturedDelta = streamEvents.find(event => event.type === "session.text.delta" && event.data.assistantMessageID === firstAssistant.id);
+  assert.equal(capturedFirst?.created, time.firstToken);
+  assert.ok(capturedDelta?.created > time.firstToken, "host's buffered delta arrives after the native first-token marker");
+  const replay = new PerformanceMonitor();
+  try {
+    for (const event of streamEvents) replay.handle(event);
+    assert.equal(replay.summary([], [sessionID]).ttft, ttft, "native live event wins over delayed delivery");
+  } finally { replay.dispose(); }
+  const matchesPerformance = screen => new RegExp(`TTFT\\s+${(ttft / 1_000).toFixed(1).replace(".", "\\.")}s`).test(screen)
+    && new RegExp(`TPS\\s+${tps.toFixed(1).replace(".", "\\.")} tok/s`).test(screen)
+    && screen.includes(`· ${tps.toFixed(1)} tok/s`) && screen.includes(`${formatDuration(ttft)} ttft`);
+  await wait(() => matchesPerformance(tui.screen()), "native footer and plugin first-token metrics agree");
+  const reopened = openTui(sessionID);
+  await wait(() => matchesPerformance(reopened.screen()), "new TUI restores native TTFT from text-only history");
+  await reopened.save("05-native-performance-reopened");
+  reopened.process.kill("SIGTERM");
+  console.log("PASS: native first-token events/history match the footer, exclude delta buffering and survive reopening");
+  return { ttft, tps, deltaDelay: capturedDelta.created - time.firstToken };
+};
+
+const run = async () => {
   await wait(() => {
     const password = serverLog.match(/server password (\S+)/)?.[1];
     if (!password) return false;
@@ -339,6 +377,26 @@ try {
   assert.doesNotMatch(tui.screen(), /\/ 128,000/, "empty session shows no context rows");
   assert.doesNotMatch(tui.screen(), /\b(?:TPS|TTFT)\b/, "empty session hides unavailable performance rows");
   await tui.save("01-empty");
+  if (performanceOnly) {
+    const prompt = client.session.prompt({ sessionID: root.id, text: "FIRST_SMOKE Return SMOKE_OK." });
+    await wait(() => /TPS\s+~[\d.]+ tok\/s/.test(tui.screen()) && /TTFT\s+[\d.]+s/.test(tui.screen()), "native live TPS and TTFT");
+    const live = await loadSnapshot(source, root.id, new AbortController().signal);
+    const first = viewedMessages(live).find(message => message.type === "assistant");
+    const ttft = first.time.firstToken - first.time.created;
+    assert.ok(Number.isFinite(ttft));
+    await wait(() => new RegExp(`TTFT\\s+${(ttft / 1_000).toFixed(1).replace(".", "\\.")}s`).test(tui.screen()), "native TTFT while streaming");
+    await tui.save("04-native-performance-streaming");
+    streamGates.get("FIRST_SMOKE").resolve();
+    await prompt;
+    await client.session.wait({ sessionID: root.id });
+    const completed = await loadSnapshot(source, root.id, new AbortController().signal);
+    nativePerformance = await verifyNativePerformance(completed, tui, root.id);
+    await writeFile(path.join(work, "result.json"), JSON.stringify({
+      version: host.version, binary: opencode, scope: "native-performance", root: root.id,
+      nativePerformance, package: packed[0].filename, files,
+    }, null, 2));
+    return;
+  }
   // Match only the panel title, not the host's separate "Token Usage Smoke" session title.
   const sidebarTitle = /Token Usage\s*$/;
   const requestsBeforeSidebar = requests.length;
@@ -364,10 +422,21 @@ try {
   await wait(() => !/Context Window/.test(tui.screen()) && /Steps\s+0\b/.test(tui.screen()), "close sidebar dialog with Escape");
   assert.equal((await client.message.list({ sessionID: root.id })).data.length, 0, "sidebar clicks do not add messages");
   assert.equal(requests.length, requestsBeforeSidebar, "sidebar clicks do not call the provider");
-  tui.send("/usage");
+  if (Number(host.version.split(".")[1]) >= 3) {
+    tui.send("/usage");
+    await new Promise(resolve => setTimeout(resolve, 250));
+    tui.send("\r");
+    await wait(() => /Sign in to OpenCode Console/.test(tui.screen()), "native /usage remains available");
+    assert.doesNotMatch(tui.screen(), /Context Window|Context Breakdown/, "native /usage is not the plugin dialog");
+    tui.send("\x1b");
+    await wait(() => !/Sign in to OpenCode Console/.test(tui.screen()), "close native usage dialog");
+    assert.equal((await client.message.list({ sessionID: root.id })).data.length, 0);
+    assert.equal(requests.length, requestsBeforeSidebar, "native usage does not prompt the model");
+  }
+  tui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   tui.send("\r");
-  await wait(() => /By Model/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty /usage dialog");
+  await wait(() => /By Model/.test(tui.screen()) && /No model usage yet/.test(tui.screen()), "empty /token-usage dialog");
   assert.doesNotMatch(tui.screen(), /Used \/ Limit/, "empty context does not show a fabricated zero");
   assert.match(tui.screen(), /Request usage unavailable/);
   assert.doesNotMatch(tui.screen(), /Run Time/, "compact usage hides zero runtime");
@@ -379,6 +448,8 @@ try {
   await tui.save("01-empty-usage-dialog");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()), "close empty usage dialog");
+  assert.equal((await client.message.list({ sessionID: root.id })).data.length, 0, "/token-usage is a local UI command");
+  assert.equal(requests.length, requestsBeforeSidebar, "/token-usage does not call the provider");
   console.log("PASS: packed plugin loads; empty sidebar hides zero-value and context rows and shows Steps 0");
 
   const emptyChild = await client.session.create({ parentID: root.id, title: "Empty Child Smoke" });
@@ -398,7 +469,7 @@ try {
   emptyChildTui.process.kill("SIGTERM");
   emptyNarrowChild.process.kill("SIGTERM");
   await client.session.remove({ sessionID: emptyChild.id });
-  console.log("PASS: zero runtime is hidden in sidebar, both /usage modes, child summary/dialog and narrow child views");
+  console.log("PASS: zero runtime is hidden in sidebar, both /token-usage modes, child summary/dialog and narrow child views");
 
   const switchTarget = await client.session.create({ location: { directory: project }, title: "Live Switch Target", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const switchPrompt = client.session.prompt({ sessionID: switchTarget.id, text: "SWITCH_SMOKE" });
@@ -496,13 +567,14 @@ try {
   await wait(() => runtimeRow(tui.screen(), firstRunTime), "first native turn runtime settles");
   assert.ok(tui.screen().split("\n").some(line => line.includes(`· ${formatDuration(firstRunTime)} ·`)),
     "the first turn's cumulative value matches the host's visible native footer");
+  nativePerformance = await verifyNativePerformance(snapshot, tui, root.id);
   await new Promise(resolve => setTimeout(resolve, 1_200));
   assert.ok(runtimeRow(tui.screen(), firstRunTime), "idle time does not increase runtime");
   const messagesBeforeUsage = (await client.message.list({ sessionID: root.id })).data.length;
-  tui.send("/usage");
+  tui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   tui.send("\r");
-  await wait(() => /Context Breakdown/.test(tui.screen()) && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "root /usage dialog");
+  await wait(() => /Context Breakdown/.test(tui.screen()) && /Used \/ Limit\s+1\.3K \/ 128\.0K \(1\.0%\)/.test(tui.screen()), "root /token-usage dialog");
   const reported = viewedMessages(snapshot).findLast(message => message.type === "assistant" && message.tokens);
   assert.ok(reported.time.streamed, "host records the reported request's stream end");
   const requestTime = new Date(reported.time.streamed).toLocaleTimeString();
@@ -538,8 +610,8 @@ try {
   await tui.save("06-usage-dialog-root");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()) && /Context\s+1,270 \/ 128,000/.test(tui.screen()), "close usage dialog");
-  assert.equal((await client.message.list({ sessionID: root.id })).data.length, messagesBeforeUsage, "/usage does not prompt the model");
-  console.log("PASS: /usage opens a native scrollable dialog with context window, request, sources, session and model costs without a prompt");
+  assert.equal((await client.message.list({ sessionID: root.id })).data.length, messagesBeforeUsage, "/token-usage does not prompt the model");
+  console.log("PASS: /token-usage opens a native scrollable dialog with context window, request, sources, session and model costs without a prompt");
   const requestsBeforeReopen = requests.length;
   for (const close of [() => tui.click("esc"), () => tui.send("\x1b")]) {
     tui.click(sidebarTitle);
@@ -557,7 +629,7 @@ try {
   console.log("PASS: sidebar title opens the same compact/detailed usage dialog; other buttons, rows and drag selection do not; close/reopen preserves the viewed session without prompting");
   const narrowTui = openTui(root.id, { cols: 100, rows: 28 });
   await wait(() => /SMOKE_OK/.test(narrowTui.screen()), "narrow TUI session");
-  narrowTui.send("/usage");
+  narrowTui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   narrowTui.send("\r");
   await wait(() => /Used \/ Limit/.test(narrowTui.screen()), "narrow usage dialog");
@@ -571,7 +643,7 @@ try {
   await wait(() => !/By Model/.test(narrowTui.screen()), "close narrow usage dialog");
   const slimTui = openTui(root.id, { cols: 48, rows: 28 });
   await wait(() => /SMOKE_OK/.test(slimTui.screen()), "slim TUI session");
-  slimTui.send("/usage");
+  slimTui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   slimTui.send("\r");
   await wait(() => /Context Window/.test(slimTui.screen()), "slim usage dialog");
@@ -642,7 +714,7 @@ try {
   const switchedSnapshot = await loadSnapshot(source, root.id, new AbortController().signal);
   const switchedSummary = summarize(uniqueMessages(switchedSnapshot), switchedSnapshot.model.catalog);
   assert.equal(switchedSummary.cost, tree.cost, "model switching does not reprice recorded history");
-  tui.send("/usage");
+  tui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   tui.send("\r");
   await wait(() => /Used \/ Limit\s+1\.3K \/ 32\.0K \(4\.0%\)/.test(tui.screen()), "usage after model switch");
@@ -655,7 +727,7 @@ try {
 
   await client.session.switchModel({ sessionID: root.id, model: { providerID: "usage-test", id: "unknown-context" } });
   await wait(() => !/Context\s+1,270 \/ 32,000/.test(tui.screen()), "unknown context limit hides sidebar context");
-  tui.send("/usage");
+  tui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   tui.send("\r");
   await wait(() => /Token Usage Smoke · usage-test\/unknown-context/.test(tui.screen())
@@ -683,7 +755,7 @@ try {
   assert.equal(officialSummary.costStatus, "complete");
   const officialTui = openTui(officialTarget.id);
   await wait(() => /Est\. Cost\s+<\$0\.001/.test(officialTui.screen()), "official fallback cost in sidebar");
-  officialTui.send("/usage");
+  officialTui.send("/token-usage");
   await new Promise(resolve => setTimeout(resolve, 250));
   officialTui.send("\r");
   await wait(() => /By Model/.test(officialTui.screen()), "official fallback usage dialog");
@@ -759,7 +831,7 @@ try {
     await wait(() => childView.screen().split("\n").some(line => line.includes(`Time ${formatDuration(afterChildRunning, true)}`)
       && !/~|Running\./.test(line)), "completed child restores native runtime without estimate or running labels");
   }
-  console.log("PASS: elapsed runtime advances with ~ and no running labels in sidebar, both /usage modes and child summary/dialog/narrow view, then settles to native timing without advancing idle parents");
+  console.log("PASS: elapsed runtime advances with ~ and no running labels in sidebar, both /token-usage modes and child summary/dialog/narrow view, then settles to native timing without advancing idle parents");
   const reasoningTarget = await client.session.create({ location: { directory: project }, title: "Reasoning Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   const reasoningTui = openTui(reasoningTarget.id);
   await wait(() => /Token Usage/.test(reasoningTui.screen()), "reasoning sidebar");
@@ -975,7 +1047,11 @@ try {
   const firstTurnRuntime = { session: firstTurnTarget.id, firstInput: firstInput.time.created, deliveries: deliveries.map(input => input.id), beforeSynthetic, afterSynthetic, reopened: reopenedFirstTurn, focused: focusedFirstTurn, compact: compactFirstTurn, detailed: detailedFirstTurn, native: firstTurnNative };
   console.log("PASS: first-turn synthetic/tool continuations, new TUI restoration and terminal refocus retain elapsed runtime before the first idle");
 
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, nativePerformance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+};
+
+try {
+  await run();
 } finally {
   orphanMonitor?.dispose();
   for (const gate of streamGates.values()) gate.resolve();
