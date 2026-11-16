@@ -69,11 +69,11 @@ opencode plugin add @chenlongapps/opencode-token-usage
 
 ### 兼容性
 
-需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。此前发布已验证 OpenCode 2.0.9 和 2.0.10；SDK 2.0.24 集成检查已在 OpenCode 2.0.11、2.0.22、2.0.24、2.0.26 和 2.0.28 上通过。原生对话耗时与侧边栏标题点击的集成验证使用 2.0.26 和 2.0.28，其余列出的宿主检查早于这些功能加入。已测试组合见[验证记录](docs/verification.md)。
+需要 Node.js 22+（见[开发](#开发)中的 OpenTUI 引擎说明）。使用 SDK **2.3.0** 的完整打包集成检查已在 OpenCode **2.0.28** 和 **2.3.0** 上通过。此前 SDK／发布组合曾验证 2.0.9–2.0.11、2.0.22、2.0.24、2.0.26 和 2.1.2；这些历史结果不代表已验证当前 SDK 的兼容性。已测试组合见[验证记录](docs/verification.md)。
 
 **0.4.24** 使用 `/token-usage` 打开插件详情，`/usage` 留给 OpenCode 原生命令。TTFT 与历史 TPS 在可用时优先采用原生首 token 时间，旧宿主保留回退。
 
-OpenCode **2.3.0 仅通过部分验证**：插件详情、与原生 `/usage` 共存、原生性能计时和历史恢复已通过；完整冒烟停在子代理总量不匹配（实际 6,350，预期 5,080），尚未确认完整兼容。上述变更已通过 OpenCode **2.0.28 完整打包回归**，详见[验证记录](docs/verification.md)。
+OpenCode **2.3.0 现已通过完整检查**，包含插件详情与原生 `/usage` 共存、原生性能计时、历史恢复、子代理、分叉和压缩。此前 6,350 与 5,080 的差异来自旧夹具假设：后台子代理完成会触发父会话额外调用一次模型。冒烟现按实际模拟提供商请求独立核验总量。
 
 ### 详细用量
 
@@ -150,7 +150,7 @@ npm run test:smoke
 
 针对提供 `time.firstToken` 的宿主，可运行 `npm run test:smoke -- --performance-only` 验证原生 TTFT/TPS。该专项检查覆盖流式计时、原生页脚和重开会话后的历史恢复，不能替代完整集成检查。
 
-OpenCode SDK 包精确锁定为 `2.0.24`，OpenTUI 为 `0.5.14`。Node.js 22 下已通过干净安装、类型检查、测试、构建和真实宿主 smoke。OpenTUI 为其原生 Node 运行时声明 Node.js `>=26.4.0`，因此 Node 22 安装时 npm 会输出 `EBADENGINE`；启用 `engine-strict` 时须使用满足该依赖引擎要求的 Node 版本。插件的 TUI 在 OpenCode 内运行，并非独立的 Node 22 渲染器。本次升级保持项目 Node.js 22+ 的最低要求不变。
+OpenCode SDK 包精确锁定为 `2.3.0`，OpenTUI 为 `0.8.4`，Solid 与编译器为 `1.9.16`。OpenTUI 为其原生 Node 运行时声明 Node.js `>=26.4.0`，因此 Node 22 安装时 npm 会输出 `EBADENGINE`；启用 `engine-strict` 时须使用满足该依赖引擎要求的 Node 版本。插件的 TUI 在 OpenCode 内运行，并非独立的 Node 22 渲染器。项目 Node.js 22+ 的最低要求不变；该依赖组合的检查见[验证记录](docs/verification.md)。
 
 [价格更新工作流](.github/workflows/update-prices.yml) 每 4 小时检查 models.dev，也可在 `main` 上通过 **Run workflow** 手动触发。快照无变化就不发布。经审核的原厂来源白名单内有变化时，先通过类型检查、测试、构建和打包检查，再自动升级 patch 版本（例如 `0.4.4` → `0.4.5`），只提交 `src/prices.generated.ts`、`package.json` 和 `package-lock.json`，并原子推送 `main` 与版本标签。工作流创建 GitHub Release，显式触发该标签上的 [`publish.yml`](.github/workflows/publish.yml)，通过 npm Trusted Publishing/OIDC 发布，无需长期 npm token。仓库必须允许 GitHub Actions 推送 `main` 和创建标签；npm 必须信任 `publish.yml` 并允许执行 `npm publish`。
 
@@ -164,10 +164,12 @@ OpenCode SDK 包精确锁定为 `2.0.24`，OpenTUI 为 `0.5.14`。Node.js 22 下
 
 默认使用 `PATH` 中的 `opencode`。OpenCode 2.0.9 及之后的稳定版 2.x 可以运行；尚未与当前 SDK 验证的宿主会输出警告，然后继续实际兼容性检查。仅通过版本检查不代表兼容性已验证。SDK 依赖仍独立锁定，不随本机 CLI 更新而自动升级。
 
+CI 配置了固定 OpenCode **2.0.28** 与 **2.3.0** 的完整打包冒烟任务，使用隔离的本地模拟提供商并上传诊断产物。会话树总量按实际模拟请求独立核验：新宿主的后台子代理完成通知可能让父会话额外调用一次模型。
+
 如需用独立安装的二进制复现基准，而不降级日常使用的安装：
 
 ```bash
-OPENCODE_BIN=/absolute/path/to/opencode-2.0.11 npm run test:smoke
+OPENCODE_BIN=/absolute/path/to/opencode-2.0.28 npm run test:smoke
 ```
 
 `OPENCODE_BIN` 为版本检查、隔离服务端和 TUI 统一选择同一个可执行文件。相对路径以执行命令时的目录为基准解析。smoke 输出和 `result.json` 会记录宿主版本与所选二进制；已测试组合见[验证记录](docs/verification.md)。

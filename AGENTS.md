@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（当前为 0.4.24），使用 `@opencode/plugin@2.0.24` 与 OpenTUI `0.5.14`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 已验证，不代表独立 Node 22 原生 TUI 渲染受支持。
+- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（当前为 0.4.24），使用 `@opencode/plugin@2.3.0`、OpenTUI `0.8.4` 与 Solid／编译器 `1.9.16`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 的验证不代表独立 Node 22 原生 TUI 渲染受支持。
 - `src/usage.ts` 负责统计、上下文、定价与格式化；`src/performance.ts` 负责历史 TPS／TTFT 与共享流式测速、突发合并和过期；`src/runtime.ts` 负责当前会话原生对话耗时累计及当前轮估算准备，`src/runtime-monitor.ts` 负责共享服务端时间锚点、单调时钟与运行结束门控；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏、子代理浮窗和 `/token-usage` 弹窗。
 - 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 默认使用 PATH 中的稳定版 OpenCode 2（最低 2.0.9）、Python 3 终端、本地模拟提供商与隔离配置验证打包产物；未验证版本只警告并继续实际检查。可用 `OPENCODE_BIN` 指定独立基准二进制，统一用于版本探测、服务端与 TUI。
 - `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。
@@ -24,6 +24,8 @@
 
 - 2026-11-16 插件详情命令已统一改为 `/token-usage`，不注册旧 `/usage` 别名；类型检查、269 项测试、真实 OpenCode 2.0.28 完整打包回归及 2.3.0 构建／打包安装、双命令共存、详情与原生性能检查通过。2.3.0 完整冒烟随后停在子代理固定总量夹具（实际 6,350，预期 5,080），不是命令冲突或摘要缺失，完整兼容仍未确认。详见 `docs/verification.md`。
 
+- 2026-11-17 SDK 升至 2.3.0，OpenTUI 0.8.4、Solid／编译器 1.9.16；Node 22 干净安装、类型检查、269 项测试、构建、打包 dry-run 及真实 OpenCode 2.0.28 / 2.3.0 完整打包冒烟通过。2.3.0 的后台子代理完成通知会额外触发父会话模型调用，夹具现按实际模拟请求独立核验五类 tokens／Steps／费用，并等待通知处理完成；PTY 输出以字节流解码，避免 UTF-8 分块导致条形图乱码。当前 SDK 的已验证列表仅保留这两个实际复测宿主，CI 配置双版本冒烟矩阵并通过 actionlint；真实 GitHub CI 尚未运行。包版本仍为 0.4.24，详见 `docs/verification.md`。
+
 ## 产品约定
 
 - 目标是为 OpenCode 2 开发一个 Node.js 插件。不要复制 OpenCode 1 的 API；在实现插件和 TUI 集成之前，请根据 OpenCode 2 文档进行验证。
@@ -40,7 +42,7 @@
 - 内置回退价从 `https://models.dev/api.json` 的原厂 Provider 自家文本模型生成；每 4 小时运行的价格工作流对已审核白名单内的快照变化，验证后自动提交快照、升级 patch 并触发 `publish.yml` 通过 npm OIDC 发布。无变化不发布，未完成的自动价格版本重试原标签，registry 故障不得当作版本不存在；`scripts/release.mjs` 负责版本、提交范围、原子推送与发布状态核验。本地可按需运行 `npm run prices:update` 并审阅提交；插件与构建均不联网。新原厂/模型系列须审核 `src/overrides.ts` 的来源白名单；无法自动处理的精确别名放 `src/aliases.ts`，有原厂依据的少量价格或计费例外放 `src/overrides.ts`。API 缺少厂商归属字段，不得把原厂平台转售第三方模型的价格冒充原厂价。测试不得锁死 models.dev 的动态费率；算法用固定夹具、快照保留来源与结构验证，人工例外可保留精确费率断言。
 - 读取失败不得显示为零用量；刷新失败保留上次完整快照，切换会话时丢弃旧请求结果。
 - 分叉不是 `parentID` 子代理关系。2.0.9 为继承消息生成带 `_序号` 后缀的 ID；这些副本的用量只归原始来源。升级 OpenCode 时必须重新核对这一实现约定。
-- 上下文用量取当前查看会话中最后一条带 `tokens` 的 assistant 消息（只搜索最后一次 `status === "completed"` 的 compaction 之后）的五类 token 之和；分母为当前查看会话活动模型的 `limit.context`，缺失、为零或非有限值时隐藏该行。它只反映被查看会话本身，不随子树累计；分叉继承副本仍计入被查看会话的上下文。宿主实现参照 OpenCode 2.0.10 侧边栏的 `Ws`/`S6`，SDK 锁定 2.0.24，已在 2.0.11 / 2.0.22 / 2.0.24 复核；升级 OpenCode 或 SDK 时必须重新核对 compaction 的 `status` 与消息排序语义。
+- 上下文用量取当前查看会话中最后一条带 `tokens` 的 assistant 消息（只搜索最后一次 `status === "completed"` 的 compaction 之后）的五类 token 之和；分母为当前查看会话活动模型的 `limit.context`，缺失、为零或非有限值时隐藏该行。它只反映被查看会话本身，不随子树累计；分叉继承副本仍计入被查看会话的上下文。宿主实现最初参照 OpenCode 2.0.10 侧边栏的 `Ws`/`S6`；当前 SDK 锁定 2.3.0，已在 2.0.28 / 2.3.0 复核真实压缩与升序历史；升级 OpenCode 或 SDK 时必须重新核对 compaction 的 `status` 与消息排序语义。
 - 上下文行是面板第一行（状态提示之后），行内为 `已用 / 上限 (百分比%)`，百分比保留一位小数、允许超过 100%。
 - 侧边栏 `Token Usage` 标题左键单击与 `/token-usage` CLI 插件斜杠命令共用同一个详情弹窗入口，不向模型发送消息；所有支持的宿主统一使用 `/token-usage`，不注册 `/usage` 别名，以避免与原生命令冲突。命令 ID 保持 `opencode-token-usage.show`，命令面板标题保持 `Token usage`。其他统计行不绑定打开行为，标题拖选、非左键与没有匹配按下的松开事件均不得误触。弹窗以宿主 `centered` 选项垂直居中；窗口宽度取宿主 `large` 档（88 列，方向随终端收窄），条形图与两列布局按该内容宽度收敛。
 - `/token-usage` 分为 Context Window、Last Request、Context Breakdown、Session、By Model 五个区域，口径互相独立：Context Window 只回答上下文占用（分母为活动模型 `limit.context`）；Last Request 是被查看会话最近一次已上报调用的五类 token 与缓存率，不依赖模型上限，请求选择遵循回退截断和已完成压缩边界，时间依次取所选 assistant 有效的 `time.streamed`、`time.completed`、`time.created`，缺失时隐藏；Session 为全树汇总；By Model 为逐模型 tokens/calls/费用，按费用降序。标题下方一行显示会话与活动模型（多模型时显示模型数量），正文不重复模型名。

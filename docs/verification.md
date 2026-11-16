@@ -1,3 +1,37 @@
+# SDK 2.3.0 与双宿主完整冒烟（2026-11-17）
+
+环境：macOS arm64、Node.js v22.23.2、npm 10.9.8。`@opencode/plugin/client/schema/theme` 统一从 2.0.24 升至 2.3.0，OpenTUI 从 0.5.14 升至 0.8.4，Solid 与 `babel-preset-solid` 升至 1.9.16，以满足新版 OpenTUI 编译器的 peer 要求。插件业务源码无需迁移。
+
+## 夹具修复与实际原因
+
+- 使用旧 SDK 在真实 2.3.0 复现原子代理摘要超时。`requests.json` 与流事件证实：父会话初始回答、subagent 工具调用、工具返回后的回答、子代理回答，以及 `<subagent state="completed">` 通知后的父会话回答共 5 次模型调用。每次固定上报 1,270 tokens，总量 6,350、费用 `$0.0063` 正确；旧宿主同步等待子代理，只有 4 次调用、5,080 tokens、`$0.00504`。这是测试夹具的生命周期假设失效，不是插件重复计费。
+- 冒烟按实际模拟提供商请求独立计算期望总量／费用，并逐条核对父子会话原始 assistant 数及五类 tokens，再检查父侧边栏、子摘要与弹窗、模型切换后的历史计价。`tree-fixture.json` 保存期望值和原始消息；`result.json` 记录实际调用数与总量。
+- 2.3+ 等待子代理完成通知被父会话消费后再读取最终状态。空闲父会话耗时检查以该通知触发的合法父轮次结算后为基线；离屏回收场景在新宿主显式保持父提供商响应运行，在旧宿主仍保持父工具等待，均以真实 `session.active()` 核验。
+- PTY stdout 直接以字节流交给 xterm，原始 ANSI 保存为 Buffer，修复 UTF-8 条形图字符跨块时被 `toString()` 解码为 `�` 的偶发断言失败。
+
+## 完整打包集成结果
+
+| SDK | 宿主 | 结果 | 全树调用 / tokens / 费用 |
+| --- | --- | --- | --- |
+| 2.3.0 | OpenCode 2.0.28 | 完整通过 | 4 / 5,080 / $0.00504 |
+| 2.3.0 | OpenCode 2.3.0 | 完整通过 | 5 / 6,350 / $0.0063 |
+
+两版均验证真实打包／隔离安装、侧边栏与标题点击、`/token-usage` 紧凑／详细／窄终端、子代理、模型切换／缺失上下文上限／价格回退、实时性能／Responses 突发与静默过期、原生累计与实时估算耗时、中断、首轮 synthetic 延续、视图恢复、终端焦点事件、异常流回收。2.3.0 另通过原生 `/usage` 共存及 first-token 性能／同屏页脚／新 TUI 历史恢复：TTFT 306ms，首 delta 晚 103ms，历史 TPS 43.6 tok/s。
+
+真实分叉在两版均保留 `_序号` 继承 ID、独立根、继承上下文与来源计费；新调用只计分叉自身。真实 compaction 均为 `status === "completed"`，升序完整历史保留旧消息，压缩边界清除旧上下文，后续 assistant 恢复上下文，compaction 不计 assistant Steps。加速 25 小时的生命周期检查不代表实际等待 25 小时，终端焦点检查不代表物理多屏／App Nap／睡眠唤醒验证。
+
+产物：
+
+- 2.3.0：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-qsXSiu`
+- 2.0.28：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-QMm0QN`
+- 旧 SDK 的 2.3.0 总量失败复现：`/private/var/folders/rw/bmx6c8hd737brl55m0_ff_b80000gn/T/opencode/token-usage-smoke-OLYgeh`
+
+## 版本与 CI 策略
+
+当前 SDK 的已验证宿主列表收敛为 2.0.28、2.3.0，旧 SDK 的历史验证保留在下方，不自动继承。仍允许稳定版 `>=2.0.9 <3.0.0` 实际执行检查，未验证版输出警告。CI 新增固定双宿主完整冒烟矩阵、Python 终端环境及诊断产物上传；actionlint 静态检查通过，尚未推送或触发真实 GitHub Actions，不能将本地通过称为远程 CI 通过。
+
+Node 22 干净 `npm ci`、类型检查、269 项自动化测试（零失败／跳过）、构建、`npm pack --dry-run --json`、`npm ls --all`、冒烟脚本语法检查与 `git diff --check` 通过。旧安装树在原地升级时触发 npm 10 的 Effect peer 解析冲突，重新生成锁文件并干净安装后解决；Solid／编译器协调升级后依赖树无 invalid peer。OpenTUI 的既有 Node >=26.4 引擎警告保留，Node 22 工具链与宿主内 TUI 的通过不代表独立 Node 22 原生渲染受支持。首次旧 SDK 打包安装还遇到继承 npm 缓存的 AWS ETARGET，使用独立缓存后恢复。包版本仍为 0.4.24，本次未提交、推送或发布。
+
 # 0.4.24 发布前验证（2026-11-15）
 
 本次在 Linux、Node.js 24.22.1、npm 11.9.0 环境中重新执行：干净安装（独立 npm 缓存）、`npm run typecheck`、269 项 `npm test`、`npm run build`、`npm pack --dry-run` 与 `git diff --check`，均通过。安装仍有固定 OpenTUI 依赖的 Node >=26.4 引擎警告。

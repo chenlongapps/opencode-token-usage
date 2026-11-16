@@ -22,3 +22,43 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm pack --dry-run
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        opencode: ['2.0.28', '2.3.0']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+      - run: npm ci
+      - name: Install the pinned OpenCode host
+        env:
+          OPENCODE_VERSION: ${{ matrix.opencode }}
+        run: npm install --prefix "$RUNNER_TEMP/smoke-host" --no-audit --no-fund --ignore-scripts "@opencode/cli-linux-x64@$OPENCODE_VERSION"
+      - name: Run the packaged integration suite
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/smoke-host/node_modules/@opencode/cli-linux-x64/bin/opencode
+          TMPDIR: ${{ runner.temp }}
+          npm_config_cache: ${{ runner.temp }}/smoke-npm-cache
+        run: npm run test:smoke
+      - name: Upload smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-${{ matrix.opencode }}
+          path: |
+            ${{ runner.temp }}/token-usage-smoke-*/*.json
+            ${{ runner.temp }}/token-usage-smoke-*/*.txt
+            ${{ runner.temp }}/token-usage-smoke-*/*.ansi
+            ${{ runner.temp }}/token-usage-smoke-*/*.log
+          if-no-files-found: ignore
+          retention-days: 7

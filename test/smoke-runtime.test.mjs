@@ -6,11 +6,12 @@ import { checkOpenCodeVersion, resolveOpenCodeBinary } from "../scripts/smoke-ru
 test("smoke accepts historical hosts without claiming all were verified with the current SDK", () => {
   assert.deepEqual(checkOpenCodeVersion("opencode v2.0.9"), { version: "2.0.9", verified: false });
   assert.deepEqual(checkOpenCodeVersion("opencode v2.0.10"), { version: "2.0.10", verified: false });
-  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.11\n"), { version: "2.0.11", verified: true });
-  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.22"), { version: "2.0.22", verified: true });
-  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.24"), { version: "2.0.24", verified: true });
-  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.26"), { version: "2.0.26", verified: true });
+  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.11\n"), { version: "2.0.11", verified: false });
+  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.22"), { version: "2.0.22", verified: false });
+  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.24"), { version: "2.0.24", verified: false });
+  assert.deepEqual(checkOpenCodeVersion("opencode v2.0.26"), { version: "2.0.26", verified: false });
   assert.deepEqual(checkOpenCodeVersion("opencode v2.0.28"), { version: "2.0.28", verified: true });
+  assert.deepEqual(checkOpenCodeVersion("opencode v2.3.0"), { version: "2.3.0", verified: true });
 });
 
 test("newer OpenCode 2 hosts can run compatibility checks without updating an allowlist", () => {

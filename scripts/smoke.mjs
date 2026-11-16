@@ -60,7 +60,7 @@ const { prepareRuntime, summarizeRuntime } = await import(path.join(plugin, "dis
 let childAgent = "general";
 const requests = [];
 // Keep live checks observable until the TUI has rendered them, rather than racing a fixed delay.
-const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE", "TOOL_WAIT_SMOKE", "FIRST_TURN_TOOL_SMOKE", "FIRST_TURN_CONTINUE_SMOKE"]
+const streamGates = new Map(["SWITCH_SMOKE", "FIRST_SMOKE", "LONG_TTFT_SMOKE", "REASONING_SMOKE", "RUNTIME_INTERRUPT_SMOKE", "CHILD_RUNNING_SMOKE", "TOOL_WAIT_SMOKE", "PARENT_WAIT_SMOKE", "FIRST_TURN_TOOL_SMOKE", "FIRST_TURN_CONTINUE_SMOKE"]
   .map(marker => [marker, { started: false, ...Promise.withResolvers() }]));
 const responsesGates = { started: false, textEnded: false, burst: Promise.withResolvers(), finish: Promise.withResolvers() };
 const compactionSummary = `## Objective
@@ -95,7 +95,7 @@ const mock = createServer(async (request, response) => {
     }
     const lastUser = data.messages.findLastIndex(message => message.role === "user");
     const userText = JSON.stringify(data.messages[lastUser]);
-    const gate = [...streamGates].find(([marker]) => userText.includes(marker))?.[1];
+    let gate = [...streamGates].find(([marker]) => userText.includes(marker))?.[1];
     const longTtftSmoke = userText.includes("LONG_TTFT_SMOKE");
     const reasoningSmoke = userText.includes("REASONING_SMOKE");
     const compactionSmoke = (userText.includes("## Objective") && userText.includes("## Work State"))
@@ -107,6 +107,10 @@ const mock = createServer(async (request, response) => {
       name: "subagent", arguments: JSON.stringify({ agent: childAgent, description: "Usage smoke child",
         prompt: userText.includes("LONG_TOOL_SMOKE") ? "TOOL_WAIT_SMOKE Return CHILD_DONE." : "Return CHILD_DONE." }),
     } }] : undefined;
+    // New hosts do not block the parent on its background child. Hold the
+    // parent's continuation at the provider instead, so both remain genuinely
+    // active during the lifecycle check; old hosts still wait inside the tool.
+    if (userText.includes("LONG_TOOL_SMOKE") && !toolCalls) gate = streamGates.get("PARENT_WAIT_SMOKE");
     // Gated live-rate fixtures must exceed the response-wide 80-byte threshold.
     const content = compactionSmoke ? compactionSummary : toolCalls ? undefined : gate ? "SMOKE_OK ".repeat(10).trim() : "SMOKE_OK";
     const usage = reasoningSmoke ? {
@@ -184,6 +188,17 @@ const wait = async (check, label, timeout = 30_000) => {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out: ${label}`);
+};
+const settleChild = async (parentID, childID) => {
+  await client.session.wait({ sessionID: childID });
+  // Since 2.3, subagent returns immediately and completion is delivered as a
+  // synthetic input. The parent's first idle need not be the final idle.
+  if (Number(host.version.split(".")[1]) >= 3) {
+    await wait(() => requests.some(request => request.messages?.some(message =>
+      message.role === "user" && String(message.content).includes(`<subagent sessionID="${childID}"`))),
+    "parent consumes the background child's completion notification");
+  }
+  await client.session.wait({ sessionID: parentID });
 };
 const scrollToEnd = (tui, check, label) => wait(() => {
   if (check(tui.screen())) return true;
@@ -269,14 +284,16 @@ const openTui = (sessionID, size = { cols: 160, rows: 54 }) => {
   const process = spawn("python3", [path.join(repo, "scripts/terminal.py"), opencode, "--server", `http://127.0.0.1:${port}`, "--session", sessionID], {
     cwd: project, env: { ...env, USAGE_SMOKE_COLS: String(size.cols), USAGE_SMOKE_ROWS: String(size.rows) },
   });
-  let raw = "";
-  process.stdout.on("data", data => { raw += data; terminal.write(data.toString()); });
-  process.stderr.on("data", data => { raw += data; });
+  const raw = [];
+  // PTY chunks may split a UTF-8 glyph. Let xterm's streaming decoder join
+  // bytes instead of replacing partial block characters in each chunk.
+  process.stdout.on("data", data => { raw.push(data); terminal.write(data); });
+  process.stderr.on("data", data => { raw.push(data); });
   terminal.onData(data => { if (!process.stdin.destroyed) process.stdin.write(data); });
   const screen = () => Array.from({ length: terminal.rows }, (_, line) => terminal.buffer.active.getLine(line)?.translateToString(true) ?? "").join("\n");
   const save = async name => {
     await writeFile(path.join(work, `${name}.txt`), screen());
-    await writeFile(path.join(work, `${name}.ansi`), raw);
+    await writeFile(path.join(work, `${name}.ansi`), Buffer.concat(raw));
   };
   const send = data => process.stdin.write(data);
   const position = text => {
@@ -660,25 +677,50 @@ const run = async () => {
   await client.session.prompt({ sessionID: root.id, text: "SPAWN_SMOKE_CHILD" });
   await wait(async () => (await client.session.list({ parentID: root.id })).data.length > 0, "real subagent creation");
   const child = (await client.session.list({ parentID: root.id })).data[0];
-  await client.session.wait({ sessionID: root.id });
+  await settleChild(root.id, child.id);
+  // Independent oracle: count this tree's actual mock-provider requests, not
+  // the plugin's summary. Old hosts make four calls; background delivery adds
+  // a fifth on 2.3. Each fixture response reports the same five token classes.
+  const rootRequests = requests.filter(request => request.stream && request.messages?.some(message =>
+    message.role === "user" && message.content === "FIRST_SMOKE Return SMOKE_OK."));
+  const childRequests = requests.filter(request => request.stream && request.messages?.some(message =>
+    message.role === "user" && String(message.content).endsWith("Return CHILD_DONE.")));
+  assert.ok(rootRequests.length >= 3, "root includes its initial response, tool call and continuation");
+  assert.equal(childRequests.length, 1, "one child inference request");
+  const treeCalls = rootRequests.length + childRequests.length;
+  const expectedTree = { calls: treeCalls, total: treeCalls * 1270, cost: treeCalls * 0.00126 };
+  const rootMessages = (await client.message.list({ sessionID: root.id, order: "asc", limit: 100 })).data;
+  const childMessages = (await client.message.list({ sessionID: child.id, order: "asc", limit: 100 })).data;
+  for (const [messages, calls] of [[rootMessages, rootRequests.length], [childMessages, childRequests.length]]) {
+    const assistants = messages.filter(message => message.type === "assistant");
+    assert.equal(assistants.length, calls, "each provider call is projected exactly once");
+    for (const message of assistants) assert.deepEqual(message.tokens,
+      { input: 100, output: 50, reasoning: 20, cache: { read: 1000, write: 100 } });
+  }
+  await writeFile(path.join(work, "tree-fixture.json"), JSON.stringify({ expected: expectedTree, rootMessages, childMessages }, null, 2));
+  const treeInput = new RegExp(`Input\\s+${(treeCalls * 100).toLocaleString("en-US")}\\b`);
+  const treeCache = new RegExp(`Cache Read\\s+${(treeCalls * 1000).toLocaleString("en-US")}\\b`);
+  const treeTotal = new RegExp(`Total\\s+${expectedTree.total.toLocaleString("en-US")}\\b`);
+  const treeCostLabel = `$${expectedTree.cost.toFixed(3)}`;
   const rootRunTime = await ownRuntime(root.id), childRunTime = await ownRuntime(child.id);
   assert.ok(rootRunTime > firstRunTime && childRunTime > 0);
   await wait(() => runtimeRow(tui.screen(), rootRunTime), "root runtime excludes separately adding child runtime");
-  await wait(() => /Input\s+400/.test(tui.screen()) && /Cache Read\s+4,000/.test(tui.screen()), "child usage in root sidebar");
+  await wait(() => treeInput.test(tui.screen()) && treeCache.test(tui.screen()), "child usage in root sidebar");
   await tui.save("06-subagent");
   const childTui = openTui(child.id);
-  await wait(() => /Token Usage · Context 1,270 \/ 128,000 \(1\.0%\) · Total 5,080 · Cost \$0\.005 · Time [^·]+ · TPS ~?[\d.]+ tok\/s/.test(childTui.screen())
+  await wait(() => childTui.screen().includes(`Token Usage · Context 1,270 / 128,000 (1.0%) · Total ${expectedTree.total.toLocaleString("en-US")} · Cost ${treeCostLabel} · Time `)
+    && /· TPS ~?[\d.]+ tok\/s/.test(childTui.screen())
     && childTui.screen().includes(`Time ${formatDuration(childRunTime, true)}`), "subagent usage summary with its own runtime");
   const childSummary = childTui.screen().split("\n").find(line => line.includes("Token Usage ·")) ?? "";
   assert.doesNotMatch(childSummary, /ctrl\+x/i, "subagent summary does not advertise a shortcut");
-  assert.doesNotMatch(childTui.screen(), /Input\s+400/, "subagent metrics do not take up composer space while closed");
+  assert.doesNotMatch(childTui.screen(), treeInput, "subagent metrics do not take up composer space while closed");
   await childTui.save("07-child-view");
   const childMessagesBeforeUsage = (await client.message.list({ sessionID: child.id })).data.length;
   childTui.click("Token Usage ·");
-  await wait(() => /Input\s+400/.test(childTui.screen()) && /Cache Read\s+4,000/.test(childTui.screen()), "subagent usage dialog");
+  await wait(() => treeInput.test(childTui.screen()) && treeCache.test(childTui.screen()), "subagent usage dialog");
   assert.match(childTui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/);
-  assert.match(childTui.screen(), /Steps\s+4\b/);
-  assert.match(childTui.screen(), /Total\s+5,080\b/);
+  assert.match(childTui.screen(), new RegExp(`Steps\\s+${treeCalls}\\b`));
+  assert.match(childTui.screen(), treeTotal);
   assert.ok(runtimeRow(childTui.screen(), childRunTime), "child dialog restores only the child's own time");
   assert.ok(lineNumber(childTui.screen(), /\bRun Time\s+/) > Math.max(
     lineNumber(childTui.screen(), /\bTPS\s+/), lineNumber(childTui.screen(), /\bTTFT\s+/),
@@ -686,19 +728,19 @@ const run = async () => {
   const childDialogScreen = childTui.screen();
   await childTui.save("07-child-usage-dialog");
   childTui.send("\x1b");
-  await wait(() => /Token Usage · Context/.test(childTui.screen()) && !/Input\s+400/.test(childTui.screen()), "close subagent usage dialog");
+  await wait(() => /Token Usage · Context/.test(childTui.screen()) && !treeInput.test(childTui.screen()), "close subagent usage dialog");
   childTui.click("Token Usage ·");
-  await wait(() => /Input\s+400/.test(childTui.screen()), "reopen subagent usage dialog with a fresh snapshot");
+  await wait(() => treeInput.test(childTui.screen()), "reopen subagent usage dialog with a fresh snapshot");
   childTui.send("\x1b");
-  await wait(() => !/Input\s+400/.test(childTui.screen()), "close reopened subagent usage dialog");
+  await wait(() => !treeInput.test(childTui.screen()), "close reopened subagent usage dialog");
   assert.equal((await client.message.list({ sessionID: child.id })).data.length, childMessagesBeforeUsage, "subagent usage does not prompt the model");
   snapshot = await loadSnapshot(source, child.id, new AbortController().signal);
   assert.equal(snapshot.rootID, root.id);
   assert.equal(snapshot.viewedID, child.id);
   const tree = summarize(uniqueMessages(snapshot), snapshot.model.catalog);
-  assert.equal(tree.total, 5080);
-  assert.equal(tree.steps, 4, "three root assistants plus one subagent assistant");
-  assert.equal(tree.cost, 0.00504);
+  assert.equal(tree.total, expectedTree.total);
+  assert.equal(tree.steps, treeCalls, "every root and child provider call counts exactly once");
+  assert.ok(Math.abs(tree.cost - expectedTree.cost) < 1e-12);
   assert.equal(tree.costStatus, "complete");
   assert.equal(contextUsage(viewedMessages(snapshot), snapshot.model.context)?.used, 1270);
   assert.match(childDialogScreen, new RegExp(`Steps\\s+${tree.steps}\\b`), "tree-wide steps in child dialog");
@@ -719,7 +761,7 @@ const run = async () => {
   tui.send("\r");
   await wait(() => /Used \/ Limit\s+1\.3K \/ 32\.0K \(4\.0%\)/.test(tui.screen()), "usage after model switch");
   assert.match(tui.screen(), /Token Usage Smoke · usage-test\/large/);
-  await scrollToEnd(tui, screen => /usage-test\/small\s+\$0\.005\b/.test(screen), "historical costs stay on the recorded model");
+  await scrollToEnd(tui, screen => screen.split("\n").some(line => line.includes("usage-test/small") && line.includes(treeCostLabel)), "historical costs stay on the recorded model");
   tui.send("\x1b");
   await wait(() => !/By Model/.test(tui.screen()), "close switched usage dialog");
   await tui.save("08-model-switch");
@@ -806,7 +848,11 @@ const run = async () => {
 
   const runningChild = await client.session.create({ parentID: longTtftTarget.id, title: "Running Child Smoke" });
   await client.session.prompt({ sessionID: runningChild.id, text: "Return SMOKE_OK." });
-  await client.session.wait({ sessionID: runningChild.id });
+  await settleChild(longTtftTarget.id, runningChild.id);
+  // A completed background child can legitimately trigger a new parent turn.
+  // Measure the idle baseline after that notification, before holding the child.
+  const idleParentRuntime = await ownRuntime(longTtftTarget.id);
+  await wait(() => runtimeRow(longTtftTui.screen(), idleParentRuntime), "parent settles after child's initial completion");
   const beforeChildRunning = await ownRuntime(runningChild.id);
   assert.ok(beforeChildRunning > 0);
   await client.session.prompt({ sessionID: runningChild.id, text: "CHILD_RUNNING_SMOKE" });
@@ -815,7 +861,7 @@ const run = async () => {
   const runningNarrowChild = openTui(runningChild.id, { cols: 48, rows: 28 });
   await checkLiveRuntime(runningChildTui, "Time", beforeChildRunning, "10-running-child-summary");
   await checkLiveRuntime(runningNarrowChild, "Time", beforeChildRunning, "10-running-child-narrow");
-  assert.ok(runtimeRow(longTtftTui.screen(), afterInterrupt), "active children do not add parent runtime");
+  assert.ok(runtimeRow(longTtftTui.screen(), idleParentRuntime), "active children do not add parent runtime");
   assert.doesNotMatch(longTtftTui.screen().split("\n").find(line => line.includes("Run Time")) ?? "", /~|Running\./,
     "an idle parent does not inherit a child's runtime estimate");
   runningChildTui.click("Token Usage ·");
@@ -952,7 +998,7 @@ const run = async () => {
   } });
   const toolWaitTarget = await client.session.create({ location: { directory: project }, title: "Offscreen Tool Wait", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
   await client.session.prompt({ sessionID: toolWaitTarget.id, text: "SPAWN_SMOKE_CHILD LONG_TOOL_SMOKE" });
-  await wait(() => streamGates.get("TOOL_WAIT_SMOKE").started, "real parent waits for the held subagent tool");
+  await wait(() => streamGates.get("TOOL_WAIT_SMOKE").started, "real subagent reaches the held provider response");
   const toolWaitChild = (await client.session.list({ parentID: toolWaitTarget.id })).data[0];
   assert.ok(toolWaitChild);
   const waitingIDs = [toolWaitTarget.id, toolWaitChild.id];
@@ -969,12 +1015,13 @@ const run = async () => {
   for (const elapsed of [60 * 60_000, 24 * 60 * 60_000]) {
     age += elapsed; // Accelerated local age, not a claim of a day-long wall-clock run.
     await reconcileActivity();
-    assert.ok(waitingIDs.every(id => activitySnapshots.at(-1).includes(id)), "host considers parent tool and child provider waits running");
+    assert.ok(waitingIDs.every(id => activitySnapshots.at(-1).includes(id)), "host considers parent tool/provider and child provider waits running");
     assert.deepEqual(waitingIDs.map(id => orphanMonitor.summary([], [id]).ttft), waitingTtft);
     assert.equal(orphanMonitor.active.size, 2, "long waits retain both streams");
   }
   streamGates.get("TOOL_WAIT_SMOKE").resolve();
-  await client.session.wait({ sessionID: toolWaitTarget.id });
+  streamGates.get("PARENT_WAIT_SMOKE").resolve();
+  await settleChild(toolWaitTarget.id, toolWaitChild.id);
   await wait(() => streamEvents.some(event => event.type === "session.execution.succeeded" && event.data.sessionID === toolWaitTarget.id), "terminal events captured but withheld from the monitor");
   await reconcileActivity();
   assert.ok(waitingIDs.every(id => !activitySnapshots.at(-1).includes(id)), "host confirms both offscreen sessions inactive");
@@ -1047,7 +1094,7 @@ const run = async () => {
   const firstTurnRuntime = { session: firstTurnTarget.id, firstInput: firstInput.time.created, deliveries: deliveries.map(input => input.id), beforeSynthetic, afterSynthetic, reopened: reopenedFirstTurn, focused: focusedFirstTurn, compact: compactFirstTurn, detailed: detailedFirstTurn, native: firstTurnNative };
   console.log("PASS: first-turn synthetic/tool continuations, new TUI restoration and terminal refocus retain elapsed runtime before the first idle");
 
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: 5080, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, nativePerformance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: tree.total, calls: treeCalls, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, nativePerformance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
 };
 
 try {

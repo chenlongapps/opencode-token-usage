@@ -69,11 +69,11 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 
 ### Compatibility
 
-Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). OpenCode 2.0.9 and 2.0.10 have been verified in earlier releases. SDK 2.0.24 integration checks have passed on OpenCode 2.0.11, 2.0.22, 2.0.24, 2.0.26, and 2.0.28. Native turn durations and sidebar title clicks were integration-tested on 2.0.26 and 2.0.28; the other listed host checks predate these additions. See the [verification record](docs/verification.md) for tested combinations.
+Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). With SDK **2.3.0**, the full packaged integration suite has passed on OpenCode **2.0.28** and **2.3.0**. Earlier SDK/release combinations were tested on 2.0.9–2.0.11, 2.0.22, 2.0.24, 2.0.26 and 2.1.2; those historical results do not establish compatibility with the current SDK. See the [verification record](docs/verification.md) for tested combinations.
 
 Version **0.4.24** uses `/token-usage` for plugin details; `/usage` is reserved for OpenCode. Native first-token timestamps improve TTFT and historical TPS when available, with fallbacks for older hosts.
 
-OpenCode **2.3.0 has partial verification only**: plugin details, coexistence with built-in `/usage`, native performance timing and history restoration passed. The full smoke suite stopped at a subagent total mismatch (6,350 actual vs 5,080 expected); full compatibility is not confirmed. OpenCode **2.0.28 passed the full packaged regression** for these changes. See the [verification record](docs/verification.md).
+OpenCode **2.3.0 now passes the full suite**, including plugin details alongside built-in `/usage`, native performance timing, history restoration, subagents, forks and compaction. The earlier 6,350 vs 5,080 mismatch was an outdated fixture assumption: background child completion triggers an additional parent model call. Smoke now independently reconciles totals against actual mock-provider requests.
 
 ### Detailed usage
 
@@ -150,7 +150,7 @@ npm run test:smoke
 
 For native TTFT/TPS checks on a host with `time.firstToken`, run `npm run test:smoke -- --performance-only`. This targeted lane verifies streaming timing, the native footer and history restoration after reopening; it does not replace the full integration suite.
 
-The OpenCode SDK packages are pinned to `2.0.24`, with OpenTUI `0.5.14`. Clean installation, typecheck, tests, build, and real-host smoke have passed on Node.js 22. OpenTUI declares Node.js `>=26.4.0` for its native Node runtime, so npm reports `EBADENGINE` on Node 22; `engine-strict` installations require a Node version meeting that dependency's engine requirement. The plugin's TUI runs inside OpenCode, not as a standalone Node 22 renderer. This upgrade keeps the project's Node.js 22+ minimum unchanged.
+The OpenCode SDK packages are pinned to `2.3.0`, with OpenTUI `0.8.4` and Solid/compiler `1.9.16`. OpenTUI declares Node.js `>=26.4.0` for its native Node runtime, so npm reports `EBADENGINE` on Node 22; `engine-strict` installations require a Node version meeting that dependency's engine requirement. The plugin's TUI runs inside OpenCode, not as a standalone Node 22 renderer. The project's Node.js 22+ minimum is unchanged; see the [verification record](docs/verification.md) for checks of this dependency set.
 
 The [price update workflow](.github/workflows/update-prices.yml) checks models.dev every 4 hours (or on demand via **Run workflow** on `main`). No snapshot diff means no release. Changes within the reviewed first-party source allowlist pass typecheck, tests, build, and pack validation, then automatically bump the patch version (for example, `0.4.4` → `0.4.5`), commit only `src/prices.generated.ts`, `package.json`, and `package-lock.json`, and atomically push `main` and its version tag. The workflow creates a GitHub Release and explicitly dispatches [`publish.yml`](.github/workflows/publish.yml) on that tag to publish via npm Trusted Publishing/OIDC; no long-lived npm token is needed. GitHub Actions must be allowed to push to `main` and create tags, and npm must trust `publish.yml` with permission to run `npm publish`.
 
@@ -164,10 +164,12 @@ Performance lifecycle checks also use the real host's active-session API, with e
 
 By default, smoke uses `opencode` from `PATH`. Stable OpenCode 2 versions from 2.0.9 onward can run; a host not yet verified with the current SDK prints a warning and continues through the actual compatibility checks. Passing the version check alone does not establish compatibility. The SDK dependencies remain pinned independently of your local CLI updates.
 
+CI configures full packaged smoke jobs for pinned OpenCode **2.0.28** and **2.3.0**, using isolated local mock providers and uploading diagnostic artifacts. Tree totals are checked against actual mock-provider requests: background child-completion notifications can trigger an additional parent call on newer hosts.
+
 To reproduce a baseline with a separately installed binary, without downgrading your normal installation:
 
 ```bash
-OPENCODE_BIN=/absolute/path/to/opencode-2.0.11 npm run test:smoke
+OPENCODE_BIN=/absolute/path/to/opencode-2.0.28 npm run test:smoke
 ```
 
 `OPENCODE_BIN` selects the same executable for the version check, isolated server, and TUI. Relative paths resolve from the directory where you run the command. The host version and selected binary are recorded in the smoke output and `result.json`; see the [verification record](docs/verification.md) for tested combinations.
