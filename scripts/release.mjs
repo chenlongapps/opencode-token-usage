@@ -64,21 +64,26 @@ const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8",
 const lines = value => value ? value.split("\n").sort() : [];
 const sameFiles = (actual, expected) => JSON.stringify(actual) === JSON.stringify([...expected].sort());
 
-/** Retry only a tagged, price-only automation commit, never an unpublished manual release. */
+/** Defer manual publication; retry only a tagged, price-only automation commit. */
 export async function priceReleaseState({ cwd = process.cwd(), fetcher = fetch } = {}) {
   const pkg = await packageInfo(cwd);
   if (await registryVersion(pkg.name, pkg.version, fetcher)) return { retry: false };
   const tag = `v${pkg.version}`;
+  const deferred = {
+    retry: false, deferred: true,
+    reason: `${pkg.name}@${pkg.version} is not visible on npm yet. Skipping price updates until the manual release is published; the next scheduled run will check again.`,
+  };
+  if (!git(cwd, "tag", "--list", tag)) return deferred;
   try {
     git(cwd, "rev-parse", "--verify", `refs/tags/${tag}^{commit}`);
     git(cwd, "merge-base", "--is-ancestor", tag, "HEAD");
-    if (git(cwd, "log", "-1", "--format=%s", tag) !== commitMessage(tag)) throw new Error("Not an automated price commit");
-    const files = lines(git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", tag));
-    if (!sameFiles(files, PRICE_RELEASE_FILES)) throw new Error("Not a price-only release");
     const tagged = JSON.parse(git(cwd, "show", `${tag}:package.json`));
     if (tagged.name !== pkg.name || tagged.version !== pkg.version) throw new Error("Tag version mismatch");
+    if (git(cwd, "log", "-1", "--format=%s", tag) !== commitMessage(tag)) return deferred;
+    const files = lines(git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", tag));
+    if (!sameFiles(files, PRICE_RELEASE_FILES)) throw new Error("Not a price-only release");
   } catch (error) {
-    throw new Error(`${pkg.name}@${pkg.version} is unpublished. Finish the manual release before another price patch.`, { cause: error });
+    throw new Error(`${pkg.name}@${pkg.version} is unpublished and its release tag is invalid. Inspect ${tag} before another price patch.`, { cause: error });
   }
   return { retry: true, tag };
 }
@@ -173,7 +178,14 @@ async function output(values) {
 
 async function main() {
   switch (process.argv[2]) {
-    case "price-state": await output(await priceReleaseState()); break;
+    case "price-state": {
+      const state = await priceReleaseState();
+      await output(state);
+      if (state.deferred && process.env.GITHUB_STEP_SUMMARY) {
+        await appendFile(process.env.GITHUB_STEP_SUMMARY, `${state.reason}\n`);
+      }
+      break;
+    }
     case "prepare-price": await output(await preparePriceRelease()); break;
     case "verify-tag": {
       const pkg = await packageInfo(process.cwd());

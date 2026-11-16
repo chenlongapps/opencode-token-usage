@@ -140,19 +140,76 @@ test("an unfinished automation release retries its original tag without another 
   assert.deepEqual(await priceReleaseState({ cwd, fetcher: catalog(["0.4.4", "0.4.5"], "0.4.5") }), { retry: false });
 });
 
-test("an unpublished manual or non-price tag is never automatically published by the price job", async t => {
+test("a pending manual release defers price updates before and after tagging, then resumes once published", async t => {
   const { cwd } = await repo(t);
-  await assert.rejects(priceReleaseState({ cwd, fetcher: catalog([]) }), /Finish the manual release/);
+  const deferred = await priceReleaseState({ cwd, fetcher: catalog([]) });
+  assert.equal(deferred.retry, false);
+  assert.equal(deferred.deferred, true);
+  assert.equal(deferred.tag, undefined);
+  assert.match(deferred.reason, /@test\/prices@0.4.4.*Skipping price updates.*next scheduled run/);
   git(cwd, "tag", "v0.4.4");
-  await assert.rejects(priceReleaseState({ cwd, fetcher: catalog([]) }), /Finish the manual release/);
+  await writeFile(path.join(cwd, "README.md"), "later documentation\n");
+  git(cwd, "add", ".");
+  git(cwd, "commit", "-m", "later unrelated commit");
+  const head = git(cwd, "rev-parse", "HEAD");
+  assert.deepEqual(await priceReleaseState({ cwd, fetcher: catalog([]) }), deferred);
+  assert.deepEqual(await priceReleaseState({ cwd, fetcher: catalog() }), { retry: false });
+  assert.equal(git(cwd, "rev-parse", "HEAD"), head);
+  assert.equal(git(cwd, "status", "--porcelain"), "");
+  assert.equal((await json(path.join(cwd, "package.json"))).version, "0.4.4");
+});
 
+test("invalid automation releases still fail rather than deferring or publishing", async t => {
   const other = await repo(t);
   await changePrices(other.cwd);
   await writeFile(path.join(other.cwd, "README.md"), "not price-only\n");
   git(other.cwd, "add", ".");
   git(other.cwd, "commit", "-m", "chore: update first-party model prices (v0.4.4)");
   git(other.cwd, "tag", "v0.4.4");
-  await assert.rejects(priceReleaseState({ cwd: other.cwd, fetcher: catalog([]) }), /Finish the manual release/);
+  await assert.rejects(priceReleaseState({ cwd: other.cwd, fetcher: catalog([]) }), error => {
+    assert.match(error.message, /release tag is invalid/);
+    assert.match(error.cause.message, /Not a price-only release/);
+    return true;
+  });
+});
+
+test("mismatched manual release tags still fail instead of deferring", async t => {
+  const { cwd } = await repo(t);
+  git(cwd, "tag", "v0.4.5");
+  const pkg = await json(path.join(cwd, "package.json"));
+  const lock = await json(path.join(cwd, "package-lock.json"));
+  pkg.version = lock.version = lock.packages[""].version = "0.4.5";
+  await writeFile(path.join(cwd, "package.json"), JSON.stringify(pkg));
+  await writeFile(path.join(cwd, "package-lock.json"), JSON.stringify(lock));
+  git(cwd, "add", ".");
+  git(cwd, "commit", "-m", "manual release");
+  await assert.rejects(priceReleaseState({ cwd, fetcher: catalog() }), error => {
+    assert.match(error.cause.message, /Tag version mismatch/);
+    return true;
+  });
+});
+
+test("registry faults never become a deferred manual release", async t => {
+  const { cwd } = await repo(t);
+  for (const status of [401, 403, 429, 500, 503]) {
+    await assert.rejects(priceReleaseState({ cwd, fetcher: async () => new Response(null, { status }) }), /lookup failed/);
+  }
+  await assert.rejects(priceReleaseState({ cwd, fetcher: async () => { throw new Error("offline"); } }), /offline/);
+  await assert.rejects(priceReleaseState({ cwd, fetcher: async () => Response.json({}) }), /stable npm version/);
+});
+
+test("the price-state CLI reports deferral to workflow outputs and the job summary", async t => {
+  const { root, cwd } = await repo(t);
+  const mock = path.join(root, "registry.mjs"), summary = path.join(root, "summary.md"), output = path.join(root, "output");
+  await writeFile(mock, "globalThis.fetch = async () => new Response(null, { status: 404 });\n");
+  const stdout = execFileSync(process.execPath, ["--import", mock, path.resolve("scripts/release.mjs"), "price-state"], {
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GITHUB_STEP_SUMMARY: summary, GITHUB_OUTPUT: output },
+  });
+  assert.match(stdout, /^retry=false\ndeferred=true\nreason=/);
+  assert.equal(await readFile(output, "utf8"), stdout);
+  assert.match(await readFile(summary, "utf8"), /Skipping price updates until the manual release is published/);
+  assert.doesNotMatch(stdout, /^tag=/m);
 });
 
 test("a concurrent main push cannot leave an orphan release tag on the remote", async t => {

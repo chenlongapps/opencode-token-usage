@@ -31,14 +31,14 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Check for an unfinished price release
+      - name: Check publication state (defer pending manual releases)
         id: previous
         run: node scripts/release.mjs price-state
       - name: Refresh first-party price snapshot
-        if: steps.previous.outputs.retry != 'true'
+        if: steps.previous.outputs.retry != 'true' && steps.previous.outputs.deferred != 'true'
         run: npm run prices:update
       - name: Check for changes
-        if: steps.previous.outputs.retry != 'true'
+        if: steps.previous.outputs.retry != 'true' && steps.previous.outputs.deferred != 'true'
         id: changes
         shell: bash
         run: |
