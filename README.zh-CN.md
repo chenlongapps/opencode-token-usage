@@ -15,6 +15,8 @@
   <strong>简体中文</strong>
 </p>
 
+[![OpenCode Token Usage 插件预览](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
+
 ### 项目简介
 
 **opencode-token-usage** 是一个面向 OpenCode 2 的社区插件，在终端界面中展示 token 用量、上下文窗口占用、估算费用和性能指标。
@@ -29,8 +31,6 @@
 - **性能一目了然：** 查看每秒 token 数（TPS）、首 token 时间（TTFT）及当前会话自身的对话耗时。实时 TPS 与已耗时估算以 `~` 标记。
 - **原生终端界面：** 主会话使用侧边栏，子代理视图保留单行摘要，按需打开完整面板。
 - **按需查看详情：** 通过 `/token-usage` 切换紧凑／详细统计，查看各模型的用量与费率，不向模型发送提示词。
-
-[![OpenCode Token Usage 插件预览](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
 
 ---
 

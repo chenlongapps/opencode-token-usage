@@ -15,6 +15,8 @@
   <a href="https://github.com/chenlongapps/opencode-token-usage/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 
+[![OpenCode Token Usage plugin preview](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
+
 ### Overview
 
 **opencode-token-usage** is a community plugin that brings token usage, context window occupancy, estimated cost and performance metrics into OpenCode 2's terminal interface.
@@ -29,8 +31,6 @@ Use it to see how many tokens a session and its subagents consume, how full the 
 - **Performance at a glance:** Monitor tokens per second (TPS), time to first token (TTFT) and the viewed session's own elapsed response time. Live TPS and elapsed-time estimates are marked with `~`.
 - **Native terminal UI:** Keep a sidebar panel in the main session and a single-line summary in subagent views; open details only when needed.
 - **On-demand details:** Use `/token-usage` for compact or detailed statistics, including per-model usage and rates, without sending a prompt to the model.
-
-[![OpenCode Token Usage plugin preview](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
 
 ---
 
