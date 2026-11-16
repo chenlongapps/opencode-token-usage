@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准（当前为 0.4.24），使用 `@opencode/plugin@2.3.0`、OpenTUI `0.8.4` 与 Solid／编译器 `1.9.16`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 的验证不代表独立 Node 22 原生 TUI 渲染受支持。
+- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准，使用 `@opencode/plugin@2.3.0`、OpenTUI `0.8.4` 与 Solid／编译器 `1.9.16`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 的验证不代表独立 Node 22 原生 TUI 渲染受支持。
 - `src/usage.ts` 负责统计、上下文、定价与格式化；`src/performance.ts` 负责历史 TPS／TTFT 与共享流式测速、突发合并和过期；`src/runtime.ts` 负责当前会话原生对话耗时累计及当前轮估算准备，`src/runtime-monitor.ts` 负责共享服务端时间锚点、单调时钟与运行结束门控；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏、子代理浮窗和 `/token-usage` 弹窗。
 - 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 默认使用 PATH 中的稳定版 OpenCode 2（最低 2.0.9）、Python 3 终端、本地模拟提供商与隔离配置验证打包产物；未验证版本只警告并继续实际检查。可用 `OPENCODE_BIN` 指定独立基准二进制，统一用于版本探测、服务端与 TUI。
 - `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。
@@ -24,7 +24,7 @@
 
 - 2026-11-16 插件详情命令已统一改为 `/token-usage`，不注册旧 `/usage` 别名；类型检查、269 项测试、真实 OpenCode 2.0.28 完整打包回归及 2.3.0 构建／打包安装、双命令共存、详情与原生性能检查通过。2.3.0 完整冒烟随后停在子代理固定总量夹具（实际 6,350，预期 5,080），不是命令冲突或摘要缺失，完整兼容仍未确认。详见 `docs/verification.md`。
 
-- 2026-11-17 SDK 升至 2.3.0，OpenTUI 0.8.4、Solid／编译器 1.9.16；Node 22 干净安装、类型检查、269 项测试、构建、打包 dry-run 及真实 OpenCode 2.0.28 / 2.3.0 完整打包冒烟通过。2.3.0 的后台子代理完成通知会额外触发父会话模型调用，夹具现按实际模拟请求独立核验五类 tokens／Steps／费用，并等待通知处理完成；PTY 输出以字节流解码，避免 UTF-8 分块导致条形图乱码。当前 SDK 的已验证列表仅保留这两个实际复测宿主，CI 配置双版本冒烟矩阵并通过 actionlint；真实 GitHub CI 尚未运行。包版本仍为 0.4.24，详见 `docs/verification.md`。
+- 2026-11-17 SDK 升至 2.3.0，OpenTUI 0.8.4、Solid／编译器 1.9.16；Node 22 干净安装、类型检查、269 项测试、构建、打包 dry-run 及真实 OpenCode 2.0.28 / 2.3.0 完整打包冒烟通过。2.3.0 的后台子代理完成通知会额外触发父会话模型调用，夹具现按实际模拟请求独立核验五类 tokens／Steps／费用，并等待通知处理完成；PTY 输出以字节流解码，避免 UTF-8 分块导致条形图乱码。当前 SDK 的已验证列表仅保留这两个实际复测宿主，CI 配置双版本冒烟矩阵并通过 actionlint；该轮验证时真实 GitHub CI 尚未运行，包版本为 0.4.24。随后提交 `c8906a8` 的 GitHub CI 已通过，包括两个宿主的完整打包冒烟；详见 `docs/verification.md`。
 
 ## 产品约定
 

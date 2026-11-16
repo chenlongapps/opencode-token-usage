@@ -71,7 +71,7 @@ For remote sessions, add the package name to `plugins` in your local `~/.config/
 
 Requires Node.js 22+ (see the OpenTUI engine note under [Development](#development)). With SDK **2.3.0**, the full packaged integration suite has passed on OpenCode **2.0.28** and **2.3.0**. Earlier SDK/release combinations were tested on 2.0.9–2.0.11, 2.0.22, 2.0.24, 2.0.26 and 2.1.2; those historical results do not establish compatibility with the current SDK. See the [verification record](docs/verification.md) for tested combinations.
 
-Version **0.4.24** uses `/token-usage` for plugin details; `/usage` is reserved for OpenCode. Native first-token timestamps improve TTFT and historical TPS when available, with fallbacks for older hosts.
+Since **0.4.24**, the plugin uses `/token-usage` for details; `/usage` is reserved for OpenCode. Native first-token timestamps improve TTFT and historical TPS when available, with fallbacks for older hosts.
 
 OpenCode **2.3.0 now passes the full suite**, including plugin details alongside built-in `/usage`, native performance timing, history restoration, subagents, forks and compaction. The earlier 6,350 vs 5,080 mismatch was an outdated fixture assumption: background child completion triggers an additional parent model call. Smoke now independently reconciles totals against actual mock-provider requests.
 

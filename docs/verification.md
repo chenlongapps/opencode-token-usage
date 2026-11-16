@@ -1,3 +1,9 @@
+# 0.4.25 发布准备（2026-11-17）
+
+[GitHub CI 43921929492](https://github.com/chenlongapps/opencode-token-usage/actions/runs/43921929492) 已在依赖升级提交 `c8906a8` 上通过：Node 22 干净安装、类型检查、测试、构建、打包检查，以及 OpenCode 2.0.28／2.3.0 的完整打包冒烟均成功。该 CI 检查的是版本升级和本节文档变更之前的提交；各次记录中的发布状态均以当时为准。
+
+本地 macOS、Node.js 22.23.2 / npm 10.9.8 在版本升级前重新通过类型检查、269 项测试、构建、`npm pack --dry-run` 与 `git diff --check`。上述双宿主结果来自对应的真实 GitHub CI 运行及下方既有本地验证。
+
 # SDK 2.3.0 与双宿主完整冒烟（2026-11-17）
 
 环境：macOS arm64、Node.js v22.23.2、npm 10.9.8。`@opencode/plugin/client/schema/theme` 统一从 2.0.24 升至 2.3.0，OpenTUI 从 0.5.14 升至 0.8.4，Solid 与 `babel-preset-solid` 升至 1.9.16，以满足新版 OpenTUI 编译器的 peer 要求。插件业务源码无需迁移。

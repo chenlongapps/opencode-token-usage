@@ -4,6 +4,14 @@
 
 价格条目反映对应版本的内置快照，不代表当前费率或提供商账单。当前用法与统计口径见 [README.zh-CN.md](README.zh-CN.md)，历史检查及验证边界见[验证记录](docs/verification.md)。
 
+## [0.4.25] - 2026-11-17
+
+### 变更
+
+- OpenCode SDK 升至 2.3.0，OpenTUI 升至 0.8.4，Solid 与编译器升至 1.9.16；项目仍支持 Node.js 22+ 工具链，OpenTUI 独立原生运行时的 Node.js 要求见兼容性说明。
+- 完整打包集成检查在 OpenCode 2.0.28 和 2.3.0 上通过；冒烟夹具按实际模型请求核验子代理汇总，并修复 PTY 输出跨块时的 UTF-8 解码。
+- CI 新增上述两个固定宿主的完整冒烟矩阵及诊断产物。
+
 ## [0.4.24] - 2026-11-15
 
 ### 变更
@@ -322,6 +330,7 @@
 [0.2.0]: https://github.com/chenlongapps/opencode-token-usage/compare/1e3aec0...49f63fa
 [0.1.0]: https://github.com/chenlongapps/opencode-token-usage/tree/1e3aec0
 
+[0.4.25]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.24...v0.4.25
 [0.4.24]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.23...v0.4.24
 [0.4.23]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.22...v0.4.23
 [0.4.22]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.21...v0.4.22
