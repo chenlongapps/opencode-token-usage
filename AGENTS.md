@@ -1,58 +1,85 @@
 # 仓库指南
 
-## 当前状态
+## 项目与资料
 
-- 本仓库是 Node.js 22+、npm、TypeScript ESM 工程，包版本以 `package.json` 为准，使用 `@opencode/plugin@2.3.0`、OpenTUI `0.8.4` 与 Solid／编译器 `1.9.16`。OpenTUI 原生 Node 运行时声明 Node >=26.4，Node 22 的 npm 安装会警告 `EBADENGINE`，`engine-strict` 会拒绝；项目 Node 22 工具链与 OpenCode 宿主内 TUI 的验证不代表独立 Node 22 原生 TUI 渲染受支持。
-- `src/usage.ts` 负责统计、上下文、定价与格式化；`src/performance.ts` 负责历史 TPS／TTFT 与共享流式测速、突发合并和过期；`src/runtime.ts` 负责当前会话原生对话耗时累计及当前轮估算准备，`src/runtime-monitor.ts` 负责共享服务端时间锚点、单调时钟与运行结束门控；`src/source.ts` 负责 v2 API、分页与去重；`src/controller.ts` 负责刷新生命周期；`src/tui.tsx` 负责侧边栏、子代理浮窗和 `/token-usage` 弹窗。
-- 可执行检查：`npm run typecheck`、`npm test`、`npm run build`。`npm run test:smoke` 默认使用 PATH 中的稳定版 OpenCode 2（最低 2.0.9）、Python 3 终端、本地模拟提供商与隔离配置验证打包产物；未验证版本只警告并继续实际检查。可用 `OPENCODE_BIN` 指定独立基准二进制，统一用于版本探测、服务端与 TUI。
-- `ROADMAP.md` 区分已验证功能与后续规划；只勾选实际通过验证的项目。没有 lint 配置，不要臆造 lint 命令。
-- 修改 README 时，必须同步更新英文版 `README.md` 与简体中文版 `README.zh-CN.md`，确保安装、用法、功能和版本信息等内容一致。
-- 2026-10-02 已通过类型检查、85 项自动化测试、构建及 SDK 2.0.11 + 真实 OpenCode 2.0.11 / 2.0.22 打包集成验证，包含真实分叉、压缩与消息排序检查，记录见 `docs/verification.md`。
-- 2026-10-05 自动价格 patch 链路已通过类型检查、101 项测试、构建、打包／发布 dry-run 和工作流静态检查；真实 GitHub 调度与 npm OIDC 写入尚未触发，不得将本地验证写成已实际自动发布，记录见 `docs/verification.md`。
-- 2026-10-07 SDK 2.0.24 升级已通过 Node 22 干净安装、类型检查、103 项测试、构建及真实 OpenCode 2.0.11 / 2.0.22 / 2.0.24 打包集成验证；媒体分类兼容新 SDK 的 `part.media.mediaType` 与旧宿主的 `part.mediaType`，仍不计媒体负载。包版本与价格快照未变，未发布，记录见 `docs/verification.md`。
-- 2026-10-07 npm 发布校验修复已通过类型检查、113 项测试、构建、打包／发布 dry-run 与 actionlint 检查。已只读确认真实定时价格任务发布了 0.4.5，旧发布工作流因约 2 分钟的可见性校验超时而报“假失败”；registry 的版本与 `latest` 均已可见。新校验默认共用 10 分钟总预算，可配置并输出进度，超时保留真实错误、不掩盖故障；新实现尚未推送或在真实发布中验证，不移动旧标签，记录见 `docs/verification.md`。
-- 2026-10-09 Last Request 与模型上下文上限解耦已通过类型检查、116 项测试、构建及真实 OpenCode 2.0.25 打包集成验证，包含未知上限下的请求明细和实测／估算时间分别显示，记录见 `docs/verification.md`。
-- 2026-10-09 当前会话累计原生对话耗时已通过类型检查、160 项测试、构建及真实 OpenCode 2.0.26 打包集成验证，包含同屏原生页脚、历史恢复、空闲、中断、分叉及窄终端子代理视图；旧执行日志方案已移除。本次未升版本、提交、推送或发布，记录见 `docs/verification.md`。
-- 2026-10-10 当前已耗时实时估算已通过类型检查、192 项测试、构建及真实 OpenCode 2.0.26 完整打包集成验证；运行中带 `~`，首轮非零可见，500ms 仅更新内存，结束后恢复原生值。新开安静运行视图使用可选只读 `context.clock` RPC 取得时间锚点，RPC 不可用时回退到带时间戳的实时事件；实际 synthetic `server.connected` 不带 `created`。版本仍为 0.4.8，未升版本、提交、推送或发布，记录见 `docs/verification.md`。
-- 2026-10-10 侧边栏标题点击详情已通过类型检查、197 项测试、构建及真实 OpenCode 2.0.26 完整打包集成验证；左键单击 `Token Usage` 复用 `/usage` 弹窗，拖选与非左键不误触，切换会话和关闭重开正确，不产生模型请求。版本仍为 0.4.8，未升版本、提交、推送或发布，记录见 `docs/verification.md`。
-- 2026-10-10 实时 TPS 突发保护已通过类型检查、209 项测试、构建及真实 OpenCode 2.0.26 完整打包集成验证；100ms 合并增量、首批仅作基线、至少观察 500ms、时间加权平滑，静默 2 秒后在内存中过期。真实宿主的本地 Responses SSE 场景包含摘要突发、done-only 摘要、后续文本、静默及完成结算；没有调用真实 OpenAI 服务。版本仍为 0.4.8，未升版本、提交、推送或发布，记录见 `docs/verification.md`。
-- 2026-10-10 移除 Run Time 运行提示已通过类型检查、205 项测试、构建及真实 OpenCode 2.0.26 完整打包集成复验；各耗时入口不再附加 `Running...` 或点号动画，保留 `~` 实时估算、共享 500ms ticker、零值隐藏与完成／中断结算。已移除动画模块及 5 项旧测试，新增 1 项摘要回归测试，打包产物不含旧模块。版本仍为 0.4.8，未升版本、提交、推送或发布，记录见 `docs/verification.md`。
-- 2026-10-11 性能监视器异常流回收已通过类型检查、234 项测试、构建及真实 OpenCode 2.0.26 完整打包集成复验；重连和静默 60 秒后用共享 `session.active()` 对账全部未结束流，确认 inactive 后保留 60 秒再回收，查询失败保留并重试。离屏、丢失结束事件、慢查询竞态和长工具／重试等待均有覆盖；真实宿主工具／子会话等待经加速时钟模拟累计 25 小时，过滤结束事件、注入重连后无需历史即可回收，不宣称实际等待 25 小时或真实断网。版本为既有 0.4.9，未升版本、提交、推送或发布，记录见 `docs/verification.md`。
-- 2026-10-14 首轮 Run Time 起点重置及重连归零已通过类型检查、247 项测试、构建及真实 OpenCode 2.0.28 完整打包集成验证；复用已有 `session.time` 区分尚无首次 idle 的首轮与旧历史，不新增 API 读取。两次 synthetic 投递、工具延续、新 TUI 恢复及终端焦点事件不丢失首轮耗时；重连校时慢响应冻结、暂停回调补时、历史替换和合法完成校正由固定夹具覆盖。macOS 物理多屏、App Nap 与睡眠／唤醒尚未实机复验，不宣称切屏原因已证实。版本仍为 0.4.9，未升版本、提交、推送或发布，记录见 `docs/verification.md`。
+- 这是面向 **OpenCode 2** 的 Node.js 22+、npm、TypeScript ESM 插件。包和依赖版本以 `package.json` 为准；不要套用 OpenCode 1 API。
+- 实现插件或 TUI 集成前，先核对 [OpenCode 2 文档](https://opencode.ai/v2/docs)和[插件文档](https://opencode.ai/v2/docs/build/plugins)。
+- OpenTUI 原生 Node 运行时要求 Node >=26.4：Node 22 安装会有 `EBADENGINE`，启用 `engine-strict` 会被拒绝。Node 22 工具链及宿主内 TUI 验证不代表独立 Node 22 原生渲染受支持。
+- 功能交互和指标细节见 [中文 README](README.zh-CN.md#详细用量)；修改相关功能前也要阅读其[指标说明](README.zh-CN.md#指标)。价格、发布和验证记录分别见 [`docs/pricing.md`](docs/pricing.md)、[`docs/releasing.md`](docs/releasing.md)、[`docs/verification.md`](docs/verification.md)。
+- `ROADMAP.md` 区分已验证功能和规划，只勾选实际通过验证的项目。验证和发布状态以对应记录及实际结果为准，不把本地测试、专项冒烟或模拟场景说成完整宿主、远程 CI 或真实发布验证。
+- 修改 README 时，同步更新 `README.md` 和 `README.zh-CN.md`，保持安装、用法、功能及版本信息一致。
 
-- 2026-11-16 原生 TTFT／历史 TPS 已通过类型检查、269 项测试、构建、真实 OpenCode 2.0.28 完整打包回归及 2.3.0 的 `test:smoke -- --performance-only` 打包专项验证（原生事件、delta 延迟、同屏页脚和新 TUI 历史恢复）。2.3.0 完整冒烟因原生 `/usage` 同名命令冲突停在空详情弹窗，标题点击可用；不得把专项通过写成完整宿主兼容。包版本仍为 0.4.23，未升版本、提交、推送或发布，详见 `docs/verification.md`。
+## 开发与检查
 
-- 2026-11-16 插件详情命令已统一改为 `/token-usage`，不注册旧 `/usage` 别名；类型检查、269 项测试、真实 OpenCode 2.0.28 完整打包回归及 2.3.0 构建／打包安装、双命令共存、详情与原生性能检查通过。2.3.0 完整冒烟随后停在子代理固定总量夹具（实际 6,350，预期 5,080），不是命令冲突或摘要缺失，完整兼容仍未确认。详见 `docs/verification.md`。
+```bash
+npm run typecheck
+npm test
+npm run build
+npm run test:smoke
+```
 
-- 2026-11-17 SDK 升至 2.3.0，OpenTUI 0.8.4、Solid／编译器 1.9.16；Node 22 干净安装、类型检查、269 项测试、构建、打包 dry-run 及真实 OpenCode 2.0.28 / 2.3.0 完整打包冒烟通过。2.3.0 的后台子代理完成通知会额外触发父会话模型调用，夹具现按实际模拟请求独立核验五类 tokens／Steps／费用，并等待通知处理完成；PTY 输出以字节流解码，避免 UTF-8 分块导致条形图乱码。当前 SDK 的已验证列表仅保留这两个实际复测宿主，CI 配置双版本冒烟矩阵并通过 actionlint；该轮验证时真实 GitHub CI 尚未运行，包版本为 0.4.24。随后提交 `c8906a8` 的 GitHub CI 已通过，包括两个宿主的完整打包冒烟；详见 `docs/verification.md`。
+- 没有 lint 配置，不要臆造 lint 命令。
+- smoke 打包并隔离安装插件，使用 Python 3 终端、本地模拟提供商和 OpenCode 2 稳定版（最低 2.0.9）；未验证宿主只警告，仍执行实际检查。当前 SDK 的已验证宿主及边界见 `docs/verification.md`，旧 SDK 的验证结果不能自动继承。
+- 默认使用 PATH 中的 `opencode`；设置 `OPENCODE_BIN` 可为版本探测、服务端和 TUI 指定同一独立二进制。
 
-## 产品约定
+## 代码导航
 
-- 价格任务遇到当前版本尚未在 npm 可见、且尚未打标签或有效标签属于手动发布时，显式延期并写入任务摘要，跳过本轮更新，后续调度重查。不能自动接管手动发布；自动价格版本仍只重试经验证的原始价格专用标签。异常标签和 registry 故障仍须失败。2026-11-17 本地 273 项测试、类型检查、构建与 actionlint 通过；原失败任务重跑通过，但新的延期分支尚未推送或在 GitHub 验证，见 `docs/verification.md`。
+| 路径 | 职责 |
+| --- | --- |
+| `src/usage.ts`、`src/pricing.ts` | 用量、上下文、定价和格式化 |
+| `src/performance.ts` | 历史 TPS／TTFT、实时测速及流生命周期 |
+| `src/runtime.ts`、`src/runtime-monitor.ts` | 当前会话耗时、服务端时间锚点和实时估算 |
+| `src/source.ts`、`src/controller.ts` | V2 API、分页去重、刷新和视图生命周期 |
+| `src/tui.tsx` | 侧边栏、子代理摘要及详情弹窗 |
+| `src/aliases.ts`、`src/overrides.ts` | 精确模型别名、价格来源白名单与人工例外 |
 
-- 目标是为 OpenCode 2 开发一个 Node.js 插件。不要复制 OpenCode 1 的 API；在实现插件和 TUI 集成之前，请根据 OpenCode 2 文档进行验证。
-- 使用量应在整个会话树中累计，包括子代理。
-- `Run Time` 的原生累计仅包括当前查看会话保留历史中每轮最终已完成回答，不额外叠加子代理；主会话等待子代理已在自己的轮次跨度内。口径参照 OpenCode 2.0.26 的 `turnDuration` / `inputIndex`：完成时间减去上一 idle 之后首个 user／synthetic 的创建时间。既有会话读取提供有效 `time.created` 且 `time.idle` 未设置时，首轮即使尚无 idle 消息，也使用首个输入，synthetic 投递／steer 不重置起点；不能仅凭没有 idle 消息判定旧历史。无 idle 的旧历史（已有原生 idle 时间或时间元数据未知）取最近输入，无输入则取 assistant 创建时间，负差值截为零。同轮新完成回答替换而不重复叠加。时间缺失不可冒充零，失败读取保留旧值并标注未更新。分叉副本不继承耗时，压缩保留旧轮次；暂存回退不扣除，已提交回退删除历史后扣除相应耗时。复用完整消息历史，不依赖实验性执行日志或服务端持久化。
-- 原生状态运行中、当前轮及服务端时间锚点可信时，`Run Time` 用 `~` 标记截至当前的累计耗时估算，不预测最终／剩余时间。显示值为原生累计减去同轮已计时长，再加当前轮已过去时长；估算不写入原生 `milliseconds`。共享 ticker 每 500ms 只更新内存，不定时读取历史。启动／重连时通过一次可选的只读 `context.clock` RPC 取得服务端锚点，带时间戳的实时事件可作为回退，以本地单调时钟推进，不能拿客户端 `Date.now()` 直接减远程时间；2.0.26 的 synthetic `server.connected` 握手实际缺少 `created`，不能据 SDK 类型假造时间。工具／重试／前台等待继续计时，terminal 回答、执行结束、未知状态及读取失败冻结估算。重连校时未完成时，成功的历史刷新不能把同一开放轮次的可信显示降为零：仅在起点一致、此前 assistant 仍保留且不含当前轮的历史小计未变时沿用冻结估算；原生完成、回退删除与替换历史仍权威，不用最大值锁掩盖差异。刷新后用原生完成时间校正并移除 `~`，允许小幅回调。切换／关闭视图清理 ticker；空闲父会话不继承子代理的活动。
-- `Run Time` 显示时在侧边栏及子代理完整面板中始终位于最后一行，排在可用的 TPS／TTFT 之后；`/token-usage` 保持在 Session 区域的最后一行。各入口的 `Run Time`／`Time` 仅显示耗时及 `~`／不可用／未更新标记，不附加 `Running...` 文本或点号动画。正常状态下确认显示值为零（且没有非零实时估算）时，各入口（含子代理摘要及 `/token-usage` 紧凑／详细模式）隐藏整项，不留空行或空字段；首轮实时估算非零时显示。非零毫秒值、不可用值和未更新提示仍显示。
-- `TPS` 无 `~` 时为全树有效 assistant 的 `Σ(Output + Reasoning) ÷ Σ(time.streamed − (time.firstToken ?? time.created))`（秒），不计 compaction；有效原生 `firstToken` 排除首 token 前等待，旧宿主／历史缺失或无效时回退 `created`，零生成时长不伪造速度。有效实时流优先显示 `~` 的可观察交付速度估算。UTF-8 字节 / 4，约 2 秒窗口，100ms 合并；单次响应累计至少 20 个估算 Token（80 字节）、当前窗口至少 3 个合并批次且有效跨度至少 500ms 时才开始计算和显示实时值。首批计入累计门槛但只作测速基线，不跨响应或子代理合并门槛；平滑按时间而非 delta 数量推进。未就绪或静默 2 秒后用单调时钟在内存中过期时，回退历史 TPS，无历史则隐藏；过期后恢复输出需重建基线与平滑，重新满足批次／跨度条件，同一响应累计 Token 数保留。视图内增量与过期更新复用已准备快照、不读取历史／调用 API，多视图读取不推进平滑。不用客户端 epoch 减远程时间，不做模型倍率、硬限幅或隐藏 reasoning 猜测。实时交付与历史平均口径不同，Responses 缓冲／摘要不能还原内部生成速度。
-- `TTFT` 为全树可测 assistant step 的平均值，原生历史 `time.firstToken − time.created` 优先于运行期 delta 回退，实时优先接收 `session.step.first-token` 的服务端 `created`；原生标记在宿主 delta 缓冲之前，不能人为减去固定 100ms。旧宿主回退到首个非空文本／reasoning／工具输入增量，历史回退到可测 reasoning／tool 创建时间。原生数据与回退按消息去重，同一 ID 的新 retry attempt 重置观察并以新 `started` 隔离旧样本；迟到原生标记不延长完成后的保留期。历史原生值在视图重建与运行期观察过期后仍可恢复；纯文本旧历史缺失该字段时不伪造 TTFT。原生页脚取当前轮首个可测 step，插件保持全树平均，多轮／子代理不保证相等。
-- 性能监视器重连时重置实时窗口，用 V2 `session.active()` 的全服务端活动集合对账全部已跟踪流（含离屏会话），不能把尚未同步的 TUI 缓存默认 idle 当成权威状态。未结束流静默 60 秒后由共享超时任务低频检查活动集合，每次覆盖全部未结束流；确认 inactive 后保留 60 秒，再回收流、事件去重集合及 TTFT 观察。查询失败／超时保留并重试，仍 running 的工具、重试及首 token 前等待没有硬性寿命上限。仅有历史 tokens／`time.streamed` 可以替换实时 TPS，但不能证明工具已完成或启动 TTFT 回收；有效 `time.completed`、step／execution 结束及后继 step 可以结算。回收期限使用本地单调时钟，重复结束不续期；异步对账以请求身份和逐流 revision 隔离新活动、重连及销毁，重试可撤销失败回收。活动检查不读取历史，不复用 500ms Run Time ticker；无未结束流时停止查询。
-- `Input` 不包括缓存读取和缓存写入；传入 token 总数为 input + cache read + cache write。
-- `Output` 不包括 `Reasoning`；`Total` 为五类 token 之和。缓存命中率分母为全部传入 token。
-- 成本按会话树中每条 assistant 与 compaction 消息实际记录的模型及五类 token 分别估算。优先使用当前会话位置经 OpenCode 解析的完整非零价格；若 OpenCode 给出完整零价，且插件内置的价格快照能完整覆盖该消息实际使用的 token 类别，则采用快照价格，否则保留 OpenCode 零价。OpenCode 价格不完整时，整条消息回退到内置价格，不混用两套费率。网关模型仅通过精确厂商 ID、明确别名和已知包装格式匹配；匹配后可移除模型 ID 的终尾 `-free` 或 `:free` 再精确查找基础 ID，不剥离其他后缀、不按相似名称猜测。无法定价时显示不可用；只有部分消息可定价时明确标注 `partial`；明确零价显示 `$0.00`。内置价格采用厂商标准同步 API 公开价，仅在明确标出的条目采用 Meta Contributor 条件价。Est. Cost 不含网关加价、区域价、工具费和税费，仍是估算，不代表提供商账单。
-- 内置回退价从 `https://models.dev/api.json` 的原厂 Provider 自家文本模型生成；每 4 小时运行的价格工作流对已审核白名单内的快照变化，验证后自动提交快照、升级 patch 并触发 `publish.yml` 通过 npm OIDC 发布。无变化不发布，未完成的自动价格版本重试原标签，registry 故障不得当作版本不存在；`scripts/release.mjs` 负责版本、提交范围、原子推送与发布状态核验。本地可按需运行 `npm run prices:update` 并审阅提交；插件与构建均不联网。新原厂/模型系列须审核 `src/overrides.ts` 的来源白名单；无法自动处理的精确别名放 `src/aliases.ts`，有原厂依据的少量价格或计费例外放 `src/overrides.ts`。API 缺少厂商归属字段，不得把原厂平台转售第三方模型的价格冒充原厂价。测试不得锁死 models.dev 的动态费率；算法用固定夹具、快照保留来源与结构验证，人工例外可保留精确费率断言。
-- 读取失败不得显示为零用量；刷新失败保留上次完整快照，切换会话时丢弃旧请求结果。
-- 分叉不是 `parentID` 子代理关系。2.0.9 为继承消息生成带 `_序号` 后缀的 ID；这些副本的用量只归原始来源。升级 OpenCode 时必须重新核对这一实现约定。
-- 上下文用量取当前查看会话中最后一条带 `tokens` 的 assistant 消息（只搜索最后一次 `status === "completed"` 的 compaction 之后）的五类 token 之和；分母为当前查看会话活动模型的 `limit.context`，缺失、为零或非有限值时隐藏该行。它只反映被查看会话本身，不随子树累计；分叉继承副本仍计入被查看会话的上下文。宿主实现最初参照 OpenCode 2.0.10 侧边栏的 `Ws`/`S6`；当前 SDK 锁定 2.3.0，已在 2.0.28 / 2.3.0 复核真实压缩与升序历史；升级 OpenCode 或 SDK 时必须重新核对 compaction 的 `status` 与消息排序语义。
-- 上下文行是面板第一行（状态提示之后），行内为 `已用 / 上限 (百分比%)`，百分比保留一位小数、允许超过 100%。
-- 侧边栏 `Token Usage` 标题左键单击与 `/token-usage` CLI 插件斜杠命令共用同一个详情弹窗入口，不向模型发送消息；所有支持的宿主统一使用 `/token-usage`，不注册 `/usage` 别名，以避免与原生命令冲突。命令 ID 保持 `opencode-token-usage.show`，命令面板标题保持 `Token usage`。其他统计行不绑定打开行为，标题拖选、非左键与没有匹配按下的松开事件均不得误触。弹窗以宿主 `centered` 选项垂直居中；窗口宽度取宿主 `large` 档（88 列，方向随终端收窄），条形图与两列布局按该内容宽度收敛。
-- `/token-usage` 分为 Context Window、Last Request、Context Breakdown、Session、By Model 五个区域，口径互相独立：Context Window 只回答上下文占用（分母为活动模型 `limit.context`）；Last Request 是被查看会话最近一次已上报调用的五类 token 与缓存率，不依赖模型上限，请求选择遵循回退截断和已完成压缩边界，时间依次取所选 assistant 有效的 `time.streamed`、`time.completed`、`time.created`，缺失时隐藏；Session 为全树汇总；By Model 为逐模型 tokens/calls/费用，按费用降序。标题下方一行显示会话与活动模型（多模型时显示模型数量），正文不重复模型名。
-- 弹窗默认紧凑模式：数字用 `K`/`M` 缩写（`812`、`139.4K`、`3.70M`），隐藏零值行，Context Breakdown 中 `System Tools` 与 `MCP Tools` 合并为 `Tools` 并按占比降序；按 `d` 切换详细模式，显示精确数字、零值行、两类工具拆分与 Session 逐类明细。侧边栏始终使用精确数字和原有行序。
-- `/token-usage` 的六类来源占比是最近一次已组装模型请求的文本与工具定义估算值，占比以六类估算和为分母；不得将其当作实测 Context 或与之强行加总。服务端 `context` 钩子仅保存分类数值，RPC 不可用或未捕获请求时显示不可用，不影响实测用量。估算的 `capturedAt` 仅显示在 Context Breakdown，不能用作 Last Request 的实测请求时间。
-- 2.0.9–2.0.11、2.0.22、2.0.24 与 2.0.26 在子代理视图中不挂载侧边栏；`session.composer.top` 仅显示 Context、Total、Cost、Time、TPS 单行实时摘要，不显示快捷键，窄终端优先保留 Time；点击摘要打开居中原生弹窗，弹窗复用摘要的同一控制器及侧边栏完整面板并可用 Esc 关闭，保持子代理中的全树统计可按需查看且不挤占会话高度。
+## 统计约定
 
-## 官方文档
+### 用量与上下文
 
-- [OpenCode 2 文档](https://opencode.ai/v2/docs)
-- [OpenCode 2 插件开发文档](https://opencode.ai/v2/docs/build/plugins)
+- 用量和费用累计整个会话树，包括子代理；分叉不是 `parentID` 子代理关系，继承副本的用量只归原始来源。升级宿主时须重新核对分叉消息 ID 的 `_序号` 约定。
+- `Input` 不含缓存读写，`Output` 不含 `Reasoning`；`Total` 是五类 token 之和，缓存命中率分母为 Input + Cache Read + Cache Write。
+- `Context` 只看当前会话：取最后一次 `status === "completed"` 的 compaction 之后，最后一条带 tokens 的 assistant 消息的五类 token 之和。分叉继承副本仍计入当前会话上下文。
+- Context 上限取当前活动模型的 `limit.context`；缺失、非正值或非有限时隐藏该行。百分比保留一位小数，可以超过 100%。升级 OpenCode 或 SDK 时重新核对 compaction 状态与消息排序。
+- 读取失败不能显示为零；刷新失败保留上次完整快照并标注未更新，切换会话时丢弃旧请求结果。
+
+### 费用与价格更新
+
+- 按全树每条 assistant／compaction 消息实际模型及五类 token 估算。优先 OpenCode 的完整非零价格；完整零价仅在快照能覆盖实际使用的类别时由快照替换。价格不完整时整条消息回退，不混用费率。
+- 无法定价显示不可用，部分可定价标注 `partial`，明确免费显示 `$0.00`。估算不含网关加价、区域价、工具费和税费，不代表账单。
+- 网关模型只按精确厂商 ID、明确别名和已知包装格式匹配；匹配后仅可剥离终尾 `-free`／`:free` 再精确查找，不按相似名称猜测。
+- 内置快照来自 models.dev 经审核的原厂自家文本模型；插件和构建不联网。新增来源／系列需审核 `src/overrides.ts` 白名单；精确别名放 `src/aliases.ts`，有原厂依据的价格例外放 `src/overrides.ts`。不得将原厂平台转售的第三方模型冒充原厂价。
+- 每 4 小时的价格工作流在快照变化并验证后自动提交、升 patch，触发 `publish.yml` 通过 npm OIDC 发布；无变化不发布，结果以发布工作流和 registry 为准。本地可运行 `npm run prices:update` 并审阅差异。测试用固定夹具验证算法，不锁死 models.dev 动态费率。
+- 当前版本尚未在 npm 可见，且未打标签或有效标签属于手动发布时，价格任务须延期、写入摘要并跳过本轮更新，下次调度重查，不能接管手动发布。自动价格版本只重试已验证的原始价格专用标签；异常标签和 registry 故障须失败。
+
+### Run Time
+
+- 只累计**当前查看会话**保留历史中每轮最终已完成回答的原生耗时，不额外叠加子代理。每轮以最终完成时间减去上一 idle 后首个 user／synthetic 输入时间；同轮新回答替换旧值，不重复累计。
+- 会话 `time.created` 有效且 `time.idle` 未设置时，尚无首次 idle 的首轮使用首个输入，synthetic／steer 不重置起点；不能仅凭没有 idle 消息判定旧历史。无 idle 的旧历史取最近输入，无输入则取 assistant 创建时间。负差截为零，缺失时间不能冒充零。
+- 复用完整消息历史，不依赖实验性执行日志或服务端持久化。分叉副本不继承耗时，压缩保留旧轮次；暂存回退不扣除，提交回退删除历史后扣除。
+- 运行中仅在状态、当前轮和服务端时间锚点可信时显示带 `~` 的已耗时估算：原生累计减去同轮已计时长，再加当前轮已过去时长。估算不写入原生 `milliseconds`，不是最终／剩余时间预测。
+- 启动／重连通过可选只读 `context.clock` RPC 校时，失败可回退到带时间戳的实时事件，并用本地单调时钟推进；不能用客户端 `Date.now()` 减远程时间。2.0.26 的 synthetic `server.connected` 实际不带 `created`。
+- 共享 ticker 每 500ms 只更新内存，不定时读取历史；工具、重试和前台等待继续计时，terminal 回答、执行结束、未知状态或读取失败时冻结。切换／关闭视图清理对应状态，无视图需要时停止 ticker；空闲父会话不继承子代理活动。
+- 重连校时期间，只在起点一致、此前 assistant 仍保留且其他轮次小计未变时沿用可信冻结估算；完成、回退和替换历史仍以原生值为准，不用最大值锁掩盖变化。完成后校正并移除 `~`，允许小幅回调。
+
+### TPS、TTFT 与流回收
+
+- 历史 TPS 为全树有效 assistant 的 `Σ(Output + Reasoning) ÷ Σ(time.streamed − (time.firstToken ?? time.created))`（秒），不计 compaction；`firstToken` 缺失或无效时回退 `created`，零生成时长不伪造速度。
+- 有效实时 TPS 优先显示，是带 `~` 的可观察交付估算：UTF-8 字节 / 4，约 2 秒窗口，100ms 合并。单次响应累计至少 80 字节、窗口至少 3 批且跨度至少 500ms 才显示；首批计入累计门槛但只作测速基线，不跨响应或子代理合并门槛，按时间平滑。
+- 未就绪或静默 2 秒后回退历史 TPS，无历史则隐藏；恢复输出需重建基线和平滑，重新满足批次／跨度条件，但保留该响应的累计 token 数。视图增量和过期更新只用内存，不读取历史或调用 API，多视图读取不推进平滑。
+- 实时 TPS 不等于模型内部生成速度；不做模型倍率、硬限幅或隐藏 reasoning 猜测，也不用客户端 epoch 减远程时间。
+- TTFT 是全树可测 assistant step 的平均值：优先历史 `time.firstToken − time.created` 和实时 `session.step.first-token` 服务端时间，不人为扣除 100ms。旧宿主回退到首个非空文本／reasoning／工具输入 delta，或历史 reasoning／tool 创建时间；纯文本旧历史缺失时不伪造。
+- 原生与回退样本按消息去重；同 ID 新 retry attempt 以新 `started` 隔离旧样本，迟到原生标记不延长完成后的保留期。原生历史值可在视图重建和运行期观察过期后恢复。
+- 重连时重置实时窗口，并用 V2 `session.active()` 对账全部已跟踪流，包括离屏会话；不能把未同步的 TUI 缓存视为权威 idle。未结束流静默 60 秒后共享检查全部未结束流，确认 inactive 后再保留 60 秒回收；失败或超时保留并重试，仍运行的工具／重试／首 token 等待没有硬性寿命上限。
+- 历史 tokens／`time.streamed` 可替换实时 TPS，但不能证明工具完成或启动 TTFT 回收；有效 `time.completed`、step／execution 结束及后继 step 可以结算。回收使用单调时钟、重复结束不续期；异步对账须隔离新活动、重连和销毁。活动检查不读取历史、不复用 Run Time ticker，无未结束流时停止。
+
+## 界面约定
+
+- Context 位于面板第一行（状态提示之后），格式为 `已用 / 上限 (百分比%)`。Run Time 显示时位于侧边栏和子代理完整面板最后一行，也位于详情 Session 区域最后一行。
+- 各入口的 Run Time／Time 只显示耗时及估算／不可用／未更新标记，不显示 `Running...` 或动画。正常状态确认显示值为零且无非零估算时隐藏整项；非零毫秒、不可用和未更新仍显示。
+- 侧边栏标题左键点击和 `/token-usage` 打开同一个详情弹窗，不向模型发消息；不注册 `/usage` 别名。命令 ID 为 `opencode-token-usage.show`，命令面板标题为 `Token usage`。拖选、非左键或没有匹配按下的松开不得误触，其他统计行不绑定打开行为。
+- 详情弹窗使用宿主 `centered` 与 `large`（88 列，随终端收窄），布局和条形图随宽度收敛。它分为 Context Window、Last Request、Context Breakdown、Session、By Model 五区，口径互不混用。
+- Last Request 是当前会话最近已上报调用，遵循回退及已完成压缩边界，不依赖上下文上限；时间依次取有效的 `streamed`、`completed`、`created`，缺失则隐藏。Session 为全树汇总，By Model 按费用降序。
+- Context Breakdown 是最近一次已组装请求的六类文本与工具定义估算，分母为六项估算之和；不能当作实测 Context。只保存分类数值，未捕获或 RPC 不可用时显示不可用；其 `capturedAt` 不能充当 Last Request 时间。
+- 默认紧凑模式使用 K／M 缩写、隐藏零值并合并两类 Tools；`d` 切换详细模式，显示精确数字、零值、工具拆分和 Session 明细。侧边栏始终使用精确数字及原行序。
+- 子代理视图通过 `session.composer.top` 显示 Context、Total、Cost、Time、TPS 单行摘要，不显示快捷键，窄终端优先保留 Time。点击打开居中原生弹窗，复用同一控制器及侧边栏完整面板，Esc 关闭，不额外占用会话高度。
