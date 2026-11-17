@@ -142,17 +142,20 @@ OpenCode **2.3.0 现已通过完整检查**，包含插件详情与原生 `/usag
 
 ```bash
 npm ci
+npm run lint
 npm run typecheck
 npm test
 npm run build
 npm run test:smoke
 ```
 
+lint 使用 ESLint 10 Flat Config 及 JavaScript／TypeScript 推荐规则，不引入格式化或 React 规则。检查覆盖源码、测试、脚本和根目录 JavaScript 文件，忽略构建产物、依赖、临时目录及生成的价格快照。可运行 `npm run lint:fix` 自动修复支持的问题。在 Node 22 分支，ESLint 要求 >=22.13；也支持 Node >=24。该开发工具要求不改变插件运行时 Node.js 22+ 的最低要求。
+
 针对提供 `time.firstToken` 的宿主，可运行 `npm run test:smoke -- --performance-only` 验证原生 TTFT/TPS。该专项检查覆盖流式计时、原生页脚和重开会话后的历史恢复，不能替代完整集成检查。
 
 OpenCode SDK 包精确锁定为 `2.3.0`，OpenTUI 为 `0.8.4`，Solid 与编译器为 `1.9.16`。OpenTUI 为其原生 Node 运行时声明 Node.js `>=26.4.0`，因此 Node 22 安装时 npm 会输出 `EBADENGINE`；启用 `engine-strict` 时须使用满足该依赖引擎要求的 Node 版本。插件的 TUI 在 OpenCode 内运行，并非独立的 Node 22 渲染器。项目 Node.js 22+ 的最低要求不变；该依赖组合的检查见[验证记录](docs/verification.md)。
 
-[价格更新工作流](.github/workflows/update-prices.yml) 每 4 小时检查 models.dev，也可在 `main` 上通过 **Run workflow** 手动触发。快照无变化就不发布。经审核的原厂来源白名单内有变化时，先通过类型检查、测试、构建和打包检查，再自动升级 patch 版本（例如 `0.4.4` → `0.4.5`），只提交 `src/prices.generated.ts`、`package.json` 和 `package-lock.json`，并原子推送 `main` 与版本标签。工作流创建 GitHub Release，显式触发该标签上的 [`publish.yml`](.github/workflows/publish.yml)，通过 npm Trusted Publishing/OIDC 发布，无需长期 npm token。仓库必须允许 GitHub Actions 推送 `main` 和创建标签；npm 必须信任 `publish.yml` 并允许执行 `npm publish`。
+[价格更新工作流](.github/workflows/update-prices.yml) 每 4 小时检查 models.dev，也可在 `main` 上通过 **Run workflow** 手动触发。快照无变化就不发布。经审核的原厂来源白名单内有变化时，先通过 lint、类型检查、测试、构建和打包检查，再自动升级 patch 版本（例如 `0.4.4` → `0.4.5`），只提交 `src/prices.generated.ts`、`package.json` 和 `package-lock.json`，并原子推送 `main` 与版本标签。工作流创建 GitHub Release，显式触发该标签上的 [`publish.yml`](.github/workflows/publish.yml)，通过 npm Trusted Publishing/OIDC 发布，无需长期 npm token。仓库必须允许 GitHub Actions 推送 `main` 和创建标签；npm 必须信任 `publish.yml` 并允许执行 `npm publish`。
 
 验证失败不会升版本。已打标签但未完成的自动价格发布会优先重试同一版本，再检查新价格；registry 故障不会被当作版本不存在。发布时跳过 npm 已有版本、防止 `latest` 倒退，并在发布后最多轮询 10 分钟核验 registry 可见性，输出进度。校验超时不代表 `npm publish` 失败：先检查 registry，再重试原标签，不另升版本；已发布版本不会重复发布。新增原厂／来源白名单、别名及人工核实的价格例外仍需人工审核。配置、校验时限和重试方法见[发布说明](docs/releasing.md)。
 

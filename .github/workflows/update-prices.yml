@@ -50,6 +50,8 @@ jobs:
             echo "No price changes; skipping validation and release." >> "$GITHUB_STEP_SUMMARY"
           fi
       - if: steps.changes.outputs.changed == 'true'
+        run: npm run lint
+      - if: steps.changes.outputs.changed == 'true'
         run: npm run typecheck
       - if: steps.changes.outputs.changed == 'true'
         run: npm test
@@ -74,7 +76,7 @@ jobs:
             echo "GitHub Release $TAG already exists."
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
-              --notes 'Automatic first-party price snapshot update from models.dev. Typecheck, tests, build, and pack validation passed before the version bump. Manufacturer exceptions and source allowlists remain manually maintained.'
+              --notes 'Automatic first-party price snapshot update from models.dev. Lint, typecheck, tests, build, and pack validation passed before the version bump. Manufacturer exceptions and source allowlists remain manually maintained.'
           fi
       # GITHUB_TOKEN-created releases do not trigger release workflows. Dispatch explicitly,
       # on the immutable tag, so npm OIDC/provenance remains attached to publish.yml and that commit.

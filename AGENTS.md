@@ -12,13 +12,14 @@
 ## 开发与检查
 
 ```bash
+npm run lint
 npm run typecheck
 npm test
 npm run build
 npm run test:smoke
 ```
 
-- 没有 lint 配置，不要臆造 lint 命令。
+- lint 使用 ESLint Flat Config（`eslint.config.mjs`）及 JS／TypeScript 推荐规则，不负责格式化；`npm run lint:fix` 可自动修复支持的问题。忽略构建产物、依赖、临时目录和生成的价格快照；不启用 React 规则。ESLint 10 在 Node 22 分支要求 >=22.13（也支持 Node >=24），不改变插件运行时 Node >=22 的要求。
 - smoke 打包并隔离安装插件，使用 Python 3 终端、本地模拟提供商和 OpenCode 2 稳定版（最低 2.0.9）；未验证宿主只警告，仍执行实际检查。当前 SDK 的已验证宿主及边界见 `docs/verification.md`，旧 SDK 的验证结果不能自动继承。
 - 默认使用 PATH 中的 `opencode`；设置 `OPENCODE_BIN` 可为版本探测、服务端和 TUI 指定同一独立二进制。
 

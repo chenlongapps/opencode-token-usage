@@ -79,7 +79,7 @@ export function fromModelsDev(input: unknown, verified: string): GeneratedSnapsh
       if (record(cost) && rate(cost.output_audio) && cost.output_audio !== cost.output) continue;
       let standard: Price[] | undefined;
       try { standard = prices(cost, providerID); }
-      catch (error) { throw new Error(`Invalid ${providerID}/${key}: ${String(error)}`); }
+      catch (error) { throw new Error(`Invalid ${providerID}/${key}: ${String(error)}`, { cause: error }); }
       if (!standard) continue;
       const released = string(value.release_date) && /^\d{4}-\d{2}-\d{2}$/.test(value.release_date)
         ? { released: value.release_date } : {};

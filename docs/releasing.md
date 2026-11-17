@@ -19,7 +19,7 @@ GitHub Actions 的发布任务需要 `id-token: write`，并使用 GitHub 托管
 
 ```text
 更新白名单内的原厂快照（无变化就结束）
-→ 类型检查、测试、构建、打包检查
+→ lint、类型检查、测试、构建、打包检查
 → patch 升级（如 0.4.4 → 0.4.5）
 → 只提交快照与两个 package 文件
 → 原子推送 main 和 vX.Y.Z
@@ -55,6 +55,7 @@ gh workflow run publish.yml --ref vX.Y.Z
 
 ```bash
 git status
+npm run lint
 npm run typecheck
 npm test
 npm run build
@@ -103,7 +104,7 @@ git push origin vX.Y.Z
 gh release create vX.Y.Z --generate-notes --title vX.Y.Z
 ```
 
-也可以在 GitHub Releases 页面选择已有标签并发布 Release，或显式运行 `gh workflow run publish.yml --ref vX.Y.Z`。`.github/workflows/publish.yml` 要求当前 ref 确实为匹配 `package.json` 和锁文件版本的标签，运行类型检查和测试，再通过 npm Trusted Publishing 的 OIDC 身份发布；不需要保存长期 `NPM_TOKEN`。npm 会为公开仓库与公开包自动生成 provenance。所有发布任务串行执行，已存在的 npm 版本会跳过发布，新发布后会核验版本与 `latest`。
+也可以在 GitHub Releases 页面选择已有标签并发布 Release，或显式运行 `gh workflow run publish.yml --ref vX.Y.Z`。`.github/workflows/publish.yml` 要求当前 ref 确实为匹配 `package.json` 和锁文件版本的标签，运行 lint、类型检查和测试，再通过 npm Trusted Publishing 的 OIDC 身份发布；不需要保存长期 `NPM_TOKEN`。npm 会为公开仓库与公开包自动生成 provenance。所有发布任务串行执行，已存在的 npm 版本会跳过发布，新发布后会核验版本与 `latest`。
 
 ### 5. 确认发布
 

@@ -49,12 +49,14 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "npm run lint -- --fix",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts test/*.test.mjs",
     "test:smoke": "node scripts/smoke.mjs",
     "prices:update": "tsx scripts/update-prices.ts",
     "release:patch": "npm version patch",
-    "prepublishOnly": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test",
     "prepack": "npm run build"
   },
   "publishConfig": {
@@ -71,6 +73,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.28.0",
+    "@eslint/js": "^10.0.1",
     "@opencode/client": "2.3.0",
     "@opencode/schema": "2.3.0",
     "@opencode/theme": "2.3.0",
@@ -79,9 +82,12 @@
     "@types/node": "^22.0.0",
     "@xterm/headless": "6.0.0",
     "babel-preset-solid": "1.9.16",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
     "solid-js": "1.9.16",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.73.0"
   },
   "packageManager": "npm@10.9.8"
 }

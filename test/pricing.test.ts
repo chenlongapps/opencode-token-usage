@@ -171,7 +171,12 @@ test("pure importer selects manufacturer text models, modes, reasoning and repre
     id: "gpt-invalid", modalities: { input: ["text"], output: ["text"] },
     cost: { input: 1, output: 2, tiers: [{ input: 3, output: 4, tier: { type: "output", size: 10 } }] },
   };
-  assert.throws(() => fromModelsDev(unknownTier, "2026-09-25"), /Invalid openai\/gpt-invalid/);
+  assert.throws(() => fromModelsDev(unknownTier, "2026-09-25"), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /Invalid openai\/gpt-invalid/);
+    assert.ok(error.cause instanceof Error);
+    return true;
+  });
 });
 
 test("price refresh is byte-identical across dates and unrelated catalog metadata", () => {

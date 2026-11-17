@@ -142,17 +142,20 @@ Costs follow the sidebar's pricing and `partial`/unavailable/free conventions. I
 
 ```bash
 npm ci
+npm run lint
 npm run typecheck
 npm test
 npm run build
 npm run test:smoke
 ```
 
+Lint uses ESLint 10 Flat Config with the JavaScript/TypeScript recommended rules, without formatting or React rules. It covers source, tests, scripts, and root JavaScript files, excluding build output, dependencies, temporary directories, and the generated price snapshot. Use `npm run lint:fix` for supported automatic fixes. On Node 22, ESLint requires >=22.13; Node >=24 is also supported. This development-tool requirement does not change the plugin's Node.js 22+ runtime minimum.
+
 For native TTFT/TPS checks on a host with `time.firstToken`, run `npm run test:smoke -- --performance-only`. This targeted lane verifies streaming timing, the native footer and history restoration after reopening; it does not replace the full integration suite.
 
 The OpenCode SDK packages are pinned to `2.3.0`, with OpenTUI `0.8.4` and Solid/compiler `1.9.16`. OpenTUI declares Node.js `>=26.4.0` for its native Node runtime, so npm reports `EBADENGINE` on Node 22; `engine-strict` installations require a Node version meeting that dependency's engine requirement. The plugin's TUI runs inside OpenCode, not as a standalone Node 22 renderer. The project's Node.js 22+ minimum is unchanged; see the [verification record](docs/verification.md) for checks of this dependency set.
 
-The [price update workflow](.github/workflows/update-prices.yml) checks models.dev every 4 hours (or on demand via **Run workflow** on `main`). No snapshot diff means no release. Changes within the reviewed first-party source allowlist pass typecheck, tests, build, and pack validation, then automatically bump the patch version (for example, `0.4.4` → `0.4.5`), commit only `src/prices.generated.ts`, `package.json`, and `package-lock.json`, and atomically push `main` and its version tag. The workflow creates a GitHub Release and explicitly dispatches [`publish.yml`](.github/workflows/publish.yml) on that tag to publish via npm Trusted Publishing/OIDC; no long-lived npm token is needed. GitHub Actions must be allowed to push to `main` and create tags, and npm must trust `publish.yml` with permission to run `npm publish`.
+The [price update workflow](.github/workflows/update-prices.yml) checks models.dev every 4 hours (or on demand via **Run workflow** on `main`). No snapshot diff means no release. Changes within the reviewed first-party source allowlist pass lint, typecheck, tests, build, and pack validation, then automatically bump the patch version (for example, `0.4.4` → `0.4.5`), commit only `src/prices.generated.ts`, `package.json`, and `package-lock.json`, and atomically push `main` and its version tag. The workflow creates a GitHub Release and explicitly dispatches [`publish.yml`](.github/workflows/publish.yml) on that tag to publish via npm Trusted Publishing/OIDC; no long-lived npm token is needed. GitHub Actions must be allowed to push to `main` and create tags, and npm must trust `publish.yml` with permission to run `npm publish`.
 
 Failed validation never bumps the version. An unfinished tagged price release is retried with the same version before checking new prices; registry outages are not treated as missing versions. Publishing skips versions already on npm, prevents moving `latest` backwards, and polls registry visibility for up to 10 minutes after publication, logging progress. A verification timeout is not proof that `npm publish` failed: check the registry and retry the same tag without bumping the version; already-published versions are not republished. Manufacturer/source allowlist additions, aliases, and manually verified price exceptions still require human review. See the [release guide](docs/releasing.md) for setup, verification timing, and retries.
 
