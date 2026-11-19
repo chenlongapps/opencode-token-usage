@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-11-17",
+  verified: "2026-11-19",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-03"},
@@ -108,6 +108,7 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"google","id":"gemini-4-argon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-10-13"},
     {"providerID":"google","id":"gemini-4-carbon","prices":[{"input":2,"output":10,"cache":{"read":0.1}}],"released":"2026-11-10"},
     {"providerID":"google","id":"gemini-4-hydrogen","prices":[{"input":1.5,"output":7.5,"cache":{"read":0.075}}],"released":"2026-11-12"},
+    {"providerID":"google","id":"gemini-4-neon","prices":[{"input":3,"output":15,"cache":{"read":0.15}}],"released":"2026-11-18"},
     {"providerID":"google","id":"gemini-flash-latest","prices":[{"input":0.75,"output":3.75,"cache":{"read":0.075}}],"released":"2026-08-13"},
     {"providerID":"google","id":"gemini-flash-lite-latest","prices":[{"input":0.3,"output":2.5,"cache":{"read":0.03}}],"released":"2026-07-21"},
     {"providerID":"google","id":"gemini-pro-latest","prices":[{"input":2,"output":12,"cache":{"read":0.2}},{"input":4,"output":18,"cache":{"read":0.4},"tier":{"type":"context","size":200000}}],"released":"2026-02-19"},
