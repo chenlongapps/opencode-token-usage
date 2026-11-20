@@ -2,7 +2,7 @@
 import type { OfficialPriceEntry } from "./pricing.js";
 
 export const GENERATED_PRICE_SNAPSHOT = {
-  verified: "2026-11-19",
+  verified: "2026-11-20",
   source: "https://models.dev/api.json",
   entries: [
     {"providerID":"ai21","id":"jamba-large","prices":[{"input":2,"output":8}],"released":"2025-07-03"},
@@ -285,7 +285,6 @@ export const GENERATED_PRICE_SNAPSHOT = {
     {"providerID":"xai","id":"grok-4.5","prices":[{"input":2,"output":6,"cache":{"read":0.3}},{"input":4,"output":12,"cache":{"read":0.6},"tier":{"type":"context","size":199999}}],"released":"2026-07-08"},
     {"providerID":"xai","id":"grok-4.6","prices":[{"input":2,"output":6,"cache":{"read":0.5}},{"input":4,"output":12,"cache":{"read":1},"tier":{"type":"context","size":199999}}],"released":"2026-08-12"},
     {"providerID":"xai","id":"grok-4.7","prices":[{"input":2,"output":6,"cache":{"read":0.5}},{"input":4,"output":12,"cache":{"read":1},"tier":{"type":"context","size":199999}}],"released":"2026-09-21"},
-    {"providerID":"xai","id":"grok-build-0.1","prices":[{"input":1,"output":2,"cache":{"read":0.2}},{"input":2,"output":4,"cache":{"read":0.4},"tier":{"type":"context","size":199999}}],"released":"2026-04-16"},
     {"providerID":"xiaomi","id":"mimo-v2.5","prices":[{"input":0.14,"output":0.28,"cache":{"read":0.0028}}],"released":"2026-04-22"},
     {"providerID":"xiaomi","id":"mimo-v2.5-pro","prices":[{"input":0.435,"output":0.87,"cache":{"read":0.0036}}],"released":"2026-04-22"},
     {"providerID":"xiaomi","id":"mimo-v2.5-pro-ultraspeed","prices":[{"input":1.305,"output":2.61,"cache":{"read":0.0108}}],"released":"2026-06-08"},
