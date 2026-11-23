@@ -39,7 +39,7 @@ Use it to see how many tokens a session and its subagents consume, how full the 
 Requires **OpenCode 2** and **Node.js 22+**. See [Compatibility](#compatibility) for verified host versions and the OpenTUI engine caveat.
 
 ```bash
-opencode plugin add @chenlongapps/opencode-token-usage
+opencode plugin add @chenlongapps/opencode-token-usage@latest
 ```
 
 Restart OpenCode after installation.
@@ -61,7 +61,9 @@ Instead of the command above, add the package to your project's `opencode.json` 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@chenlongapps/opencode-token-usage"]
+  "plugins": [
+    "@chenlongapps/opencode-token-usage@latest"
+  ]
 }
 ```
 

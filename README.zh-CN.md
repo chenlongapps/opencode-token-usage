@@ -39,7 +39,7 @@
 需要 **OpenCode 2** 和 **Node.js 22+**。已验证宿主版本及 OpenTUI 引擎限制见[兼容性](#兼容性)。
 
 ```bash
-opencode plugin add @chenlongapps/opencode-token-usage
+opencode plugin add @chenlongapps/opencode-token-usage@latest
 ```
 
 安装后重启 OpenCode。
@@ -61,7 +61,9 @@ opencode plugin add @chenlongapps/opencode-token-usage
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@chenlongapps/opencode-token-usage"]
+  "plugins": [
+    "@chenlongapps/opencode-token-usage@latest"
+  ]
 }
 ```
 
