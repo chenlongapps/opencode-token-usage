@@ -109,6 +109,44 @@ test("normal long tool waits retain streams and original TTFT, including streame
   assert.equal(f.monitor["cleanupTimer"], undefined);
 });
 
+for (const boundary of ["session.tool.called", "session.retry.scheduled", "session.status", "server.connected", "session.step.ended", "session.deleted"]) {
+  test(`${boundary} immediately invalidates a slow estimate without reusing its cadence`, async t => {
+    const f = fixture(t);
+    const send = (type: string, data = {}, created?: number) => f.send(type, "root", { assistantMessageID: "root", ...data }, created);
+    const delta = () => send("session.tool.input.delta", { delta: "abcd" });
+    f.start("root");
+    delta();
+    send("session.tool.input.ended"); // Input markers alone must not break sampling.
+    await f.advance(3_000);
+    delta();
+    await f.advance(3_000);
+    delta();
+    assert.deepEqual(f.monitor.summary([], ["root"]), { tps: 1 / 3, tpsEstimated: true, ttft: 1_000 });
+
+    let publications = 0;
+    f.monitor.listen(() => publications++);
+    await f.advance(500);
+    send(boundary, boundary === "session.status" ? { status: { type: "retry" } } : {});
+    assert.equal(f.monitor.summary([], ["root"]).tps, undefined);
+    if (boundary !== "session.deleted") assert.equal(publications, 1);
+
+    if (boundary === "session.tool.called") {
+      await f.advance(2_000); // Short enough that the pre-tool slow estimate would otherwise still be valid.
+      send("session.tool.success");
+      for (const offset of [7_600, 8_100, 8_600]) send("session.tool.input.delta", { delta: "late input" }, remote + offset);
+    }
+    await f.advance(500);
+    delta();
+    await f.advance(3_000);
+    delta();
+    assert.equal(f.monitor.summary([], ["root"]).tps, undefined, "two fresh batches cannot borrow a pre-boundary baseline");
+    await f.advance(3_000);
+    delta();
+    assert.deepEqual(f.monitor.summary([], ["root"]), ["session.step.ended", "session.deleted"].includes(boundary)
+      ? {} : { tps: 1 / 3, tpsEstimated: true, ttft: 1_000 });
+  });
+}
+
 test("long pre-first-token and retry waits have no hard stream lifetime", async t => {
   const f = fixture(t, async () => new Set(["slow-provider"]));
   f.start("slow-provider");

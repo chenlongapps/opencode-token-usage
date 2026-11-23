@@ -10,7 +10,7 @@ import { ContextSourceRpc } from "./context-rpc.js";
 import { breakdownRows } from "./context-sources.js";
 import { createClickHandlers } from "./click.js";
 import { createSource } from "./source.js";
-import { bar, countLabel, fitUsageSummary, formatCompact, formatEstimatedCost, formatRateTier, formatRunTime, formatTokens, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
+import { bar, countLabel, fitUsageSummary, formatCompact, formatEstimatedCost, formatRateTier, formatRunTime, formatTokens, formatTps, rateRows, requestRows, summaryRows, usageRows } from "./usage.js";
 
 function UsageView(props: {
   context: Plugin.Context;
@@ -144,12 +144,9 @@ function ChildUsageLauncher(props: {
       ? `${formatTokens(current.context.used)} / ${formatTokens(current.context.limit)} (${current.context.percent.toFixed(1)}%)`
       : "—";
     const cost = formatEstimatedCost(current.summary.cost, current.summary.costStatus) ?? "—";
-    const tps = current.performance?.tps !== undefined && Number.isFinite(current.performance.tps)
-      ? `${current.performance.tpsEstimated ? "~" : ""}${Math.max(0, current.performance.tps).toFixed(1)} tok/s`
-      : "—";
     return fitUsageSummary([
       ["Context", context], ["Total", formatTokens(current.summary.total)], ["Cost", cost],
-      ["Time", runtime()], ["TPS", tps],
+      ["Time", runtime()], ["TPS", formatTps(current.performance)],
     ], Math.max(20, dimensions().width - 8), current.status === "stale");
   });
 

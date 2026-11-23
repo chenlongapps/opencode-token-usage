@@ -432,6 +432,38 @@ test("shared views retain historical TPS below 20 estimated tokens and become re
   assert.equal(source.reads, reads);
 });
 
+test("shared views receive and expire slow TPS without reading history", async t => {
+  const source = new FakeSource(), events = new Events();
+  source.history.set("root", [{ ...message("completed"), time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }]);
+  let mono = 0;
+  const performance = new PerformanceMonitor(events.subscribe, { monotonic: () => mono });
+  let sidebar: UsageState = { status: "loading" }, dialog: UsageState = { status: "loading" };
+  const views = [new UsageController(source, events.subscribe, state => { sidebar = state; }, 2, 3_000, 2, performance),
+    new UsageController(source, events.subscribe, state => { dialog = state; }, 2, 3_000, 2, performance, true)];
+  t.after(() => { for (const view of views) view.dispose(); performance.dispose(); });
+  for (const view of views) view.select("root");
+  await until(() => sidebar.status === "ready" && dialog.status === "ready");
+  const reads = source.reads;
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const advance = (ms: number) => { mono += ms; t.mock.timers.tick(ms); };
+  const started = 1_800_000_000_000;
+  const step = { assistantMessageID: "a", sessionID: "root" };
+  events.emit({ type: "session.step.started", created: started, data: { ...step, started } });
+  for (let i = 0; i < 3; i++) {
+    if (i > 0) advance(2_998);
+    events.emit({ type: "session.text.delta", id: `slow-${i}`, created: started + mono, data: { ...step, delta: "abcd" } });
+    advance(2);
+  }
+  assert.deepEqual(sidebar.performance, { tps: 1 / 3, tpsEstimated: true, ttft: 0 });
+  assert.deepEqual(dialog.performance, sidebar.performance);
+  advance(8_998);
+  advance(2);
+  assert.deepEqual(sidebar.performance, { tps: 30, ttft: 0 });
+  assert.deepEqual(dialog.performance, sidebar.performance);
+  assert.equal(source.reads, reads);
+});
+
 test("a shared monitor restores a stream captured before switching to its session tree", async t => {
   const source = new FakeSource(), events = new Events();
   source.sessions.set("other", session("other"));

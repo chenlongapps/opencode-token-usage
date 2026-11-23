@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { TestContext } from "node:test";
 import {
   estimatedLiveTps,
   historicalPerformance,
@@ -15,6 +16,257 @@ const event = (type: string, id: string, created: number, data: Record<string, u
 });
 
 const text = (bytes: number) => "a".repeat(bytes);
+
+function delivery(t: TestContext) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const epoch = 1_800_000_000_000;
+  let now = 0, sequence = 0;
+  const monitor = new PerformanceMonitor(undefined, { monotonic: () => now });
+  t.after(() => monitor.dispose());
+  return {
+    monitor,
+    advance(ms: number) { now += ms; t.mock.timers.tick(ms); },
+    start(sessionID = "root") {
+      monitor.handle(event("session.step.started", `start-${sessionID}`, epoch + now,
+        { assistantMessageID: sessionID, sessionID, started: epoch + now }));
+    },
+    delta(delta: string, { type = "session.text.delta", sessionID = "root", offset = 0, id = `delta-${sequence++}` } = {}) {
+      return monitor.handle(event(type, id, epoch + now + offset, { assistantMessageID: sessionID, sessionID, delta }));
+    },
+    summary(...sessions: string[]) { return monitor.summary([], sessions.length ? sessions : ["root"]); },
+  };
+}
+
+test("three one-token deliveries 3 seconds apart yield live TPS until the adaptive deadline", t => {
+  const f = delivery(t);
+  const history: UsageMessage[] = [{ id: "completed", type: "assistant", time: { created: 0, streamed: 1_000 }, tokens: { output: 30 } }];
+  const changes: string[] = [];
+  f.monitor.listen(sessionID => changes.push(sessionID));
+  f.start();
+  f.advance(1_000);
+  f.delta("abcd");
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.deepEqual(f.monitor.summary(history, ["root"]), { tps: 30, ttft: 1_000 });
+  f.advance(3_000);
+  f.delta("abcd");
+  const live = { tps: 1 / 3, tpsEstimated: true, ttft: 1_000 };
+  assert.deepEqual(f.summary(), live, "the first of three batches is a baseline, not measured throughput");
+  f.advance(3_000);
+  f.delta("abcd");
+  f.advance(8_999);
+  for (let i = 0; i < 20; i++) assert.deepEqual(f.summary(), live);
+  const before = changes.length;
+  f.advance(1);
+  assert.deepEqual(changes.slice(before), ["root"]);
+  assert.deepEqual(f.monitor.summary(history, ["root"]), { tps: 30, ttft: 1_000 });
+  assert.deepEqual(f.summary(), { ttft: 1_000 });
+  assert.equal(f.monitor["cleanupTimer"], undefined, "expiry doesn't start a recurrent timer");
+  f.delta("abcd");
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.deepEqual(f.summary(), { ttft: 1_000 }, "expired samples cannot seed a new estimate");
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.deepEqual(f.summary(), live, "quiet expiry is not a step ending");
+});
+
+test("a dense under-threshold stream does not become slow just by lasting 3 seconds", t => {
+  const f = delivery(t);
+  f.start();
+  for (let i = 0; i <= 20; i++) {
+    f.delta("a");
+    f.advance(200);
+  }
+  assert.deepEqual(f.summary(), { ttft: 0 });
+});
+
+test("acceleration replaces the slow average with unsmoothed fast TPS, then preserves the two-second EWMA window", t => {
+  const f = delivery(t);
+  f.start();
+  f.delta("abcd");
+  f.advance(3_000);
+  f.delta("abcd");
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.equal(f.summary().tps, 1 / 3);
+  f.advance(250);
+  f.delta(text(40));
+  f.advance(250);
+  f.delta(text(40));
+  assert.equal(f.summary().tps, 40, "fast mode doesn't inherit the slow average");
+  for (let i = 0; i < 3; i++) {
+    f.advance(500);
+    f.delta(text(80));
+    assert.equal(f.summary().tps, 40);
+  }
+  f.advance(250);
+  f.delta(text(120));
+  // Only the newest 2 seconds count: 40 + 80 + 80 + 80 + 120 bytes after the new baseline.
+  assert.equal(f.summary().tps, smoothLiveTps(40, 100 / 2, 250));
+});
+
+test("after fast output stalls, slow readiness uses fresh delivery rather than old fast bytes", t => {
+  const f = delivery(t);
+  f.start();
+  f.delta(text(80));
+  f.advance(250);
+  f.delta(text(80));
+  f.advance(250);
+  f.delta(text(80));
+  assert.equal(f.summary().tps, 80);
+  f.advance(2_000);
+  assert.equal(f.summary().tps, undefined, "the fast rate has a short deadline even if samples are retained");
+  f.advance(1_000);
+  f.delta("abcd");
+  assert.equal(f.summary().tps, undefined, "one sparse interval doesn't show a slow or stale fast rate");
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.equal(f.summary().tps, 1 / 3);
+});
+
+test("the recent cadence tolerates an irregular delivery without extending the deadline to match the outlier", t => {
+  const f = delivery(t);
+  f.start();
+  for (const gap of [0, 3_000, 3_000, 7_000]) {
+    f.advance(gap);
+    f.delta("abcd");
+  }
+  assert.equal(f.summary().tps, 3 / 13);
+  f.advance(8_999);
+  assert.equal(f.summary().tps, 3 / 13);
+  f.advance(1);
+  assert.equal(f.summary().tps, undefined, "recent median is 3s, not the latest 7s interval");
+});
+
+for (const stalledClock of ["arrival", "server"]) {
+  test(`a long ${stalledClock} gap resets sparse continuity without resetting the step`, t => {
+    const f = delivery(t);
+    f.start();
+    for (const gap of [0, 3_000, 3_000]) {
+      f.advance(gap);
+      f.delta("abcd");
+    }
+    assert.equal(f.summary().tps, 1 / 3);
+    f.advance(stalledClock === "arrival" ? 10_000 : 3_000);
+    const offset = stalledClock === "arrival" ? -7_000 : 7_000;
+    f.delta("abcd", { offset });
+    f.advance(3_000);
+    f.delta("abcd", { offset });
+    assert.deepEqual(f.summary(), { ttft: 0 }, "two fresh batches must not use a pre-stall baseline");
+    f.advance(3_000);
+    f.delta("abcd", { offset });
+    assert.equal(f.summary().tps, 1 / 3);
+  });
+}
+
+test("the slow estimator rejects an isolated network-like pause followed by one large burst", t => {
+  const f = delivery(t);
+  f.start();
+  f.delta("abcd");
+  f.advance(500);
+  f.delta("abcd");
+  f.advance(8_000);
+  f.delta(text(40_000));
+  f.advance(50);
+  f.delta(text(40_000));
+  assert.deepEqual(f.summary(), { ttft: 0 }, "a long gap and fragments of one burst are not independent slow samples");
+  f.advance(1_000);
+  f.delta("abcd");
+  assert.deepEqual(f.summary(), { ttft: 0 }, "a shorter new interval cannot make the old pause valid");
+});
+
+test("one large batch in a slow stream becomes a new baseline rather than a long-lived spike", t => {
+  const f = delivery(t);
+  f.start();
+  for (const gap of [0, 3_000, 3_000]) {
+    f.advance(gap);
+    f.delta("abcd");
+  }
+  assert.equal(f.summary().tps, 1 / 3);
+  f.advance(3_000);
+  f.delta(text(40_000));
+  assert.equal(f.summary().tps, undefined);
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.equal(f.summary().tps, undefined);
+  f.advance(3_000);
+  f.delta("abcd");
+  assert.equal(f.summary().tps, 1 / 3, "after the burst, two new deliveries restore the slow rate");
+});
+
+test("slow expiry honors its 6-second floor, 30-second ceiling and separate 30-second sample span", t => {
+  const f = delivery(t);
+  f.start("floor");
+  f.delta("abcd", { sessionID: "floor" });
+  for (let i = 0; i < 2; i++) {
+    f.advance(1_500);
+    f.delta("abcd", { sessionID: "floor" });
+  }
+  f.advance(5_999);
+  assert.equal(f.summary("floor").tps, 2 / 3);
+  f.advance(1);
+  assert.equal(f.summary("floor").tps, undefined);
+  for (const [sessionID, gap] of [["ceiling", 15_000], ["too-sparse", 15_001]] as const) {
+    f.start(sessionID);
+    f.delta("abcd", { sessionID });
+    for (let i = 0; i < 2; i++) {
+      f.advance(gap);
+      f.delta("abcd", { sessionID });
+    }
+    if (sessionID === "too-sparse") {
+      assert.deepEqual(f.summary(sessionID), { ttft: 0 });
+      continue;
+    }
+    f.advance(29_999);
+    assert.equal(f.summary(sessionID).tps, 2 / 30);
+    f.advance(1);
+    assert.equal(f.summary(sessionID).tps, undefined);
+  }
+});
+
+test("slow readiness uses window-local UTF-8 bytes and ignores duplicate, late and empty deltas", t => {
+  const f = delivery(t);
+  f.start();
+  f.delta("😀");
+  f.advance(3_000);
+  f.delta("中文", { type: "session.reasoning.delta", id: "zh" });
+  f.advance(3_000);
+  f.delta("a");
+  assert.equal(f.delta(text(80), { id: "zh" }), false);
+  assert.equal(f.delta(text(80), { offset: -1 }), false);
+  assert.equal(f.delta(""), false);
+  assert.equal(f.summary().tps, undefined, "4 + 6 + 1 bytes aren't enough");
+  f.delta("b"); // Same merged batch, reaches exactly 12 bytes.
+  assert.equal(f.summary().tps, 2 / 6);
+  f.advance(3_000);
+  f.delta('{"a":1}', { type: "session.tool.input.delta" });
+  assert.equal(f.summary().tps, (15 / 4) / 9);
+});
+
+test("concurrent slow and fast subagents don't pool readiness or double-count the tree", t => {
+  const f = delivery(t);
+  f.start("slow");
+  f.start("fast");
+  f.delta("abcd", { sessionID: "slow" });
+  f.delta(text(80), { sessionID: "fast" });
+  f.advance(3_000);
+  f.delta("abcd", { sessionID: "slow" });
+  f.delta(text(80), { sessionID: "fast" });
+  assert.equal(f.summary("root", "fast", "slow").tps, undefined);
+  f.advance(3_000);
+  f.delta("abcd", { sessionID: "slow" });
+  f.delta(text(80), { sessionID: "fast" });
+  for (let i = 0; i < 2; i++) {
+    f.advance(250);
+    f.delta(text(40), { sessionID: "fast" });
+  }
+  assert.equal(f.summary("slow").tps, 1 / 3);
+  assert.equal(f.summary("fast").tps, 40);
+  assert.equal(f.summary("root", "slow", "fast", "slow").tps, (2_000 + 20_000) / 6_500);
+  f.advance(2_000);
+  assert.equal(f.summary("root", "slow", "fast").tps, 1 / 3);
+});
 
 test("completed TPS weights generated tokens by total provider streaming duration", () => {
   const messages: UsageMessage[] = [

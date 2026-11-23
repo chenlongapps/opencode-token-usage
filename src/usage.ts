@@ -433,6 +433,12 @@ export function summaryRows(summary: Summary): readonly (readonly [string, strin
 /** `1 step` reads better than `1 steps` in the dialog's single-line summaries. */
 export const countLabel = (value: number, noun: string) => `${formatTokens(value)} ${noun}${value === 1 ? "" : "s"}`;
 
+export function formatTps(performance?: PerformanceSummary): string | undefined {
+  const tps = performance?.tps;
+  if (tps === undefined || !Number.isFinite(tps)) return undefined;
+  return `${performance?.tpsEstimated ? "~" : ""}${tps > 0 && tps < 0.1 ? "<0.1" : Math.max(0, tps).toFixed(1)} tok/s`;
+}
+
 export function usageRows(summary?: Summary, context?: ContextUsage, performance?: PerformanceSummary, runtime?: RuntimeSummary): readonly (readonly [string, string])[] {
   const t = summary?.tokens;
   const number = (value?: number) => value === undefined ? "—" : formatTokens(value);
@@ -450,9 +456,8 @@ export function usageRows(summary?: Summary, context?: ContextUsage, performance
   );
   const cost = summary && formatEstimatedCost(summary.cost, summary.costStatus);
   if (cost !== undefined) rows.push(["Est. Cost", cost]);
-  if (performance?.tps !== undefined && Number.isFinite(performance.tps)) {
-    rows.push(["TPS", `${performance.tpsEstimated ? "~" : ""}${Math.max(0, performance.tps).toFixed(1)} tok/s`]);
-  }
+  const tps = formatTps(performance);
+  if (tps !== undefined) rows.push(["TPS", tps]);
   if (performance?.ttft !== undefined && Number.isFinite(performance.ttft)) {
     rows.push(["TTFT", `${(Math.max(0, performance.ttft) / 1_000).toFixed(1)}s`]);
   }

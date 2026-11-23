@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { builtInPrice, freeReferencePrice } from "../src/pricing.js";
-import { bar, contextUsage, countLabel, estimate, fitUsageSummary, formatCompact, formatCost, formatDuration, formatEstimatedCost, formatRate, formatRateTier, formatRunTime, formatTokens, modelKey, normalize, rateRows, requestDetails, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
+import { bar, contextUsage, countLabel, estimate, fitUsageSummary, formatCompact, formatCost, formatDuration, formatEstimatedCost, formatRate, formatRateTier, formatRunTime, formatTokens, formatTps, modelKey, normalize, rateRows, requestDetails, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
 import type { ModelRef, Price, UsageMessage } from "../src/usage.js";
 
 const price: Price = { input: 2, output: 8, cache: { read: 0.2, write: 3 } };
@@ -13,6 +13,16 @@ const snapshotPrices = (model: ModelRef) => {
   assert.ok(entry, modelKey(model));
   return entry.prices;
 };
+
+test("TPS formats tiny positive values without inventing zero or marking history as live", () => {
+  assert.equal(formatTps({ tps: 42.5, tpsEstimated: true }), "~42.5 tok/s");
+  assert.equal(formatTps({ tps: 1 / 3, tpsEstimated: true }), "~0.3 tok/s");
+  assert.equal(formatTps({ tps: 0.1, tpsEstimated: true }), "~0.1 tok/s");
+  assert.equal(formatTps({ tps: 0.099, tpsEstimated: true }), "~<0.1 tok/s");
+  assert.equal(formatTps({ tps: 0.04 }), "<0.1 tok/s");
+  assert.equal(formatTps({ tps: NaN }), undefined);
+  assert.deepEqual(usageRows(undefined, undefined, { tps: 0.04, tpsEstimated: true }).at(-1), ["TPS", "~<0.1 tok/s"]);
+});
 
 test("five disjoint categories, per-message model cost, cache rate, and message types", () => {
   const value = summarize([
