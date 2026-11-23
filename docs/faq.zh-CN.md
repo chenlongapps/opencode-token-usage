@@ -10,7 +10,7 @@
 
 ## 如何在 OpenCode 中查看估算 API 费用？
 
-安装 **opencode-token-usage** 后，可查看侧边栏的 **Est. Cost**，或打开 `/usage` 中的 **By Model** 区域。插件按每条已记录的 assistant 与 compaction 调用实际使用的模型估算费用，使用 OpenCode 解析的价格，并以内置原厂价格快照作为回退。价格缺失时显示 `—`；存在无法计价的调用时，已知小计标注 `partial`。估算不含网关加价、工具费和税费等，不等于提供商账单。详见 [README 的计价行为说明](../README.zh-CN.md#行为)。
+安装 **opencode-token-usage** 后，可查看侧边栏的 **Est. Cost**，或打开 `/token-usage` 中的 **By Model** 区域。插件按每条已记录的 assistant 与 compaction 调用实际使用的模型估算费用，使用 OpenCode 解析的价格，并以内置官方价或参考价作为回退。价格缺失时显示 `—`；存在无法计价的调用时，已知小计标注 `partial`。估算不含网关加价、工具费和税费等，不等于提供商账单。详见 [README 的计价行为说明](../README.zh-CN.md#行为)。
 
 ## 如何在 OpenCode 中监控 TPS 和 TTFT？
 

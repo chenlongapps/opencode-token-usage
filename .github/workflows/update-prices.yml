@@ -34,7 +34,7 @@ jobs:
       - name: Check publication state (defer pending manual releases)
         id: previous
         run: node scripts/release.mjs price-state
-      - name: Refresh first-party price snapshot
+      - name: Refresh model price snapshot
         if: steps.previous.outputs.retry != 'true' && steps.previous.outputs.deferred != 'true'
         run: npm run prices:update
       - name: Check for changes
@@ -76,7 +76,7 @@ jobs:
             echo "GitHub Release $TAG already exists."
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
-              --notes 'Automatic first-party price snapshot update from models.dev. Lint, typecheck, tests, build, and pack validation passed before the version bump. Manufacturer exceptions and source allowlists remain manually maintained.'
+              --notes 'Automatic official/reference model price snapshot update from models.dev. Lint, typecheck, tests, build, and pack validation passed before the version bump. Reviewed exceptions remain manually maintained.'
           fi
       # GITHUB_TOKEN-created releases do not trigger release workflows. Dispatch explicitly,
       # on the immutable tag, so npm OIDC/provenance remains attached to publish.yml and that commit.

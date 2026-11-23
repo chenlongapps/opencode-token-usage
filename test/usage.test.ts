@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { officialPrice } from "../src/pricing.js";
+import { builtInPrice, freeReferencePrice } from "../src/pricing.js";
 import { bar, contextUsage, countLabel, estimate, fitUsageSummary, formatCompact, formatCost, formatDuration, formatEstimatedCost, formatRate, formatRateTier, formatRunTime, formatTokens, modelKey, normalize, rateRows, requestDetails, requestRows, summarize, summarizeModels, summaryRows, usageRows } from "../src/usage.js";
 import type { ModelRef, Price, UsageMessage } from "../src/usage.js";
 
@@ -9,7 +9,7 @@ const model = { providerID: "test", id: "model" };
 const catalog = (prices: readonly Price[] = [price]) => new Map([[modelKey(model), prices]]);
 const priced = (message: UsageMessage): UsageMessage => ({ ...message, model });
 const snapshotPrices = (model: ModelRef) => {
-  const entry = officialPrice(model);
+  const entry = builtInPrice(model);
   assert.ok(entry, modelKey(model));
   return entry.prices;
 };
@@ -293,6 +293,20 @@ test("model rate groups reflect the source and context tier actually used by eac
   ]);
 });
 
+test("selectable billing modes do not inherit the SDK's base model tariff", () => {
+  const model = { providerID: "openai", id: "gpt-5.6-luna" };
+  const pricedSKU = { ...model, id: `${model.id}-fast`, variant: "fast" };
+  const tokens = { input: 1_000_000 };
+  const prices = new Map([[modelKey(model), [{ input: 1 }]], [modelKey(pricedSKU), [{ input: 7 }]]]);
+  const usage: UsageMessage = { id: "billing-variant", type: "assistant", model, tokens };
+  const fast = { ...model, variant: "fast" };
+  const expected = estimate(normalize(tokens), snapshotPrices(fast)).cost;
+  assert.equal(summarize([{ ...usage, model: fast }], prices).cost, expected);
+  assert.equal(summarizeModels([{ ...usage, model: fast }], prices)[0]?.appliedRates[0]?.source, "Built-in snapshot");
+  assert.equal(summarize([{ ...usage, model: pricedSKU }], prices).cost, 7);
+  assert.equal(summarize([{ ...usage, model: { ...model, variant: "high" } }], prices).cost, 1);
+});
+
 test("rate details keep free, unavailable, and partial calls distinct", () => {
   const model = { providerID: "test", id: "free-input" };
   const messages: UsageMessage[] = [
@@ -319,24 +333,24 @@ test("rate details keep free, unavailable, and partial calls distinct", () => {
   assert.equal(formatRateTier({ lowerExclusive: undefined, upperInclusive: undefined }), "all incoming sizes");
 });
 
-test("incomplete OpenCode prices fall back as a whole and complete zero prices use the snapshot", () => {
+test("incomplete OpenCode prices fall back as a whole and complete zero prices are preserved", () => {
   const officialModel = { providerID: "gateway", id: "gpt-5.6-luna" };
   const usage: UsageMessage = { id: "fallback", type: "compaction", model: officialModel, tokens: { input: 1_000_000, output: 1_000_000 } };
   const expected = estimate(normalize(usage.tokens), snapshotPrices(officialModel)).cost;
   const incomplete = new Map([[modelKey(officialModel), [{ input: 9 }]]]);
   assert.equal(summarize([usage], incomplete).cost, expected);
   const free = new Map([[modelKey(officialModel), [{ input: 0, output: 0 }]]]);
-  assert.equal(summarize([usage], free).cost, expected);
+  assert.equal(summarize([usage], free).cost, 0);
   assert.equal(summarize([usage], free).costStatus, "complete");
 });
 
-test("a complete OpenCode zero yields to a complete snapshot price only", () => {
+test("an OpenCode zero for the used token category never becomes a paid fallback", () => {
   const model = { providerID: "gateway", id: "gpt-5.6-luna" };
   const usage: UsageMessage = { id: "zero", type: "assistant", model, tokens: { input: 1_000_000 } };
   const freeRuntime = new Map([[modelKey(model), [{ input: 0 }]]]);
-  assert.equal(summarize([usage], freeRuntime).cost, estimate(normalize(usage.tokens), snapshotPrices(model)).cost);
+  assert.equal(summarize([usage], freeRuntime).cost, 0);
   assert.equal(summarize([usage], freeRuntime).costStatus, "complete");
-  assert.equal(summarizeModels([usage], freeRuntime)[0]?.appliedRates[0]?.source, "Built-in snapshot");
+  assert.equal(summarizeModels([usage], freeRuntime)[0]?.appliedRates[0]?.source, "OpenCode");
 
   const paidRuntime = new Map([[modelKey(model), [{ input: 3 }]]]);
   assert.equal(summarize([usage], paidRuntime).cost, 3);
@@ -369,18 +383,57 @@ test("runtime zero prices for models without a manufacturer fallback display as 
   assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], "$0.00");
 });
 
-test("Muse Spark Contributor snapshot prices replace OpenCode's complete free rate", () => {
-  const model = { providerID: "opencode", id: "muse-spark-1.3-contributor-free" };
+test("verified Free usage is counted in the tree total and labelled separately in By Model", () => {
+  const model = { providerID: "opencode", id: "hy4-flash-free" };
   const freePrice: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
   const tokens = { input: 1_000_000, output: 1_000_000 };
-  const expected = estimate(normalize(tokens), snapshotPrices(model)).cost;
-  const summary = summarize([{
-    id: "contributor", type: "assistant", model,
-    tokens,
-  }], new Map([[modelKey(model), [freePrice]]]));
-  assert.equal(summary.cost, expected);
+  const paid = { providerID: "openrouter", id: "tencent/hy4-flash" };
+  assert.equal(freeReferencePrice(model), builtInPrice(paid));
+  const reference = estimate(normalize(tokens), snapshotPrices(paid)).cost;
+  assert.ok(reference > 0);
+  const messages: UsageMessage[] = [
+    { id: "free", type: "assistant", model, tokens },
+    { id: "paid", type: "compaction", model: paid, tokens },
+  ];
+  const runtime = new Map([[modelKey(model), [freePrice]], [modelKey(paid), [{ input: 1, output: 1 }]]]);
+  const summary = summarize(messages, runtime);
+  assert.equal(summary.cost, 2 + reference);
   assert.equal(summary.costStatus, "complete");
-  assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], formatEstimatedCost(expected, "complete"));
+  assert.equal(usageRows(summary).find(([label]) => label === "Est. Cost")?.[1], formatEstimatedCost(2 + reference, "complete"));
+  const row = summarizeModels(messages, runtime).find(row => row.model === modelKey(model))!;
+  assert.equal(row.cost, reference);
+  assert.equal(row.appliedRates[0]?.source, "Free usage reference");
+  assert.equal(summarize(messages.slice(0, 1)).cost, reference);
+  const nonzero = new Map([[modelKey(model), [{ input: 9, output: 11 }]]]);
+  assert.equal(summarize(messages.slice(0, 1), nonzero).cost, 20);
+  const writeOnly: UsageMessage = { id: "write", type: "assistant", model, tokens: { cache: { write: 1_000_000 } } };
+  const writeEstimate = estimate(normalize(writeOnly.tokens), snapshotPrices(paid));
+  const writeRow = summarizeModels([writeOnly], runtime)[0]!;
+  assert.equal(writeRow.appliedRates[0]?.source, writeEstimate.defaultPrice ? "OpenCode" : "Free usage reference");
+  assert.equal(writeRow.cost, writeEstimate.defaultPrice ? 0 : writeEstimate.cost);
+});
+
+test("only a reviewed endpoint-specific zero exception can replace complete OpenCode zero", () => {
+  const direct = { providerID: "tencent-tokenhub", id: "hy3" };
+  const gateway = { providerID: "openrouter", id: "tencent/hy3" };
+  const free: Price = { input: 0, output: 0, cache: { read: 0, write: 0 } };
+  const tokens = { input: 1_000_000, output: 1_000_000 };
+  const runtime = new Map([[modelKey(direct), [free]], [modelKey(gateway), [free]]]);
+  const messages: UsageMessage[] = [
+    { id: "direct", type: "assistant", model: direct, tokens },
+    { id: "gateway", type: "assistant", model: gateway, tokens },
+    { id: "unknown-write", type: "compaction", model: direct, tokens: { cache: { write: 1_000_000 } } },
+  ];
+  const rows = summarizeModels(messages, runtime);
+  assert.equal(rows.find(row => row.model === modelKey(direct))?.cost, estimate(normalize(tokens), snapshotPrices(direct)).cost);
+  assert.equal(rows.find(row => row.model === modelKey(direct))?.costStatus, "partial");
+  assert.equal(rows.find(row => row.model === modelKey(direct))?.unpricedCalls, 1);
+  assert.equal(rows.find(row => row.model === modelKey(gateway))?.cost, 0);
+  assert.equal(rows.find(row => row.model === modelKey(gateway))?.appliedRates[0]?.source, "OpenCode");
+  const paid = new Map([[modelKey(direct), [{ input: 9, output: 10 }]]]);
+  assert.equal(summarize(messages.slice(0, 1), paid).cost, 19);
+  const freeWrite = new Map([[modelKey(direct), [{ input: 9, output: 10, cache: { write: 0 } }]]]);
+  assert.equal(summarizeModels(messages.slice(2), freeWrite)[0]?.appliedRates[0]?.source, "OpenCode");
 });
 
 test("first-party fallback keeps distinct reasoning and unknown cache-write billing honest", () => {

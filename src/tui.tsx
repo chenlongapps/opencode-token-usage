@@ -349,6 +349,9 @@ function UsageDialog(props: {
                       <text fg={theme().base} flexShrink={0}>{formatEstimatedCost(model.cost, model.costStatus) ?? ""}</text>
                     </box>
                     <text fg={theme().muted}>{number(model.tokens)} tokens · {countLabel(model.calls, "call")}</text>
+                    <Show when={!detailed() && model.appliedRates.some(rates => rates.source === "Free usage reference")}>
+                      <text fg={theme().muted}>Includes free usage reference</text>
+                    </Show>
                     <Show when={detailed()}>
                       <For each={model.appliedRates}>{(rates) => (
                         <box marginTop={1}>

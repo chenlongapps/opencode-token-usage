@@ -1,46 +1,17 @@
 import type { Price } from "./usage.js";
 
-/** models.dev has no manufacturer-of-model field. Only these first-party
- * catalogs and model families can supply fallback prices. A manufacturer
- * listing somebody else's model (e.g. Alibaba's Kimi) is not its origin. */
-export const ORIGINAL_PROVIDERS: Readonly<Record<string, RegExp>> = {
-  ai21: /^jamba-/i,
-  alibaba: /^(?:qwen|qwq|qvq)/i,
-  anthropic: /^claude-/i,
-  arcee: /^trinity-/i,
-  cohere: /^(?:command-|north-)/i,
-  deepseek: /^deepseek-/i,
-  google: /^(?:gemini-|gemma-|deep-research-)/i,
-  inception: /^mercury-/i,
-  longcat: /^longcat-/i,
-  meta: /^muse-/i,
-  minimax: /^minimax-/i,
-  mistral: /^(?:open-mistral-|open-mixtral-|mistral-|ministral-|magistral-|codestral-|devstral-|labs-devstral-|pixtral-|voxtral-)/i,
-  moonshotai: /^kimi-/i,
-  nvidia: /^nvidia\/(?:nemotron-|llama-[\w.-]*nemotron-)/i,
-  openai: /^(?:gpt-|o\d|chat-latest$)/i,
-  perplexity: /^sonar(?:-|$)/i,
-  sakana: /^(?:fugu|sakana-namazu)/i,
-  "stepfun-ai": /^step-/i,
-  // TokenHub's hy3 zero is a subscription-plan quote, not a token tariff;
-  // hy3 pay-as-you-go is a reviewed exception below.
-  "tencent-tokenhub": /^hy4-preview$/i,
-  upstage: /^solar-/i,
-  volcengine: /^doubao-seed-/i,
-  xai: /^grok-/i,
-  xiaomi: /^mimo-/i,
-  zai: /^glm-/i,
-};
-
 export interface PriceOverride {
+  /** Provider selling this tariff; id is its exact SKU or the lab model ID. */
   providerID: string;
   id: string;
+  canonicalID?: string;
   prices: readonly Price[];
   source: string;
   reason: string;
-  released?: string;
-  /** Exceptional SKUs such as Fast are only available at the first party. */
-  providers?: readonly string[];
+  /** Only bind this tariff to exact provider SKUs, not generic aliases. */
+  scoped?: true;
+  /** Exact OpenCode provider/SKU whose zero is a verified non-tariff. */
+  zeroException?: string;
 }
 
 /** Rates absent from the first-party models.dev listing or contradicted by a
@@ -48,7 +19,7 @@ export interface PriceOverride {
 export const OVERRIDES_VERIFIED = "2026-09-23";
 export const PRICE_OVERRIDES: readonly PriceOverride[] = [
   {
-    providerID: "openai", id: "chat-latest", released: "2026-05-05",
+    providerID: "openai", id: "chat-latest",
     source: "https://developers.openai.com/api/docs/pricing", reason: "Official ChatGPT API SKU missing from the first-party catalog",
     prices: [{ input: 5, output: 30, cache: { read: 0.5 } }],
   },
@@ -63,7 +34,9 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     ["gpt-6-sol", 4, 20, 0.4, 5, 8, 30, 0.8, 10],
     ["gpt-6-luna", 0.2, 1, 0.02, 0.25, 0.4, 1.5, 0.04, 0.5],
   ] as const).map(([id, input, output, read, write, longInput, longOutput, longRead, longWrite]): PriceOverride => ({
-    providerID: "openai", id: `${id}-fast`, providers: ["openai"],
+    providerID: "openai", id: `${id}-fast`,
+    canonicalID: id === "gpt-6-astra" ? `openai/${id}-fast` : `openai/${id}:fast`,
+    ...(id === "gpt-6-astra" ? {} : { scoped: true }),
     source: "https://developers.openai.com/api/docs/pricing",
     reason: "Published first-party Fast rate and long-context boundary (not in mode.cost)",
     prices: [
@@ -73,13 +46,13 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     ],
   })),
   {
-    providerID: "deepseek", id: "deepseek-v4.1-flash", released: "2026-09-10",
+    providerID: "deepseek", id: "deepseek-v4.1-flash",
     source: "https://api-docs.deepseek.com/quick_start/pricing",
     reason: "Peak synchronous price; the hourly billing tier is not recorded in historical messages",
     prices: [{ input: 0.3, output: 1.2, cache: { read: 0.006 } }],
   },
   {
-    providerID: "deepseek", id: "deepseek-v4-pro-0813", released: "2026-08-13",
+    providerID: "deepseek", id: "deepseek-v4-pro-0813",
     source: "https://api-docs.deepseek.com/quick_start/pricing",
     reason: "Peak synchronous price; the hourly billing tier is not recorded in historical messages",
     prices: [{ input: 1.32, output: 3.96, cache: { read: 0.044 } }],
@@ -97,7 +70,7 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     prices: [{ input: 1, output: 2.7, cache: { read: 0.05, write: 1 } }],
   },
   {
-    providerID: "tencent-tokenhub", id: "hy3", released: "2026-07-06",
+    providerID: "tencent-tokenhub", id: "hy3", zeroException: "tencent-tokenhub/hy3",
     source: "https://intl.cloud.tencent.com/document/product/1300/78937",
     reason: "Published pay-as-you-go tariff, rather than the catalog's subscription-plan zero",
     prices: [{ input: 0.132, output: 0.528, cache: { read: 0.033 } }],
@@ -115,9 +88,9 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     prices: [{ input: 1.5, output: 7.5, cache: { read: 0.15 } }],
   },
   {
-    providerID: "alibaba", id: "qwen3.7-flash", released: "2026-07-15",
+    providerID: "alibaba", id: "qwen3.7-flash",
     source: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-    reason: "International pay-as-you-go SKU absent from the international catalog (not the CN tariff)",
+    reason: "Published international pay-as-you-go schedule; aggregate cache writes cannot select implicit versus explicit pricing",
     prices: [
       { input: 0.03, output: 0.13, cache: { read: 0.006 } },
       { tier: { type: "context", size: 32_000 }, input: 0.1, output: 0.4, cache: { read: 0.02 } },
@@ -125,19 +98,19 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     ],
   },
   {
-    providerID: "alibaba", id: "qwen3.8-2.4t-a95b", released: "2026-08-12",
+    providerID: "alibaba", id: "qwen3.8-2.4t-a95b",
     source: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
     reason: "Manufacturer's international tariff; this SKU is absent from the international catalog",
     prices: [{ input: 2, output: 6 }],
   },
   {
-    providerID: "alibaba", id: "qwen3.8-27b", released: "2026-08-14",
+    providerID: "alibaba", id: "qwen3.8-27b",
     source: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
     reason: "Manufacturer's international tariff; this SKU is absent from the international catalog",
     prices: [{ input: 0.5, output: 3, cache: { read: 0.1 } }],
   },
   {
-    providerID: "alibaba", id: "qwen3.5-plus-2026-04-20", released: "2026-04-20",
+    providerID: "alibaba", id: "qwen3.5-plus-2026-04-20",
     source: "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
     reason: "Manufacturer's international tariff; this SKU is absent from the international catalog",
     prices: [
@@ -146,13 +119,13 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     ],
   },
   {
-    providerID: "volcengine", id: "dola-seed-2-1-turbo", released: "2026-06-23",
+    providerID: "byteplus", id: "dola-seed-2-1-turbo", canonicalID: "bytedance-seed/seed-2.1-turbo",
     source: "https://docs.byteplus.com/en/docs/ModelArk/1099320",
     reason: "BytePlus manufacturer SKU uses a different ID from the regional Volcengine catalog",
     prices: [{ input: 0.5, output: 2.5, cache: { read: 0.1 } }],
   },
   {
-    providerID: "sakana", id: "fugu-ultra-v2.0", released: "2026-09-11",
+    providerID: "sakana", id: "fugu-ultra-v2.0", canonicalID: "sakana/fugu-ultra-v2",
     source: "https://console.sakana.ai/pricing",
     reason: "Manufacturer versioned SKU not present under this ID; higher tier starts at 272K",
     prices: [
@@ -161,16 +134,16 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
     ],
   },
   {
-    providerID: "sakana", id: "fugu-max-v1.0", released: "2026-09-11",
+    providerID: "sakana", id: "fugu-max-v1.0", canonicalID: "sakana/fugu-max",
     source: "https://console.sakana.ai/pricing",
     reason: "Manufacturer versioned SKU absent from models.dev",
     prices: [{ input: 2, output: 6, cache: { read: 0.25 } }],
   },
   ...([
-    ["aion-3.0", "2026-05-05", 3, 6, 0.75],
-    ["aion-3.0-mini", "2026-05-14", 0.7, 1.4, 0.18],
-  ] as const).map(([id, released, input, output, read]): PriceOverride => ({
-    providerID: "aion-labs", id, released,
+    ["aion-3.0", 3, 6, 0.75],
+    ["aion-3.0-mini", 0.7, 1.4, 0.18],
+  ] as const).map(([id, input, output, read]): PriceOverride => ({
+    providerID: "aion-labs", id,
     source: "https://www.aionlabs.ai/docs/models",
     reason: "First-party hosted API price; models.dev has no Aion manufacturer provider",
     prices: [{ input, output, cache: { read } }],
@@ -179,7 +152,7 @@ export const PRICE_OVERRIDES: readonly PriceOverride[] = [
 
 /** A catalog zero may mean an unmetered subscription, or that cache storage is
  * billed by time rather than per write token. Do not invent a free write rate. */
-export function adjustOriginalPrice(providerID: string, price: Price): Price {
+export function adjustCatalogPrice(providerID: string, price: Price): Price {
   const ambiguousWrite = (providerID === "zai" && price.cache?.write === 0)
     || (providerID === "alibaba" && price.cache?.write !== undefined);
   if (ambiguousWrite && price.cache) {

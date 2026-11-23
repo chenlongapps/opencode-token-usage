@@ -1,6 +1,7 @@
 import type { PerformanceSummary } from "./performance.js";
 import type { RuntimeSummary } from "./runtime.js";
-import { officialPrice } from "./pricing.js";
+import { billingMode } from "./price-identity.js";
+import { builtInPrice, freeReferencePrice } from "./pricing.js";
 
 export interface Tokens {
   input: number;
@@ -20,7 +21,7 @@ export interface Price {
   tier?: { type: "context"; size: number };
   input?: number;
   output?: number;
-  /** Optional first-party rate when reasoning differs from ordinary output. */
+  /** Optional separate rate when reasoning differs from ordinary output. */
   reasoning?: number;
   cache?: { read?: number; write?: number };
 }
@@ -87,7 +88,7 @@ export function estimate(tokens: Tokens, prices: readonly Price[] = []) {
 
 export type CostStatus = "empty" | "complete" | "partial" | "unavailable";
 
-export type PriceSource = "OpenCode" | "Built-in snapshot";
+export type PriceSource = "OpenCode" | "Built-in snapshot" | "Free usage reference";
 
 export interface AppliedRates {
   source: PriceSource;
@@ -112,14 +113,29 @@ interface PricedMessage {
 
 function priceMessage(tokens: Tokens, model: ModelRef | undefined, catalog: PriceCatalog): PricedMessage | undefined {
   if (!model) return undefined;
-  let prices = catalog.get(modelKey(model)) ?? [];
+  // OpenCode's model list has a single cost per ID and no variant-specific
+  // tariff. Do not mistake the base model's cost for a named serving mode.
+  let prices = (billingMode(model) ? undefined : catalog.get(modelKey(model))) ?? [];
   let source: PriceSource = "OpenCode";
   let value = estimate(tokens, prices);
+  // Zero on its own is not evidence of a Free SKU. Only verified Free links
+  // contribute a paid benchmark; ordinary zero rates and promotions remain zero.
   if (value.defaultPrice || value.cost === 0) {
-    const fallback = officialPrice(model)?.prices ?? [];
-    const snapshot = estimate(tokens, fallback);
-    if (!snapshot.defaultPrice) {
-      value = snapshot;
+    const runtime = selectedPrice(tokens, prices);
+    const hasPositiveRate = [runtime?.input, runtime?.output, runtime?.reasoning, runtime?.cache?.read, runtime?.cache?.write]
+      .some(rate => rate !== undefined && Number.isFinite(rate) && rate > 0);
+    const reference = value.defaultPrice || !hasPositiveRate ? freeReferencePrice(model)?.prices : undefined;
+    if (reference) {
+      const result = estimate(tokens, reference);
+      const price = selectedPrice(tokens, reference);
+      if (!result.defaultPrice && price) return { cost: result.cost, source: "Free usage reference", price, prices: reference };
+    }
+    const entry = builtInPrice(model);
+    const replaceZero = entry?.zeroException === modelKey(model).toLowerCase()
+      && !hasPositiveRate;
+    if (value.defaultPrice || replaceZero) {
+      const fallback = entry?.prices ?? [];
+      value = estimate(tokens, fallback);
       prices = fallback;
       source = "Built-in snapshot";
     }
@@ -156,9 +172,8 @@ function costStatus(known: number, missing: number): CostStatus {
   return known > 0 ? "complete" : "empty";
 }
 
-/** Prices every call with its recorded model. A complete non-zero OpenCode
- * price wins; a complete snapshot price can replace a complete OpenCode zero.
- * Incomplete OpenCode prices fall back to the snapshot as a whole. */
+/** Prices every call with its recorded model. An exactly linked Free SKU can
+ * add a paid benchmark to the estimate; every call uses a single schedule. */
 export function summarize(messages: Iterable<UsageMessage>, catalog: PriceCatalog = new Map()) {
   const tokens = normalize();
   let cost = 0;

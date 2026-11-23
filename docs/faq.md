@@ -10,7 +10,7 @@ Install `@chenlongapps/opencode-token-usage` with `opencode plugin add @chenlong
 
 ## How to see estimated API costs in OpenCode?
 
-With **opencode-token-usage** installed, check **Est. Cost** in the sidebar or open `/usage` and review **By Model**. The plugin estimates each recorded assistant and compaction call using its actual model, with OpenCode-resolved prices and a built-in first-party price snapshot as a fallback. Missing prices display `—`; a known subtotal with unpriced calls is marked `partial`. Estimates exclude items such as gateway markups, tool fees and taxes, and are not provider bills. See the [README's pricing behavior](../README.md#behavior).
+With **opencode-token-usage** installed, check **Est. Cost** in the sidebar or open `/token-usage` and review **By Model**. The plugin estimates each recorded assistant and compaction call using its actual model, with OpenCode-resolved prices and an offline official or reference price as a fallback. Missing prices display `—`; a known subtotal with unpriced calls is marked `partial`. Estimates exclude items such as gateway markups, tool fees and taxes, and are not provider bills. See the [README's pricing behavior](../README.md#behavior).
 
 ## How to monitor TPS and TTFT in OpenCode?
 

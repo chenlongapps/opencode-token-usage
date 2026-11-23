@@ -32,7 +32,7 @@ npm run test:smoke
 | `src/runtime.ts`、`src/runtime-monitor.ts` | 当前会话耗时、服务端时间锚点和实时估算 |
 | `src/source.ts`、`src/controller.ts` | V2 API、分页去重、刷新和视图生命周期 |
 | `src/tui.tsx` | 侧边栏、子代理摘要及详情弹窗 |
-| `src/aliases.ts`、`src/overrides.ts` | 精确模型别名、价格来源白名单与人工例外 |
+| `src/aliases.ts`、`src/price-identity.ts`、`src/overrides.ts` | LAB／Provider 关联、精确价格查询和人工例外 |
 
 ## 统计约定
 
@@ -46,10 +46,10 @@ npm run test:smoke
 
 ### 费用与价格更新
 
-- 按全树每条 assistant／compaction 消息实际模型及五类 token 估算。优先 OpenCode 的完整非零价格；完整零价仅在快照能覆盖实际使用的类别时由快照替换。价格不完整时整条消息回退，不混用费率。
+- 按全树每条 assistant／compaction 消息实际模型及五类 token 估算。优先 OpenCode 的完整非零价格；有已核实付费对应关系的 Free SKU 可按完整参考价计入 `Est. Cost` 并标注，其他有效零价保留（明确端点例外除外）。价格不完整时整条消息回退，不混用费率。
 - 无法定价显示不可用，部分可定价标注 `partial`，明确免费显示 `$0.00`。估算不含网关加价、区域价、工具费和税费，不代表账单。
-- 网关模型只按精确厂商 ID、明确别名和已知包装格式匹配；匹配后仅可剥离终尾 `-free`／`:free` 再精确查找，不按相似名称猜测。
-- 内置快照来自 models.dev 经审核的原厂自家文本模型；插件和构建不联网。新增来源／系列需审核 `src/overrides.ts` 白名单；精确别名放 `src/aliases.ts`，有原厂依据的价格例外放 `src/overrides.ts`。不得将原厂平台转售的第三方模型冒充原厂价。
+- 用 models.dev LAB 目录验证 `canonical_model_id` 及精确身份；不按相似名称猜测。Free SKU 本身与付费 SKU 分开，参考估价只用已核实的精确关联；不同计费模式不混用标准价。精确别名与不同名的 LAB／Provider 关联放 `src/aliases.ts`。
+- 仅在快照生成时选价：原厂非零价 > OpenRouter > Vercel > Bedrock > LLM Gateway > 其他最低非零价 > 有效零价，再整条应用 `src/overrides.ts` 的已核实例外。每个标准模型或计费 SKU 只留一个来源，转售报价不是被转售模型的官方价。插件和构建不联网。
 - 每 4 小时的价格工作流在快照变化并验证后自动提交、升 patch，触发 `publish.yml` 通过 npm OIDC 发布；无变化不发布，结果以发布工作流和 registry 为准。本地可运行 `npm run prices:update` 并审阅差异。测试用固定夹具验证算法，不锁死 models.dev 动态费率。
 - 当前版本尚未在 npm 可见，且未打标签或有效标签属于手动发布时，价格任务须延期、写入摘要并跳过本轮更新，下次调度重查，不能接管手动发布。自动价格版本只重试已验证的原始价格专用标签；异常标签和 registry 故障须失败。
 

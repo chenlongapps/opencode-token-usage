@@ -18,7 +18,7 @@ GitHub Actions 的发布任务需要 `id-token: write`，并使用 GitHub 托管
 `.github/workflows/update-prices.yml` 每 4 小时检查 models.dev，也可在 Actions 中选择 `main` 手动运行：
 
 ```text
-更新白名单内的原厂快照（无变化就结束）
+更新每个模型只保留一个官方／参考来源的快照（无变化就结束）
 → lint、类型检查、测试、构建、打包检查
 → patch 升级（如 0.4.4 → 0.4.5）
 → 只提交快照与两个 package 文件
