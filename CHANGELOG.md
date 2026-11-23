@@ -4,6 +4,14 @@
 
 价格条目反映对应版本的内置快照，不代表当前费率或提供商账单。当前用法与统计口径见 [README.zh-CN.md](README.zh-CN.md)，历史检查及验证边界见[验证记录](docs/verification.md)。
 
+## [0.5.0] - 2026-11-23
+
+### 变更
+
+- 内置价格快照按 models.dev 的标准模型或计费 SKU 保留一套费率：优先采用原厂非零价，没有时选用网关或其他提供商的参考价。插件运行时仍不联网查询价格。
+- 完整非零的 OpenCode 价格优先，价格不完整时按整条消息回退。明确区分独立计费模式，不套用基础型号费率。
+- 仅对已核实对应付费型号的 Free SKU 使用参考价，并在 `By Model` 标注 `Free usage reference`；其他有效零价仍保留（已核实的端点例外除外）。估算费用不代表实际扣费。
+
 ## [0.4.25] - 2026-11-17
 
 ### 变更
@@ -330,6 +338,7 @@
 [0.2.0]: https://github.com/chenlongapps/opencode-token-usage/compare/1e3aec0...49f63fa
 [0.1.0]: https://github.com/chenlongapps/opencode-token-usage/tree/1e3aec0
 
+[0.5.0]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.28...v0.5.0
 [0.4.25]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.24...v0.4.25
 [0.4.24]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.23...v0.4.24
 [0.4.23]: https://github.com/chenlongapps/opencode-token-usage/compare/v0.4.22...v0.4.23
