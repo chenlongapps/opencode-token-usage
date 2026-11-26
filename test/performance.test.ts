@@ -47,7 +47,7 @@ test("three one-token deliveries 3 seconds apart yield live TPS until the adapti
   f.delta("abcd");
   f.advance(3_000);
   f.delta("abcd");
-  assert.deepEqual(f.monitor.summary(history, ["root"]), { tps: 30, ttft: 1_000 });
+  assert.deepEqual(f.monitor.summary(history, ["root"]), { tps: 30, tpsEstimated: true, ttft: 1_000 });
   f.advance(3_000);
   f.delta("abcd");
   const live = { tps: 1 / 3, tpsEstimated: true, ttft: 1_000 };
@@ -59,7 +59,7 @@ test("three one-token deliveries 3 seconds apart yield live TPS until the adapti
   const before = changes.length;
   f.advance(1);
   assert.deepEqual(changes.slice(before), ["root"]);
-  assert.deepEqual(f.monitor.summary(history, ["root"]), { tps: 30, ttft: 1_000 });
+  assert.deepEqual(f.monitor.summary(history, ["root"]), { tps: 30, tpsEstimated: true, ttft: 1_000 });
   assert.deepEqual(f.summary(), { ttft: 1_000 });
   assert.equal(f.monitor["cleanupTimer"], undefined, "expiry doesn't start a recurrent timer");
   f.delta("abcd");
@@ -322,7 +322,7 @@ test("live TPS starts at exactly 20 estimated tokens, otherwise retaining histor
       assistantMessageID: "a", sessionID: "root", delta: text(index === 0 ? bytes - 2 : 1),
     }));
     assert.deepEqual(tracker.summary([], ["root"]), bytes < 80 ? { ttft: 0 } : { tps: 1, tpsEstimated: true, ttft: 0 });
-    assert.deepEqual(tracker.summary(history, ["root"]), bytes < 80 ? { tps: 30, ttft: 0 } : { tps: 1, tpsEstimated: true, ttft: 0 });
+    assert.deepEqual(tracker.summary(history, ["root"]), { tps: bytes < 80 ? 30 : 1, tpsEstimated: true, ttft: 0 });
   }
 });
 
@@ -517,11 +517,11 @@ test("completed provider usage replaces the live estimate", () => {
   assert.equal(live.tpsEstimated, true);
   assert.ok(live.tps !== undefined && live.tps > 0);
   tracker.handle(event("session.step.ended", "end", 1_900, { assistantMessageID: "live", sessionID: "root" }));
-  const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 2_000 },
+  const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, firstToken: 1_200, streamed: 2_000 },
     tokens: { output: 20, reasoning: 10 } }];
   tracker.reconcile(history, ["root"]);
   const completed = tracker.summary(history, ["root"]);
-  assert.equal(completed.tps, 30);
+  assert.equal(completed.tps, 37.5);
   assert.equal(completed.tpsEstimated, undefined);
   tracker.dispose();
 });
@@ -675,10 +675,10 @@ for (const order of ["snapshot first", "end first"] as const) {
     if (order === "snapshot first") tracker.reconcile(history, ["root"]);
     tracker.handle(event("session.step.ended", "end", 1_900, { assistantMessageID: "live", sessionID: "root" }));
     if (order === "end first") tracker.reconcile(history, ["root"]);
-    assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, ttft: 200 });
+    assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, tpsEstimated: true, ttft: 200 });
     now += 101;
     tracker.handle({ type: "noop", data: {} });
-    assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10 });
+    assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, tpsEstimated: true });
     tracker.dispose();
   });
 }
@@ -692,10 +692,10 @@ test("a completed history without an end event also expires", () => {
   tracker.handle(event("session.step.streamed", "streamed", 1_800, { assistantMessageID: "live", sessionID: "root" }));
   const history: UsageMessage[] = [{ id: "live", type: "assistant", time: { created: 1_000, streamed: 1_800, completed: 2_000 }, tokens: { output: 8 } }];
   tracker.reconcile(history, ["root"]);
-  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, ttft: 200 });
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, tpsEstimated: true, ttft: 200 });
   now += 101;
   tracker.handle({ type: "noop", data: {} });
-  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10 });
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 10, tpsEstimated: true });
   tracker.dispose();
 });
 
@@ -839,7 +839,7 @@ test("quiet live TPS expires without events using monotonic age, retaining TTFT 
   assert.equal(tracker.summary(history, ["root"]).tps, 20);
   const before = changes.length;
   mono = 2_000;
-  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 30, ttft: 500 }, "reads reject expired values before the timeout runs");
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 30, tpsEstimated: true, ttft: 500 }, "reads reject expired values before the timeout runs");
   t.mock.timers.tick(1);
   assert.deepEqual(changes.slice(before), ["root"]);
   assert.deepEqual(tracker.summary([], ["root"]), { ttft: 500 });
@@ -848,7 +848,7 @@ test("quiet live TPS expires without events using monotonic age, retaining TTFT 
   assert.equal(changes.length, before + 1, "no periodic ticker remains after expiry");
   tracker.handle(event("session.text.delta", "resume-1", 20_000, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
   tracker.handle(event("session.text.delta", "resume-mid", 20_250, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
-  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 30, ttft: 500 }, "two fresh batches still fall back to history");
+  assert.deepEqual(tracker.summary(history, ["root"]), { tps: 30, tpsEstimated: true, ttft: 500 }, "two fresh batches still fall back to history");
   tracker.handle(event("session.text.delta", "resume-2", 20_500, { assistantMessageID: "a", sessionID: "root", delta: "a" }));
   assert.deepEqual(tracker.summary([], ["root"]), { tps: 1, tpsEstimated: true, ttft: 500 }, "expiry retains response-wide token readiness");
 });

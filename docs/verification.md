@@ -1,3 +1,24 @@
+# 历史 TPS 的集中交付降级（2026-11-26）
+
+在 OpenCode 2.4.2 的隔离实例中，用本地 Responses SSE 复现两种只交付一个内容批次的场景：连续输出 delta 被合并，以及 `response.output_text.done` 单独交付完整文本。修复前两者均上报 115 Output、0 Reasoning，`streamed − firstToken` 均为 33ms，原生页脚和插件都显示 `3484.8 tok/s`。用户提供的 `4107.1 tok/s` 与 `115 ÷ 0.028` 一致；未获取该次请求的原始 SSE，无法断定是哪一层集中交付。
+
+按 [OpenCode 2.4.2 的 step runner](https://github.com/anomalyco/opencode/blob/v2.4.2/packages/core/src/session/runner/step.ts)、[事件发布器](https://github.com/anomalyco/opencode/blob/v2.4.2/packages/core/src/session/runner/publish-llm-event.ts)及[消息投影](https://github.com/anomalyco/opencode/blob/v2.4.2/packages/core/src/session/message-updater.ts)追踪。事件的 `created` 由宿主 [bus](https://github.com/anomalyco/opencode/blob/v2.4.2/packages/core/src/bus.ts#L510-L526)用自己的时钟赋值：
+
+| 字段 | 实际记录时机 |
+| --- | --- |
+| `time.created` | step 尝试启动时取服务端时钟，通过 `session.step.started.data.started` 保存；同 ID 重试会重置时间 |
+| `time.firstToken` | OpenCode 处理首个文本／推理／工具输入开始（或相应工具调用／输入错误）时发布 `session.step.first-token`，早于对外发布合并后的文本或推理 delta。开始事件可能没有实际文本 |
+| `time.streamed` | 读取提供商流结束并 flush 后发布 `session.step.streamed`，早于等待本地工具结算 |
+| `time.completed` | step 结算时由 `session.step.ended`／`failed` 的时间写入；新 step 开始时，仍打开的上一条 assistant 也可能被投影结算。该字段可能包含工具及宿主收尾时间，原生轮次耗时还从该轮输入开始计时 |
+
+[Responses SSE](https://developers.openai.com/api/docs/guides/streaming-responses)定义的是语义交付事件。[OpenCode Responses 适配器](https://github.com/anomalyco/opencode/blob/v2.4.2/packages/ai/src/protocols/open-responses.ts)可把只有 `.done` 的文本或推理摘要转换为普通增量；OpenCode 又把文本／推理增量按 100ms 批量发布，结束时可提前 flush。这层批处理影响插件实时看到的批次，首 token 事件本身在批处理前记录；上游集中到达或 done-only 可以让首输出标记紧挨流结束。原生 [TUI 页脚](https://github.com/anomalyco/opencode/blob/v2.4.2/packages/cli-rs/crates/tui/src/routes/session/messages/footer.rs#L398-L420)和旧 `preparePerformance()` 都用上报的输出与推理 token 除以该跨度；页脚统计当前轮，插件统计会话树。两者观测到的是交付边界，无法反推出模型内部生成时间。
+
+修复保留至少 100ms 的有效原生交付跨度；短于一个增量合并周期或首 token 时间缺失／无效时，以有效且至少 100ms 的 `streamed − created` 计算带 `~` 的请求吞吐。不可靠的样本同时排除 token 和时长，只有 TPS 样本集受影响。以 4,800ms TTFT、28ms 交付跨度构造的回归样本显示 `~23.8 tok/s`。100ms 是计时可信度门槛，较长的单批交付仍无法仅由历史时间戳识别。
+
+2.4.2 打包专项冒烟已通过：修复后集中 delta 的实际跨度为 23ms，原生 `5000.0 tok/s`，插件 `~212.6 tok/s`；done-only 为 30ms，原生 `3833.3 tok/s`，插件 `~214.6 tok/s`，重开 TUI 后保持；正常流原生与插件均为 `42.3 tok/s`。2.4.2 原生页脚不再绘制 TTFT，专项仍核对了原生事件、历史字段和插件 TTFT。记录见 `token-usage-smoke-u8jiNV`（修复前）和 `token-usage-smoke-hHmPwn`（修复后）的 `result.json`、`stream-events.json` 和终端快照。仅验证本地模拟提供商与真实 OpenCode，未调用真实 OpenAI 或其他付费模型。
+
+本地 lint、typecheck、308 项测试、构建及 `git diff --check` 通过。回归覆盖 28ms 异常、零跨度、100ms 边界、缺失／乱序计时、正常高速多批交付、混合全树加权以及实时值切换到历史。OpenCode 2.3.0（`token-usage-smoke-hWlwmO`）和 2.0.28（`token-usage-smoke-WhIq3T`）完整冒烟通过，覆盖子代理、计费、实时 TPS／TTFT、耗时及历史恢复；2.0.28 缺少首 token 字段，历史 TPS 继续使用整请求计时并显示 `~`。隔离安装遇到 npm 临时解析不到 AWS／Smithy 传递依赖，验证时用仓库锁文件预填临时安装目录，实际产物仍由 `npm pack` 后隔离安装。
+
 # 价格任务与手动发布窗口竞态（2026-11-17）
 
 [价格任务 43924512241](https://github.com/chenlongapps/opencode-token-usage/actions/runs/43924512241) 首次在 UTC 2026-11-16 18:02:05 检查到 `0.4.25` 尚未出现在 npm，且 `v0.4.25` 是手动版本提交，于是报错。GitHub Release 在 18:02:19 才发布；[npm 发布任务 43924608496](https://github.com/chenlongapps/opencode-token-usage/actions/runs/43924608496) 随后成功，并于 18:05:19 完成 registry 可见性确认。这是发布窗口重叠，不是价格快照或 npm 发布失败。

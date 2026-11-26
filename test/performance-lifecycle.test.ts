@@ -96,7 +96,7 @@ test("normal long tool waits retain streams and original TTFT, including streame
   f.monitor.reconcile(history, ["tool-wait"]);
   for (const wait of [5 * 60_000, 60 * 60_000, 24 * 60 * 60_000]) {
     await f.advance(wait);
-    assert.deepEqual(f.monitor.summary(history, ["tool-wait"]), { tps: 20, ttft: 100 });
+    assert.deepEqual(f.monitor.summary(history, ["tool-wait"]), { tps: 20, tpsEstimated: true, ttft: 100 });
     assert.equal(f.monitor["active"].size, 1);
     f.monitor.reconcile(history, ["tool-wait"]);
   }
@@ -104,7 +104,7 @@ test("normal long tool waits retain streams and original TTFT, including streame
   f.send("session.tool.success", "tool-wait", { assistantMessageID: "tool-wait" });
   f.send("session.step.ended", "tool-wait", { assistantMessageID: "tool-wait", finish: "tool-calls" });
   await f.advance(retention);
-  assert.deepEqual(f.monitor.summary(history, ["tool-wait"]), { tps: 20 });
+  assert.deepEqual(f.monitor.summary(history, ["tool-wait"]), { tps: 20, tpsEstimated: true });
   assert.equal(f.monitor["active"].size, 0);
   assert.equal(f.monitor["cleanupTimer"], undefined);
 });

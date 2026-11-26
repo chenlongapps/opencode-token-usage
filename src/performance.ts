@@ -3,6 +3,7 @@ import type { UsageMessage } from "./usage.js";
 
 export interface PerformanceSummary {
   tps?: number;
+  /** Live delivery or history that includes full-request timing. */
   tpsEstimated?: boolean;
   /** Average time to first token, in milliseconds. */
   ttft?: number;
@@ -34,6 +35,9 @@ export const LIVE_MIN_TOKENS = 20;
 export const LIVE_MIN_BATCHES = 3;
 export const LIVE_EWMA_ALPHA = 0.35;
 export const LIVE_BYTES_PER_TOKEN = 4;
+// A span shorter than one OpenCode delivery batch cannot distinguish
+// progressive output from a buffered or done-only delivery in history.
+const HISTORICAL_MIN_SPAN_MS = 100;
 const SLOW_WINDOW_MS = 30_000;
 const SLOW_MIN_SPAN_MS = 3_000;
 const SLOW_MIN_BYTES = 12;
@@ -157,6 +161,7 @@ interface RuntimeObservation extends FirstTokenObservation {
 
 export interface PreparedPerformance {
   tps?: number;
+  tpsEstimated?: boolean;
   ttftSum: number;
   ttftCount: number;
   historical: ReadonlyMap<string, { started: number; ttft: number | undefined; native: boolean }>;
@@ -198,7 +203,7 @@ function historicalFirst(message: UsageMessage): number | undefined {
   return undefined;
 }
 
-/** Exact completed-run TPS and the average of only measurable TTFT samples. */
+/** Historical delivery/request throughput and the average of measurable TTFT samples. */
 export function historicalPerformance(
   messages: Iterable<UsageMessage>,
   observations: Iterable<FirstTokenObservation> = [],
@@ -210,20 +215,25 @@ export function historicalPerformance(
 export function preparePerformance(messages: Iterable<UsageMessage>): PreparedPerformance {
   let output = 0;
   let duration = 0;
+  let tpsEstimated = false;
   let ttftSum = 0;
   let ttftCount = 0;
   const historical = new Map<string, { started: number; ttft: number | undefined; native: boolean }>();
   for (const message of messages) {
     if (message.type !== "assistant") continue;
-    const created = message.time?.created;
-    const streamed = message.time?.streamed;
+    const { created, streamed, completed } = message.time ?? {};
     const first = nativeFirst(message);
-    const streamStart = first ?? created;
     const tokens = normalize(message.tokens);
     const generated = tokens.output + tokens.reasoning;
-    if (finite(streamStart) && finite(streamed) && streamed > streamStart && generated > 0) {
-      output += generated;
-      duration += streamed - streamStart;
+    if (generated > 0 && finite(created) && finite(streamed) && (!finite(completed) || completed >= streamed)) {
+      const requestSpan = streamed - created;
+      if (Number.isFinite(requestSpan) && requestSpan >= HISTORICAL_MIN_SPAN_MS) {
+        const deliverySpan = first === undefined ? 0 : streamed - first;
+        const useDelivery = deliverySpan >= HISTORICAL_MIN_SPAN_MS;
+        output += generated;
+        duration += useDelivery ? deliverySpan : requestSpan;
+        tpsEstimated ||= !useDelivery;
+      }
     }
     const sample = historicalFirst(message);
     if (finite(created)) historical.set(message.id, { started: created, ttft: sample, native: first !== undefined });
@@ -232,7 +242,11 @@ export function preparePerformance(messages: Iterable<UsageMessage>): PreparedPe
       ttftCount++;
     }
   }
-  return { ...(duration > 0 ? { tps: output / (duration / 1_000) } : {}), ttftSum, ttftCount, historical };
+  return {
+    ...(duration > 0 ? { tps: output / (duration / 1_000) } : {}),
+    ...(tpsEstimated ? { tpsEstimated: true } : {}),
+    ttftSum, ttftCount, historical,
+  };
 }
 
 function performanceWithObservations(
@@ -254,7 +268,10 @@ function performanceWithObservations(
     ttftSamples++;
   }
   const result: PerformanceSummary = {};
-  if (prepared.tps !== undefined) result.tps = prepared.tps;
+  if (prepared.tps !== undefined) {
+    result.tps = prepared.tps;
+    if (prepared.tpsEstimated) result.tpsEstimated = true;
+  }
   if (ttftSamples > 0) result.ttft = ttft / ttftSamples;
   return result;
 }

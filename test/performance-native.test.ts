@@ -12,6 +12,11 @@ const greeting: UsageMessage = {
   time: { created: 1_794_759_595_530, firstToken: 1_794_759_597_456, streamed: 1_794_759_598_145, completed: 1_794_759_598_223 },
   tokens: { output: 69 }, content: [{ type: "text", text: "hello" }],
 };
+const concentrated: UsageMessage = {
+  id: "concentrated", type: "assistant",
+  time: { created: 1_000, firstToken: 5_800, streamed: 5_828, completed: 9_100 },
+  tokens: { output: 115, reasoning: 0 },
+};
 const payload = { sessionID: "root", assistantMessageID: "a" };
 const send = (monitor: PerformanceMonitor, type: string, created: number, data = {}) =>
   monitor.handle({ type, created, data: { ...payload, ...data } });
@@ -31,28 +36,82 @@ test("native history wins over buffered observations and survives reopening", ()
   assert.deepEqual(new PerformanceMonitor().summary([greeting], ["root"]), expected);
 });
 
-test("tree averages weight TPS by generation time and TTFT by measurable steps", () => {
+test("tree averages weight measured and estimated history by their spans, and TTFT by measurable steps", () => {
   const messages: UsageMessage[] = [
     { id: "a", type: "assistant", time: { created: 0, firstToken: 1_000, streamed: 2_000 }, tokens: { output: 100 } },
     { id: "b", type: "assistant", time: { created: 0, firstToken: 2_000, streamed: 4_000 }, tokens: { output: 20, reasoning: 80 } },
     { id: "legacy", type: "assistant", time: { created: 0, streamed: 1_000 }, tokens: { output: 20 } },
     { ...greeting, id: "compaction", type: "compaction" },
   ];
-  assert.deepEqual(historicalPerformance(messages), { tps: 55, ttft: 1_500 });
+  assert.deepEqual(historicalPerformance(messages), { tps: 55, tpsEstimated: true, ttft: 1_500 });
+  assert.deepEqual(historicalPerformance([...messages, concentrated, {
+    id: "unmeasurable", type: "assistant", time: { created: 1_000, streamed: 1_020 }, tokens: { output: 5_000 },
+  }]), { tps: 335 / 8.828, tpsEstimated: true, ttft: 2_600 });
 });
 
-test("invalid native clocks fall back, while zero generation span is not fabricated", () => {
-  for (const firstToken of [NaN, Infinity, -1, 999, 2_001]) {
+test("invalid or missing first-token clocks fall back to an estimated request rate", () => {
+  for (const firstToken of [undefined, NaN, Infinity, -1, 999, 2_001]) {
     const message: UsageMessage = { id: "a", type: "assistant",
-      time: { created: 1_000, firstToken, streamed: 2_000, completed: 2_100 }, tokens: { output: 10 } };
-    assert.deepEqual(historicalPerformance([message]), { tps: 10 });
+      time: { created: 1_000, ...(firstToken === undefined ? {} : { firstToken }), streamed: 2_000, completed: 2_100 },
+      tokens: { output: 10 } };
+    assert.deepEqual(historicalPerformance([message]), { tps: 10, tpsEstimated: true });
   }
   assert.deepEqual(historicalPerformance([{ id: "a", type: "assistant",
-    time: { created: 1_000, firstToken: 1_500, completed: 1_400 }, tokens: { output: 10 } }]), {});
-  assert.deepEqual(historicalPerformance([{ id: "a", type: "assistant",
-    time: { created: 1_000, firstToken: 2_000, streamed: 2_000 }, tokens: { output: 10 } }]), { ttft: 1_000 });
-  assert.deepEqual(historicalPerformance([{ id: "a", type: "assistant",
     time: { created: 1_000, firstToken: 1_000, streamed: 2_000 }, tokens: { output: 10 } }]), { tps: 10, ttft: 0 });
+});
+
+test("a 28 ms historical delivery uses request throughput and leaves tokens and TTFT intact", () => {
+  assert.equal((115 / 0.028).toFixed(1), "4107.1");
+  const performance = historicalPerformance([concentrated]);
+  assert.deepEqual(performance, { tps: 115 / 4.828, tpsEstimated: true, ttft: 4_800 });
+  const usage = summarize([concentrated]);
+  assert.equal(usage.total, 115);
+  assert.deepEqual(usageRows(usage, undefined, performance).slice(-2), [["TPS", "~23.8 tok/s"], ["TTFT", "4.8s"]]);
+});
+
+test("a zero or sub-100 ms native span is an estimate when the request has usable timing", () => {
+  for (const span of [0, 99]) {
+    assert.deepEqual(historicalPerformance([{ ...concentrated,
+      time: { created: 1_000, firstToken: 5_800, streamed: 5_800 + span },
+    }]), { tps: 115 / ((4_800 + span) / 1_000), tpsEstimated: true, ttft: 4_800 });
+  }
+});
+
+test("the 100 ms timing boundary does not impose a TPS cap", () => {
+  for (const span of [100, 700]) {
+    assert.deepEqual(historicalPerformance([{ ...concentrated, tokens: { output: 3_500, reasoning: 0 },
+      time: { created: 1_000, firstToken: 5_800, streamed: 5_800 + span },
+    }]), { tps: 3_500 / (span / 1_000), ttft: 4_800 });
+  }
+});
+
+test("steady high-speed output keeps its historical delivery rate after reopening", t => {
+  const monitor = new PerformanceMonitor();
+  t.after(() => monitor.dispose());
+  send(monitor, "session.step.started", 1_000, { started: 1_000 });
+  send(monitor, "session.step.first-token", 5_800);
+  for (const time of [5_900, 6_150, 6_400]) {
+    send(monitor, "session.text.delta", time, { delta: "text ".repeat(4_000) });
+  }
+  assert.deepEqual(monitor.summary([], ["root"]), { tps: 20_000, tpsEstimated: true, ttft: 4_800 });
+  const history: UsageMessage = { ...concentrated, id: "a", tokens: { output: 15_000 },
+    time: { created: 1_000, firstToken: 5_800, streamed: 6_500, completed: 6_550 } };
+  monitor.reconcile([history], ["root"]);
+  const expected = { tps: 15_000 / 0.7, ttft: 4_800 };
+  assert.deepEqual(monitor.summary([history], ["root"]), expected);
+  assert.deepEqual(historicalPerformance([history]), expected);
+});
+
+test("missing, reversed or wholly short request timings do not manufacture historical TPS", () => {
+  for (const [time, expected] of [
+    [{ created: 1_000, firstToken: 1_020, completed: 5_000 }, { ttft: 20 }],
+    [{ created: 1_000, firstToken: 1_020, streamed: 1_099, completed: 5_000 }, { ttft: 20 }],
+    [{ created: 1_000, firstToken: 1_020, streamed: 1_500, completed: 1_400 }, { ttft: 20 }],
+    [{ created: 1_000, streamed: 999 }, {}],
+    [{ created: 1_000, firstToken: 1_500, completed: 1_400 }, {}],
+  ] as const) {
+    assert.deepEqual(historicalPerformance([{ ...concentrated, time }]), expected);
+  }
 });
 
 for (const nativeFirst of [true, false]) {

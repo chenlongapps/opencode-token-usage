@@ -1,5 +1,4 @@
-// Local-only Responses SSE fixture: initial summary burst, done-only summary,
-// spaced text and a quiet gate. It never contacts OpenAI or needs real credentials.
+// Local-only Responses SSE fixtures. They never contact OpenAI or need real credentials.
 export async function respond(response, data, gates) {
   const base = {
     id: "resp_usage_smoke", object: "response", created_at: Math.floor(Date.now() / 1000),
@@ -20,6 +19,28 @@ export async function respond(response, data, gates) {
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   emit("response.created", { response: base });
   emit("response.in_progress", { response: base });
+  const request = JSON.stringify(data.input);
+  const doneOnly = request?.includes("RESPONSES_HISTORY_DONE");
+  if (doneOnly || request?.includes("RESPONSES_HISTORY_BURST")) {
+    const text = "The buffered response arrived together. ".repeat(10).trim();
+    const answer = message(text);
+    const fields = { output_index: 0, item_id: answer.id, content_index: 0 };
+    emit("response.output_item.added", { output_index: 0, item: { ...message(""), status: "in_progress" } });
+    emit("response.content_part.added", { ...fields, part: part("") });
+    await sleep(500); // No visible output until well into the request.
+    if (!doneOnly) {
+      emit("response.output_text.delta", { ...fields, delta: text.slice(0, 50) });
+      emit("response.output_text.delta", { ...fields, delta: text.slice(50) });
+    }
+    emit("response.output_text.done", { ...fields, text });
+    await sleep(28);
+    emit("response.output_item.done", { output_index: 0, item: answer });
+    emit("response.completed", { response: { ...base, status: "completed", output: [answer], usage: {
+      ...usage, output_tokens: 115, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 1315,
+    } } });
+    response.end();
+    return;
+  }
   const reasoning = { id: "rs_usage_smoke", type: "reasoning", summary: [] };
   emit("response.output_item.added", { output_index: 0, item: reasoning });
   const reasoningFields = { output_index: 0, item_id: reasoning.id, summary_index: 0 };

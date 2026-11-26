@@ -315,14 +315,14 @@ test("stream deltas publish estimated TPS and TTFT without source reads, then co
   assert.equal(source.reads, reads);
 
   source.history.set("root", [message("a"), {
-    id: "live", type: "assistant", time: { created: 1_000, streamed: 2_000 },
+    id: "live", type: "assistant", time: { created: 1_000, firstToken: 1_500, streamed: 2_000 },
     content: [{ type: "text", text: "abcdefgh" }], tokens: { output: 20, reasoning: 10 },
   }]);
   events.emit({ type: "session.step.ended", id: "end", created: 2_100, data: {
     assistantMessageID: "live", sessionID: "root",
   } });
   await until(() => state.summary?.total === 40 && state.performance?.tpsEstimated !== true);
-  assert.equal(state.performance?.tps, 30);
+  assert.equal(state.performance?.tps, 60);
   assert.equal(state.performance?.ttft, 500);
 });
 
@@ -390,7 +390,7 @@ test("shared views reject startup bursts and remove quiet live TPS without histo
   for (const created of [1_500, 1_510]) events.emit({ type: "session.reasoning.delta", id: `${created}`, created,
     data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(400) } });
   t.mock.timers.tick(2);
-  assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 }, "insufficient live samples retain historical TPS");
+  assert.deepEqual(sidebarState.performance, { tps: 30, tpsEstimated: true, ttft: 500 }, "insufficient live samples retain estimated history");
   events.emit({ type: "session.text.delta", id: "text-mid", created: 1_760,
     data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(20) } });
   events.emit({ type: "session.text.delta", id: "text", created: 2_010,
@@ -401,7 +401,7 @@ test("shared views reject startup bursts and remove quiet live TPS without histo
   mono = 2_000;
   t.mock.timers.tick(2_000);
   t.mock.timers.tick(2);
-  assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 });
+  assert.deepEqual(sidebarState.performance, { tps: 30, tpsEstimated: true, ttft: 500 });
   assert.deepEqual(dialogState.performance, sidebarState.performance);
   assert.equal(source.reads, reads, "expiry updates only the prepared in-memory performance baseline");
 });
@@ -422,7 +422,7 @@ test("shared views retain historical TPS below 20 estimated tokens and become re
   for (const created of [500, 750, 1_000]) events.emit({ type: "session.text.delta", id: `${created}`, created,
     data: { sessionID: "root", assistantMessageID: "a", delta: "a".repeat(created === 500 ? 77 : 1) } });
   t.mock.timers.tick(2);
-  assert.deepEqual(sidebarState.performance, { tps: 30, ttft: 500 }, "three batches and 500 ms alone are insufficient");
+  assert.deepEqual(sidebarState.performance, { tps: 30, tpsEstimated: true, ttft: 500 }, "three batches and 500 ms alone are insufficient");
   assert.deepEqual(dialogState.performance, sidebarState.performance);
   events.emit({ type: "session.text.delta", id: "ready", created: 1_100,
     data: { sessionID: "root", assistantMessageID: "a", delta: "a" } });
@@ -459,7 +459,7 @@ test("shared views receive and expire slow TPS without reading history", async t
   assert.deepEqual(dialog.performance, sidebar.performance);
   advance(8_998);
   advance(2);
-  assert.deepEqual(sidebar.performance, { tps: 30, ttft: 0 });
+  assert.deepEqual(sidebar.performance, { tps: 30, tpsEstimated: true, ttft: 0 });
   assert.deepEqual(dialog.performance, sidebar.performance);
   assert.equal(source.reads, reads);
 });

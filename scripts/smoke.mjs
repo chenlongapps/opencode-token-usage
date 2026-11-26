@@ -52,7 +52,7 @@ await writeFile(path.join(installation, "package.json"), JSON.stringify({ privat
 execFileSync("npm", ["install", path.join(work, packed[0].filename), "--no-audit", "--no-fund", "--prefer-offline"], { cwd: installation, env: npmEnv, stdio: "inherit", timeout: 120_000 });
 const plugin = path.join(installation, "node_modules", ...packageName.split("/"));
 const { createSource, loadSnapshot, uniqueMessages, viewedMessages } = await import(path.join(plugin, "dist/source.js"));
-const { contextUsage, formatDuration, summarize } = await import(path.join(plugin, "dist/usage.js"));
+const { contextUsage, formatDuration, formatTps, summarize } = await import(path.join(plugin, "dist/usage.js"));
 const { ContextSourceRpc } = await import(path.join(plugin, "dist/context-rpc.js"));
 const { historicalPerformance, PerformanceMonitor } = await import(path.join(plugin, "dist/performance.js"));
 const { prepareRuntime, summarizeRuntime } = await import(path.join(plugin, "dist/runtime.js"));
@@ -249,6 +249,8 @@ const ownRuntime = async sessionID => {
   return milliseconds;
 };
 const runtimeRow = (screen, milliseconds) => screen.split("\n").some(line => line.includes("Run Time") && line.includes(formatDuration(milliseconds)) && !line.includes("~"));
+const tpsRow = (screen, value) => value !== undefined && screen.split("\n")
+  .some(line => line.trim().replace(/\s+/g, " ") === `TPS ${value}`);
 const liveRuntime = (screen, label = "Run Time") => {
   const lines = screen.split("\n");
   const row = lines.findIndex(line => line.includes(label) && /~((?:\d+h\s*)?(?:\d+m\s*)?\d+(?:\.\d+)?s|\d+ms)/.test(line));
@@ -344,8 +346,10 @@ const verifyNativePerformance = async (snapshot, tui, sessionID) => {
     assert.equal(replay.summary([], [sessionID]).ttft, ttft, "native live event wins over delayed delivery");
   } finally { replay.dispose(); }
   const matchesPerformance = screen => new RegExp(`TTFT\\s+${(ttft / 1_000).toFixed(1).replace(".", "\\.")}s`).test(screen)
-    && new RegExp(`TPS\\s+${tps.toFixed(1).replace(".", "\\.")} tok/s`).test(screen)
-    && screen.includes(`· ${tps.toFixed(1)} tok/s`) && screen.includes(`${formatDuration(ttft)} ttft`);
+    && tpsRow(screen, `${tps.toFixed(1)} tok/s`)
+    && screen.includes(`· ${tps.toFixed(1)} tok/s`)
+    // The 2.4 native TUI footer no longer renders TTFT; the event and plugin checks still apply.
+    && (Number(host.version.split(".")[1]) > 3 || screen.includes(`${formatDuration(ttft)} ttft`));
   await wait(() => matchesPerformance(tui.screen()), "native footer and plugin first-token metrics agree");
   const reopened = openTui(sessionID);
   await wait(() => matchesPerformance(reopened.screen()), "new TUI restores native TTFT from text-only history");
@@ -353,6 +357,54 @@ const verifyNativePerformance = async (snapshot, tui, sessionID) => {
   reopened.process.kill("SIGTERM");
   console.log("PASS: native first-token events/history match the footer, exclude delta buffering and survive reopening");
   return { ttft, tps, deltaDelay: capturedDelta.created - time.firstToken };
+};
+
+const verifyConcentratedResponses = async () => {
+  const timings = {};
+  for (const mode of ["BURST", "DONE"]) {
+    const session = await client.session.create({ location: { directory: project }, title: `Responses ${mode}`,
+      model: { providerID: "usage-responses-test", id: "responses" } });
+    const tui = openTui(session.id);
+    await wait(() => /Token Usage/.test(tui.screen()), `${mode} Responses sidebar`);
+    await client.session.prompt({ sessionID: session.id, text: `RESPONSES_HISTORY_${mode}` });
+    await client.session.wait({ sessionID: session.id });
+    const snapshot = await loadSnapshot(source, session.id, new AbortController().signal);
+    const steps = viewedMessages(snapshot).filter(message => message.type === "assistant");
+    assert.equal(steps.length, 1);
+    const { id, time, tokens } = steps[0];
+    assert.equal(tokens.output, 115);
+    assert.equal(tokens.reasoning, 0);
+    await wait(() => streamEvents.some(event => event.type === "session.step.ended" && event.data.assistantMessageID === id),
+      `${mode} Responses completion event`);
+    const events = streamEvents.filter(event => event.data?.assistantMessageID === id);
+    assert.equal(events.find(event => event.type === "session.step.started")?.data.started, time.created);
+    assert.equal(events.find(event => event.type === "session.step.first-token")?.created, time.firstToken);
+    assert.equal(events.find(event => event.type === "session.step.streamed")?.created, time.streamed);
+    assert.equal(events.find(event => event.type === "session.step.ended")?.created, time.completed);
+    const deltas = events.filter(event => event.type === "session.text.delta");
+    assert.equal(deltas.length, 1, `${mode}: OpenCode sees a single content batch`);
+    const span = time.streamed - time.firstToken;
+    assert.ok(span > 0 && span < 100, `${mode}: observed first-output to stream-end span ${span}ms`);
+    const ttft = time.firstToken - time.created;
+    const nativeTps = 115 / (span / 1_000);
+    const requestTps = 115 / ((time.streamed - time.created) / 1_000);
+    const performance = historicalPerformance(uniqueMessages(snapshot));
+    assert.deepEqual(performance, { tps: requestTps, tpsEstimated: true, ttft });
+    const matches = screen => screen.includes(`· ${nativeTps.toFixed(1)} tok/s`)
+      && tpsRow(screen, `~${requestTps.toFixed(1)} tok/s`)
+      && new RegExp(`TTFT\\s+${(ttft / 1_000).toFixed(1).replace(".", "\\.")}s`).test(screen);
+    await wait(() => matches(tui.screen()), `${mode} native footer and estimated plugin TPS`);
+    await tui.save(`11-responses-history-${mode.toLowerCase()}`);
+    tui.process.kill("SIGTERM");
+    if (mode === "DONE") {
+      const reopened = openTui(session.id);
+      await wait(() => matches(reopened.screen()), "done-only TPS estimate survives reopening");
+      reopened.process.kill("SIGTERM");
+    }
+    timings[mode] = { session: session.id, time, span, nativeTps, performance };
+    console.log(`PASS: Responses ${mode}: ${span}ms delivery span; native ${nativeTps.toFixed(1)} tok/s, plugin ~${requestTps.toFixed(1)} tok/s`);
+  }
+  return timings;
 };
 
 const run = async () => {
@@ -408,9 +460,10 @@ const run = async () => {
     await client.session.wait({ sessionID: root.id });
     const completed = await loadSnapshot(source, root.id, new AbortController().signal);
     nativePerformance = await verifyNativePerformance(completed, tui, root.id);
+    const concentratedResponses = await verifyConcentratedResponses();
     await writeFile(path.join(work, "result.json"), JSON.stringify({
       version: host.version, binary: opencode, scope: "native-performance", root: root.id,
-      nativePerformance, package: packed[0].filename, files,
+      nativePerformance, concentratedResponses, package: packed[0].filename, files,
     }, null, 2));
     return;
   }
@@ -513,8 +566,7 @@ const run = async () => {
   const switchSnapshot = await loadSnapshot(source, switchTarget.id, new AbortController().signal);
   const switchPerformance = historicalPerformance(uniqueMessages(switchSnapshot));
   assert.ok(switchPerformance.tps && switchPerformance.tps > 0);
-  await wait(() => new RegExp(`TPS\\s+${switchPerformance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(tui.screen()), "switched stream exact TPS");
-  assert.doesNotMatch(tui.screen(), /TPS\s+~/, "switched stream converges to exact TPS");
+  await wait(() => tpsRow(tui.screen(), formatTps(switchPerformance)), "switched stream historical TPS");
   await tui.save("03-switched-complete");
   await client.session.wait({ sessionID: switchTarget.id });
   const switchRunTime = await ownRuntime(switchTarget.id);
@@ -525,7 +577,7 @@ const run = async () => {
   assert.doesNotMatch(tui.screen(), /Token Usage Smoke · usage-test\/small/, "sidebar dialog does not retain the previous session");
   tui.send("\x1b");
   await wait(() => !/Context Window/.test(tui.screen()), "close switched sidebar dialog");
-  console.log("PASS: switching to an in-flight session restores live TPS/TTFT and converges to exact TPS");
+  console.log("PASS: switching to an in-flight session restores live TPS/TTFT and converges to historical TPS");
 
   tui.send("\x18");
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -567,8 +619,7 @@ const run = async () => {
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bSteps\s+1\b/),
     "steps row follows the context row");
   assert.ok(lineNumber(tui.screen(), /\bSteps\s+1\b/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "steps row precedes input");
-  await wait(() => new RegExp(`TPS\\s+${performance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(tui.screen()), "exact TPS after completion");
-  assert.doesNotMatch(tui.screen(), /TPS\s+~/, "completed TPS replaces the live estimate");
+  await wait(() => tpsRow(tui.screen(), formatTps(performance)), "historical TPS after completion");
   assert.match(tui.screen(), /TTFT\s+[\d.]+s/);
   assert.ok(lineNumber(tui.screen(), /Context\s+1,270 \/ 128,000 \(1\.0%\)/) < lineNumber(tui.screen(), /\bInput\s+100\b/), "context row leads the panel");
   assert.equal(lineNumber(tui.screen(), /\bTPS\s+/), lineNumber(tui.screen(), /Est\. Cost\s+/) + 2, "one blank line separates usage and performance/runtime");
@@ -577,7 +628,7 @@ const run = async () => {
   assert.ok(lineNumber(tui.screen(), /\bTPS\s+/) < lineNumber(tui.screen(), /\bTTFT\s+/));
   assert.ok(lineNumber(tui.screen(), /Est\. Cost\s+/) < lineNumber(tui.screen(), /\bTPS\s+/));
   await tui.save("05-message");
-  console.log("PASS: live estimates converge to exact TPS; TTFT and token/context rows update");
+  console.log("PASS: live estimates converge to historical TPS; TTFT and token/context rows update");
   await client.session.wait({ sessionID: root.id });
   const firstRunTime = await ownRuntime(root.id);
   assert.ok(firstRunTime > 0);
@@ -818,9 +869,11 @@ const run = async () => {
   streamGates.get("LONG_TTFT_SMOKE").resolve();
   await longTtftPrompt;
   await wait(async () => (await client.message.list({ sessionID: longTtftTarget.id })).data.some(m => m.type === "assistant" && m.tokens), "long TTFT usage");
-  await wait(() => /TPS\s+[\d.]+ tok\/s/.test(longTtftTui.screen()) && !/TPS\s+~/.test(longTtftTui.screen()), "long TTFT converges to exact TPS");
+  const longTtftSnapshot = await loadSnapshot(source, longTtftTarget.id, new AbortController().signal);
+  const longTtftPerformance = historicalPerformance(uniqueMessages(longTtftSnapshot));
+  await wait(() => tpsRow(longTtftTui.screen(), formatTps(longTtftPerformance)), "long TTFT converges to historical TPS");
   await longTtftTui.save("10-long-ttft");
-  console.log("PASS: a 2s TTFT followed by fast output shows responsive live TPS and converges to exact TPS");
+  console.log("PASS: a 2s TTFT followed by fast output shows responsive live TPS and converges to historical TPS");
   await client.session.wait({ sessionID: longTtftTarget.id });
   const beforeInterrupt = await ownRuntime(longTtftTarget.id);
   await client.session.prompt({ sessionID: longTtftTarget.id, text: "RUNTIME_INTERRUPT_SMOKE" });
@@ -873,9 +926,11 @@ const run = async () => {
   await client.session.wait({ sessionID: runningChild.id });
   const afterChildRunning = await ownRuntime(runningChild.id);
   assert.ok(afterChildRunning > beforeChildRunning);
+  const settledChildTime = `Time ${formatDuration(afterChildRunning, true)}`;
   for (const childView of [runningChildTui, runningNarrowChild]) {
-    await wait(() => childView.screen().split("\n").some(line => line.includes(`Time ${formatDuration(afterChildRunning, true)}`)
-      && !/~|Running\./.test(line)), "completed child restores native runtime without estimate or running labels");
+    await wait(() => childView.screen().split("\n").some(line => line.trim().split(" · ").includes(settledChildTime)
+      && !line.includes("Running.")),
+    "completed child restores native runtime without estimate or running labels");
   }
   console.log("PASS: elapsed runtime advances with ~ and no running labels in sidebar, both /token-usage modes and child summary/dialog/narrow view, then settles to native timing without advancing idle parents");
   const reasoningTarget = await client.session.create({ location: { directory: project }, title: "Reasoning Smoke", permissions: [{ action: "*", resource: "*", effect: "allow" }] });
@@ -888,7 +943,9 @@ const run = async () => {
   streamGates.get("REASONING_SMOKE").resolve();
   await reasoningPrompt;
   await wait(async () => (await client.message.list({ sessionID: reasoningTarget.id })).data.some(m => m.type === "assistant" && m.tokens?.reasoning === 200), "reasoning usage");
-  await wait(() => /TPS\s+[\d.]+ tok\/s/.test(reasoningTui.screen()) && !/TPS\s+~/.test(reasoningTui.screen()), "reasoning converges to provider TPS");
+  const reasoningSnapshot = await loadSnapshot(source, reasoningTarget.id, new AbortController().signal);
+  const reasoningPerformance = historicalPerformance(uniqueMessages(reasoningSnapshot));
+  await wait(() => tpsRow(reasoningTui.screen(), formatTps(reasoningPerformance)), "reasoning converges to historical TPS");
   await reasoningTui.save("11-reasoning");
   console.log("PASS: reasoning-style streams show visible-speed live TPS, then switch to provider-reported TPS");
   const responsesTarget = await client.session.create({ location: { directory: project }, title: "Responses Stream Smoke",
@@ -917,10 +974,10 @@ const run = async () => {
   const reportedResponse = viewedMessages(responsesHistory).find(message => message.type === "assistant" && message.tokens);
   assert.equal(reportedResponse.tokens.output, 200);
   assert.equal(reportedResponse.tokens.reasoning, 800);
-  await wait(() => new RegExp(`TPS\\s+${responsesPerformance.tps.toFixed(1).replace(".", "\\.")} tok/s`).test(responsesTui.screen())
-    && !/TPS\s+~/.test(responsesTui.screen()), "Responses completion restores provider-reported throughput");
+  await wait(() => tpsRow(responsesTui.screen(), formatTps(responsesPerformance)), "Responses completion restores historical throughput");
   await responsesTui.save("11-responses-completed");
   console.log("PASS: real Responses summary bursts/done fallback do not inflate live TPS; quiet values expire and completion restores provider usage");
+  const concentratedResponses = nativePerformance && await verifyConcentratedResponses();
   const cleanupTarget = await client.session.create({ location: { directory: project }, title: "Context Cleanup Smoke" });
   await client.session.prompt({ sessionID: cleanupTarget.id, text: "Return SMOKE_OK." });
   await client.session.wait({ sessionID: cleanupTarget.id });
@@ -1094,7 +1151,7 @@ const run = async () => {
   const firstTurnRuntime = { session: firstTurnTarget.id, firstInput: firstInput.time.created, deliveries: deliveries.map(input => input.id), beforeSynthetic, afterSynthetic, reopened: reopenedFirstTurn, focused: focusedFirstTurn, compact: compactFirstTurn, detailed: detailedFirstTurn, native: firstTurnNative };
   console.log("PASS: first-turn synthetic/tool continuations, new TUI restoration and terminal refocus retain elapsed runtime before the first idle");
 
-  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: tree.total, calls: treeCalls, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, nativePerformance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
+  await writeFile(path.join(work, "result.json"), JSON.stringify({ version: host.version, binary: opencode, root: root.id, child: child.id, switchTarget: switchTarget.id, officialTarget: officialTarget.id, total: tree.total, calls: treeCalls, cost: tree.cost, officialFallbackCost: officialSummary.cost, performance, nativePerformance, switchPerformance, responses: { session: responsesTarget.id, live: responsesLive, performance: responsesPerformance }, concentratedResponses, runtime: runtimeResults, firstTurnRuntime, performanceLifecycle: { sessions: waitingIDs, acceleratedAge: age, waitingTtft, activitySnapshots }, context: { used: 1270, limitBefore: 128000, limitAfter: 32000, percentAfter: "4.0" }, hostSemantics: { session: semanticsTarget.id, fork: fork.id, inheritedCopies: inherited.length, forkTotal: forkSummary.total, compactionStatus: compaction.status }, package: packed[0].filename, files }, null, 2));
 };
 
 try {
