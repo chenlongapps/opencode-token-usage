@@ -17,6 +17,14 @@
 
 [![OpenCode Token Usage 插件预览](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
 
+### 安装
+
+需要 **OpenCode 2** 和 **Node.js 22+**。已验证宿主版本及 OpenTUI 引擎限制见[兼容性](#兼容性)。
+
+```bash
+opencode plugin add @chenlongapps/opencode-token-usage@latest
+```
+
 ### 项目简介
 
 **opencode-token-usage** 是一个面向 OpenCode 2 的社区插件，在终端界面中展示 token 用量、上下文窗口占用、估算费用和性能指标。
@@ -33,16 +41,6 @@
 - **按需查看详情：** 通过 `/token-usage` 切换紧凑／详细统计，查看各模型的用量与费率，不向模型发送提示词。
 
 ---
-
-### 安装
-
-需要 **OpenCode 2** 和 **Node.js 22+**。已验证宿主版本及 OpenTUI 引擎限制见[兼容性](#兼容性)。
-
-```bash
-opencode plugin add @chenlongapps/opencode-token-usage@latest
-```
-
-安装后重启 OpenCode。
 
 ### 快速上手
 

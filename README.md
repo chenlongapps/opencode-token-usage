@@ -17,6 +17,14 @@
 
 [![OpenCode Token Usage plugin preview](https://raw.githubusercontent.com/chenlongapps/opencode-token-usage/main/docs/assets/opencode-token-usage-preview.webp)](https://www.npmjs.com/package/@chenlongapps/opencode-token-usage)
 
+### Installation
+
+Requires **OpenCode 2** and **Node.js 22+**. See [Compatibility](#compatibility) for verified host versions and the OpenTUI engine caveat.
+
+```bash
+opencode plugin add @chenlongapps/opencode-token-usage@latest
+```
+
 ### Overview
 
 **opencode-token-usage** is a community plugin that brings token usage, context window occupancy, estimated cost and performance metrics into OpenCode 2's terminal interface.
@@ -33,16 +41,6 @@ Use it to see how many tokens a session and its subagents consume, how full the 
 - **On-demand details:** Use `/token-usage` for compact or detailed statistics, including per-model usage and rates, without sending a prompt to the model.
 
 ---
-
-### Installation
-
-Requires **OpenCode 2** and **Node.js 22+**. See [Compatibility](#compatibility) for verified host versions and the OpenTUI engine caveat.
-
-```bash
-opencode plugin add @chenlongapps/opencode-token-usage@latest
-```
-
-Restart OpenCode after installation.
 
 ### Quick start
 
